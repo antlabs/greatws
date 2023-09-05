@@ -24,33 +24,53 @@ import (
 )
 
 type apiState struct {
-	kqfd   int
-	events []unix.Kevent_t
+	kqfd    int
+	events  []unix.Kevent_t
+	changes []unix.Kevent_t
 }
 
-func (eventLoop *EventLoop) apiCreate() (err error) {
+func (e *EventLoop) apiCreate() (err error) {
 	var state apiState
 	state.kqfd, err = unix.Kqueue()
 	if err != nil {
 		return err
 	}
-	eventLoop.apidata = &state
+	e.apidata = &state
 	return nil
 }
 
-func (eventLoop *EventLoop) apiResize(setSize int) {
-	oldEvents := eventLoop.apidata.events
+func (e *EventLoop) apiResize(setSize int) {
+	oldEvents := e.apidata.events
 	newEvents := make([]unix.Kevent_t, setSize)
 	copy(newEvents, oldEvents)
-	eventLoop.apidata.events = newEvents
+	e.apidata.events = newEvents
 }
 
-func (eventLoop *EventLoop) apiFree() {
-	unix.Close(eventLoop.apidata.kqfd)
+func (e *EventLoop) apiFree() {
+	unix.Close(e.apidata.kqfd)
 }
 
-func (eventLoop *EventLoop) apiAddEvent(fd int, mask Action) (err error) {
-	state := eventLoop.apidata
+// 在另外一个线程唤醒kqueue
+func (e *EventLoop) trigger() {
+	unix.Kevent(e.apidata.kqfd, []unix.Kevent_t{{Ident: 0, Filter: unix.EVFILT_USER, Fflags: unix.NOTE_TRIGGER}}, nil, nil)
+}
+
+func (e *EventLoop) addRead(fd int) {
+	e.mu.Lock()
+	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_READ, Flags: unix.EV_ADD})
+	e.mu.Unlock()
+	e.trigger()
+}
+
+func (e *EventLoop) addWrite(fd int) {
+	e.mu.Lock()
+	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_ADD})
+	e.mu.Unlock()
+	e.trigger()
+}
+
+func (e *EventLoop) apiAddEvent(fd int, mask Action) (err error) {
+	state := e.apidata
 	ke := make([]unix.Kevent_t, 0, 2)
 
 	if mask&READABLE > 0 {
@@ -70,8 +90,8 @@ func (eventLoop *EventLoop) apiAddEvent(fd int, mask Action) (err error) {
 	return nil
 }
 
-func (eventLoop *EventLoop) apiDelEvent(fd int, mask Action) (err error) {
-	state := eventLoop.apidata
+func (e *EventLoop) apiDelEvent(fd int, mask Action) (err error) {
+	state := e.apidata
 	ke := make([]unix.Kevent_t, 0, 2)
 
 	if mask&READABLE > 0 {
@@ -92,36 +112,38 @@ func (eventLoop *EventLoop) apiDelEvent(fd int, mask Action) (err error) {
 	return nil
 }
 
-func (eventLoop *EventLoop) apiPoll(tv time.Duration) int {
-	state := eventLoop.apidata
+func (e *EventLoop) apiPoll(tv time.Duration) int {
+	state := e.apidata
 
 	retVal := 0
 	numEvnets := 0
 
+	var changes []unix.Kevent_t
+	e.mu.Lock()
+	changes = e.apidata.changes
+	e.apidata.changes = nil
+	e.mu.Unlock()
 	if tv >= 0 {
 		var timeout unix.Timespec
 		timeout.Sec = int64(tv / time.Second)
 		timeout.Nsec = int64(tv % time.Second)
 
-		retVal, _ = unix.Kevent(state.kqfd, nil, state.events, &timeout)
+		retVal, _ = unix.Kevent(state.kqfd, changes, state.events, &timeout)
 	} else {
-		retVal, _ = unix.Kevent(state.kqfd, nil, state.events, nil)
+		retVal, _ = unix.Kevent(state.kqfd, changes, state.events, nil)
 	}
 
 	if retVal > 0 {
 		numEvnets = retVal
 		for j := 0; j < numEvnets; j++ {
-			mask := 0
-			e := &state.events[j]
-			if e.Filter == unix.EVFILT_READ {
-				mask |= READABLE
+			ev := &state.events[j]
+			if ev.Filter == unix.EVFILT_READ {
+				// TODO
 			}
 
-			if e.Filter == unix.EVFILT_WRITE {
-				mask |= WRITABLE
+			if ev.Filter == unix.EVFILT_WRITE {
+				// TODO
 			}
-			eventLoop.fired[j].fd = int(e.Ident)
-			eventLoop.fired[j].mask = mask
 		}
 	}
 	return numEvnets

@@ -27,6 +27,7 @@ type apiState struct {
 	events []unix.EpollEvent
 }
 
+// 创建
 func (eventLoop *EventLoop) apiCreate() (err error) {
 	var state apiState
 
@@ -39,6 +40,7 @@ func (eventLoop *EventLoop) apiCreate() (err error) {
 	return nil
 }
 
+// 调速大小
 func (eventLoop *EventLoop) apiResize(setSize int) {
 	oldEvents := eventLoop.apidata.events
 	newEvents := make([]eventLoop, setSize)
@@ -46,10 +48,12 @@ func (eventLoop *EventLoop) apiResize(setSize int) {
 	eventLoop.apidata.events = newEvents
 }
 
+// 释放
 func (eventLoop *EventLoop) apiFree() {
 	unix.Close(eventLoop.apidata.epfd)
 }
 
+// 新加事件
 func (eventLoop *EventLoop) apiAddEvent(fd int, mask int) error {
 	state := eventLoop.apidata
 	var ee unix.EpollEvent
@@ -72,6 +76,7 @@ func (eventLoop *EventLoop) apiAddEvent(fd int, mask int) error {
 	return unix.EpollCtl(state.epfd, op, fd, &ee)
 }
 
+// 删除事件
 func (eventLoop *EventLoop) apiDelEvent(fd int, delmask int) (err error) {
 	state := eventLoop.apidata
 	var ee unix.EpollEvent
@@ -95,6 +100,7 @@ func (eventLoop *EventLoop) apiDelEvent(fd int, delmask int) (err error) {
 	return err
 }
 
+// 事件循环
 func (eventLoop *EventLoop) apiPoll(tv time.Duration) int {
 	state := eventLoop.apidata
 
