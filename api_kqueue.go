@@ -138,11 +138,11 @@ func (e *EventLoop) apiPoll(tv time.Duration) int {
 		for j := 0; j < numEvnets; j++ {
 			ev := &state.events[j]
 			if ev.Filter == unix.EVFILT_READ {
-				// TODO
+				// 读取数据，这里要发行下websocket的解析变成流式解析
 			}
 
 			if ev.Filter == unix.EVFILT_WRITE {
-				// TODO
+				// 获取 websocket conn, 然后写入数据
 			}
 		}
 	}

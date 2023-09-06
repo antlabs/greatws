@@ -68,7 +68,21 @@ func (c *conn) Write(b []byte) (n int, err error) {
 // 写成功
 // EAGAIN，等待可写再写
 // 报错，直接关闭这个fd
-func (c *conn) writeSuccessOrClose() {
+func (c *Conn) flushOrClose() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	n, err := unix.Write(c.c.fd, c.c.wbuf)
+	if err != nil {
+		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
+			wbuf := c.c.wbuf
+			copy(wbuf, wbuf[n:])
+			c.c.wbuf = wbuf[:len(wbuf)-n]
+			return
+		}
+		unix.Close(c.c.fd)
+		atomic.StoreInt32(&c.closed, 1)
+	}
 }
 
 type wrapBuffer struct {

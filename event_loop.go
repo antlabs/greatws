@@ -53,7 +53,7 @@ type EventLoop struct {
 }
 
 // 初始化函数
-func Create(setSize int) *EventLoop {
+func CreateEventLoop(setSize int) *EventLoop {
 	return &EventLoop{
 		setSize: setSize,
 		maxFd:   -1,
@@ -297,7 +297,11 @@ func Wait(fd int, mask int, milliseconds int) (Action, error) {
 	return 0, err
 }
 
-func (el *EventLoop) Main() {
+func (el *EventLoop) StartLoop() {
+	go el.Loop()
+}
+
+func (el *EventLoop) Loop() {
 	for !el.stop {
 		if el.beforeSleep != nil {
 			el.beforeSleep(el)
