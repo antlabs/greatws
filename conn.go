@@ -64,6 +64,10 @@ func (c *conn) Write(b []byte) (n int, err error) {
 	return n, err
 }
 
+func (c *Conn) getFd() int {
+	return c.c.fd
+}
+
 // 该函数有3个动作
 // 写成功
 // EAGAIN，等待可写再写
