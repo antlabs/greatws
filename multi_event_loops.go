@@ -25,6 +25,7 @@ func CreateMultiEventLoop(opts ...EvOption) *MultiEventLoop {
 	m.loops = make([]*EventLoop, m.numLoops)
 	for i := 0; i < m.numLoops; i++ {
 		m.loops[i] = CreateEventLoop(m.maxEventNum)
+		m.loops[i].parent = m
 	}
 	return m
 }

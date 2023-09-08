@@ -116,7 +116,7 @@ func (e *EventLoop) apiPoll(tv time.Duration) int {
 	state := e.apidata
 
 	retVal := 0
-	numEvnets := 0
+	numEvents := 0
 
 	var changes []unix.Kevent_t
 	e.mu.Lock()
@@ -134,19 +134,27 @@ func (e *EventLoop) apiPoll(tv time.Duration) int {
 	}
 
 	if retVal > 0 {
-		numEvnets = retVal
-		for j := 0; j < numEvnets; j++ {
+		numEvents = retVal
+		for j := 0; j < numEvents; j++ {
 			ev := &state.events[j]
+			fd := int(ev.Ident)
+			conn := e.parent.getConn(fd)
+			if conn == nil {
+				unix.Close(fd)
+				continue
+			}
+
 			if ev.Filter == unix.EVFILT_READ {
 				// 读取数据，这里要发行下websocket的解析变成流式解析
 			}
 
 			if ev.Filter == unix.EVFILT_WRITE {
-				// 获取 websocket conn, 然后写入数据
+				// 刷新下直接写入失败的数据
+				conn.flushOrClose()
 			}
 		}
 	}
-	return numEvnets
+	return numEvents
 }
 
 func apiName() string {

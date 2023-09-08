@@ -27,6 +27,7 @@ type EventLoop struct {
 	setSize  int // max number of file descriptors tracked
 	apidata  *apiState
 	shutdown bool
+	parent   *MultiEventLoop
 }
 
 // 初始化函数
