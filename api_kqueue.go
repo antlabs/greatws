@@ -146,6 +146,7 @@ func (e *EventLoop) apiPoll(tv time.Duration) int {
 
 			if ev.Filter == unix.EVFILT_READ {
 				// 读取数据，这里要发行下websocket的解析变成流式解析
+				conn.processWebsocketFrame()
 			}
 
 			if ev.Filter == unix.EVFILT_WRITE {

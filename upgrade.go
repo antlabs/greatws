@@ -51,7 +51,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...ServerOption) (c *C
 	return upgradeInner(w, r, &conf.Config)
 }
 
-func connToFd(c net.Conn) (fd int, err error) {
+func getFdFromConn(c net.Conn) (fd int, err error) {
 	var TCPConn *net.TCPConn
 	var ok bool
 	TCPConn, ok = c.(*net.TCPConn)
@@ -60,16 +60,20 @@ func connToFd(c net.Conn) (fd int, err error) {
 	}
 	file, err := TCPConn.File()
 	if err != nil {
-		panic(err)
+		return 0, err
 	}
 	fd = int(file.Fd())
-	unix.SetNonblock(fd, true)
+	err = unix.SetNonblock(fd, true)
+	if err != nil {
+		unix.Close(fd)
+		fd = 0
+	}
 	return
 }
 
 func newConn(fd int, client bool, conf *Config) *Conn {
 	c := &Conn{
-		c: conn{
+		conn: conn{
 			fd:   fd,
 			wbuf: make([]byte, 1024),
 		},
@@ -93,7 +97,11 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 	// var read *bufio.Reader
 	var conn net.Conn
 	conn, _, err = hi.Hijack()
-	fd, err := connToFd(conn)
+	if err != nil {
+		return nil, err
+	}
+
+	fd, err := getFdFromConn(conn)
 	if err != nil {
 		conn.Close()
 		return nil, err
