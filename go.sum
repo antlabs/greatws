@@ -1,4 +1,4 @@
-github.com/antlabs/wsutil v0.1.2 h1:8H6E0eMJ2Wp0qi9YGDeyG3DlIfIZncw2NSScC5bYSBQ=
-github.com/antlabs/wsutil v0.1.2/go.mod h1:7ec5eUM7nmKW+Oi6F1I58iatOeL9k+yIsfOh1zh910g=
+github.com/antlabs/wsutil v0.1.3 h1:ojMbfZdExWp2sy77hn6ECFrYmZLQJMBs8g2WaTwQ6Qc=
+github.com/antlabs/wsutil v0.1.3/go.mod h1:7ec5eUM7nmKW+Oi6F1I58iatOeL9k+yIsfOh1zh910g=
 golang.org/x/sys v0.12.0 h1:CM0HF96J0hcLAwsHPJZjfdNzs0gftsLfgKt57wWHJ0o=
 golang.org/x/sys v0.12.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=

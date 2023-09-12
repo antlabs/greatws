@@ -25,9 +25,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/antlabs/wsutil/bytespool"
+	"github.com/antlabs/wsutil/enum"
 	"github.com/antlabs/wsutil/errs"
 	"github.com/antlabs/wsutil/fixedwriter"
 	"github.com/antlabs/wsutil/frame"
+	"github.com/antlabs/wsutil/mask"
 	"github.com/antlabs/wsutil/opcode"
 	"golang.org/x/sys/unix"
 )
@@ -35,14 +38,6 @@ import (
 const (
 	maxControlFrameSize = 125
 )
-
-type FrameHeader struct {
-	PayloadLen int64
-	Opcode     opcode.Opcode
-	MaskKey    uint32
-	Mask       bool
-	head       byte
-}
 
 type frameState int
 
@@ -53,13 +48,14 @@ const (
 )
 
 type conn struct {
-	fd       int    // 文件描述符fd
-	rbuf     []byte // 读缓冲区
-	ri       int    // 读索引
-	wbuf     []byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	curState frameState
+	fd       int        // 文件描述符fd
+	rbuf     []byte     // 读缓冲区
+	wbuf     []byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	rr       int        // rbuf读索引
+	rw       int        // rbuf写索引
+	curState frameState // 保存当前状态机的状态
 	haveSize int
-	rh       FrameHeader
+	rh       frame.FrameHeader
 
 	fragmentFramePayload []byte // 存放分片帧的缓冲区
 	fragmentFrameHeader  *frame.FrameHeader
@@ -106,18 +102,18 @@ func (c *Conn) readHeader() (err error) {
 	// 开始解析frame
 	if state == frameStateHeaderStart {
 		// fin rsv1 rsv2 rsv3 opcode
-		if len(c.rbuf)-c.ri < 2 {
+		if len(c.rbuf)-c.rr < 2 {
 			return
 		}
-		c.rh.head = c.rbuf[c.ri]
+		c.rh.Head = c.rbuf[c.rr]
 
 		// h.Fin = head[0]&(1<<7) > 0
 		// h.Rsv1 = head[0]&(1<<6) > 0
 		// h.Rsv2 = head[0]&(1<<5) > 0
 		// h.Rsv3 = head[0]&(1<<4) > 0
-		c.rh.Opcode = opcode.Opcode(c.rh.head & 0xF)
+		c.rh.Opcode = opcode.Opcode(c.rh.Head & 0xF)
 
-		maskAndPayloadLen := c.rbuf[c.ri+1]
+		maskAndPayloadLen := c.rbuf[c.rr+1]
 		have := 0
 		c.rh.Mask = maskAndPayloadLen&(1<<7) > 0
 
@@ -147,15 +143,15 @@ func (c *Conn) readHeader() (err error) {
 		}
 		c.curState, state = frameStateHeaderPayloadAndMask, frameStateHeaderPayloadAndMask
 		c.haveSize = have
-		c.ri += 2
+		c.rr += 2
 	}
 
 	if state == frameStateHeaderPayloadAndMask {
-		if len(c.rbuf)-c.ri < c.haveSize {
+		if len(c.rbuf)-c.rr < c.haveSize {
 			return
 		}
 		have := c.haveSize
-		head := c.rbuf[c.ri : c.ri+have]
+		head := c.rbuf[c.rr : c.rr+have]
 		switch c.rh.PayloadLen {
 		case 126:
 			c.rh.PayloadLen = int64(binary.BigEndian.Uint16(head[:2]))
@@ -197,6 +193,65 @@ func decode(payload []byte) ([]byte, error) {
 	}
 	r2.Close()
 	return o.Bytes(), nil
+}
+
+func (c *Conn) leftMove() {
+	if c.rr == 0 {
+		return
+	}
+	// b.CountMove++
+	// b.MoveBytes += b.W - b.R
+	copy(c.rbuf, c.rbuf[c.rr:c.rw])
+	c.rw -= c.rr
+	c.rr = 0
+}
+
+func (c *Conn) writeCap() int {
+	return len(c.rbuf[c.rw:])
+}
+
+// 需要考虑几种情况
+// 返回完整Payload逻辑
+// 1. 当前的rbuf长度不够，需要重新分配
+// 2. 当前的rbuf长度够，但是数据没有读完整
+// 返回分片Paylod逻辑
+// TODO
+func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
+	// 如果缓存区不够, 重新分配
+	multipletimes := c.windowsMultipleTimesPayloadSize
+	// 已读取未处理的数据
+	readUnhandle := int64(c.rw - c.rr)
+	// 情况 1，需要读的长度 > 剩余可用空间(未写的+已经被读取走的)
+	if c.rh.PayloadLen-readUnhandle > int64(len(c.rbuf[c.rw:])+c.rr) {
+		// 1.取得旧的buf
+		oldBuf := c.rbuf
+		// 2.获取新的buf
+		newBuf := bytespool.GetBytes(int(float32(c.rh.PayloadLen+enum.MaxFrameHeaderSize) * multipletimes))
+		// 3.重置缓存区
+		c.rbuf = *newBuf
+		// 4.将旧的buf放回池子里
+		bytespool.PutBytes(&oldBuf)
+
+		// 情况 2。 空间是够的，需要挪一挪, 把已经读过的覆盖掉
+	} else if c.rh.PayloadLen-readUnhandle > int64(c.writeCap()) {
+		c.leftMove()
+	}
+
+	// 前面的reset已经保证了，buffer的大小是够的
+	needRead := c.rh.PayloadLen - readUnhandle
+
+	if needRead > 0 {
+		return
+	}
+
+	f.Payload = c.rbuf[c.rr : c.rr+int(c.rh.PayloadLen)]
+	f.FrameHeader = c.rh
+	c.rr += int(c.rh.PayloadLen)
+	if c.rh.Mask {
+		mask.Mask(f.Payload, c.rh.MaskKey)
+	}
+
+	return f, true, nil
 }
 
 func (c *Conn) processCallback(f frame.Frame) (err error) {
@@ -358,14 +413,27 @@ func (c *Conn) WriteTimeout(op Opcode, data []byte, t time.Duration) (err error)
 }
 
 func (c *Conn) readPayloadAndCallback() {
-	if true {
-		var f frame.Frame
-		c.processCallback(f)
+	if c.curState == frameStatePayload {
+		f, success, err := c.readPayload()
+		if err != nil {
+			// TODO
+		}
+
+		if success {
+			c.processCallback(f)
+		}
 	}
 }
 
 func (c *Conn) processWebsocketFrame() {
 	// 1. 处理frame header
+	for {
+		_, err := unix.Read(c.fd, c.rbuf[c.rw:])
+		if err != nil {
+			// TODO: 区别是EAGAIN还是其他错误
+			break
+		}
+	}
 	c.readHeader()
 
 	// 2. 处理frame payload

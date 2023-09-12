@@ -11,12 +11,14 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 //go:build linux
 // +build linux
 
 package bigws
 
 import (
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -54,26 +56,10 @@ func (eventLoop *EventLoop) apiFree() {
 }
 
 // 新加事件
-func (eventLoop *EventLoop) apiAddEvent(fd int, mask int) error {
+func (eventLoop *EventLoop) addRead(fd int) error {
 	state := eventLoop.apidata
-	var ee unix.EpollEvent
-	op := unix.EPOLL_CTL_MOD
-	if eventLoop.events[fd].mask == NONE {
-		op = unix.EPOLL_CTL_ADD
-	}
 
-	mask |= eventLoop.events[fd].mask
-
-	if mask&READABLE > 0 {
-		ee.Events |= unix.EPOLLIN
-	}
-
-	if mask&WRITABLE > 0 {
-		ee.Events |= unix.EPOLLOUT
-	}
-	ee.Fd = fd
-
-	return unix.EpollCtl(state.epfd, op, fd, &ee)
+	return unix.EpollCtl(state.epfd, op, fd, &unix.EpollEvent{Fd: int32(fd), Events: syscall.EPOLLERR | syscall.EPOLLHUP | syscall.EPOLLRDHUP | syscall.EPOLLPRI | syscall.EPOLLIN})
 }
 
 // 删除事件
