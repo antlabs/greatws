@@ -29,7 +29,7 @@ type apiState struct {
 }
 
 // 创建
-func (eventLoop *EventLoop) apiCreate() (err error) {
+func (e *EventLoop) apiCreate() (err error) {
 	var state apiState
 
 	state.epfd, err = unix.EpollCreate1(0)
@@ -37,36 +37,36 @@ func (eventLoop *EventLoop) apiCreate() (err error) {
 		return err
 	}
 
-	eventLoop.apidata = &state
+	e.apidata = &state
 	return nil
 }
 
 // 调速大小
-func (eventLoop *EventLoop) apiResize(setSize int) {
-	oldEvents := eventLoop.apidata.events
-	newEvents := make([]eventLoop, setSize)
+func (e *EventLoop) apiResize(setSize int) {
+	oldEvents := e.apidata.events
+	newEvents := make([]e, setSize)
 	copy(newEvents, oldEvents)
-	eventLoop.apidata.events = newEvents
+	e.apidata.events = newEvents
 }
 
 // 释放
-func (eventLoop *EventLoop) apiFree() {
-	unix.Close(eventLoop.apidata.epfd)
+func (e *EventLoop) apiFree() {
+	unix.Close(e.apidata.epfd)
 }
 
 // 新加事件
-func (eventLoop *EventLoop) addRead(fd int) error {
-	state := eventLoop.apidata
+func (e *EventLoop) addRead(fd int) error {
+	state := e.apidata
 
 	return unix.EpollCtl(state.epfd, op, fd, &unix.EpollEvent{Fd: int32(fd), Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN})
 }
 
 // 删除事件
-func (eventLoop *EventLoop) apiDelEvent(fd int, delmask int) (err error) {
-	state := eventLoop.apidata
+func (e *EventLoop) apiDelEvent(fd int, delmask int) (err error) {
+	state := e.apidata
 	var ee unix.EpollEvent
 
-	mask := eventLoop.events[fd].mask & ^delmask
+	mask := e.events[fd].mask & ^delmask
 
 	if mask&READABLE > 0 {
 		ee.Events |= unix.EPOLLIN
@@ -86,8 +86,8 @@ func (eventLoop *EventLoop) apiDelEvent(fd int, delmask int) (err error) {
 }
 
 // 事件循环
-func (eventLoop *EventLoop) apiPoll(tv time.Duration) int {
-	state := eventLoop.apidata
+func (e *EventLoop) apiPoll(tv time.Duration) int {
+	state := e.apidata
 
 	msec := -1
 	if tv > 0 {
@@ -115,8 +115,8 @@ func (eventLoop *EventLoop) apiPoll(tv time.Duration) int {
 				mask |= READABLE
 				mask |= WRITABLE
 			}
-			eventLoop.fired[j].fd = e.Fd
-			eventLoop.fired[j].mask = mask
+			e.fired[j].fd = e.Fd
+			e.fired[j].mask = mask
 		}
 
 	}
