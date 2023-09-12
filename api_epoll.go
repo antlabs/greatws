@@ -18,7 +18,6 @@
 package bigws
 
 import (
-	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -59,7 +58,7 @@ func (eventLoop *EventLoop) apiFree() {
 func (eventLoop *EventLoop) addRead(fd int) error {
 	state := eventLoop.apidata
 
-	return unix.EpollCtl(state.epfd, op, fd, &unix.EpollEvent{Fd: int32(fd), Events: syscall.EPOLLERR | syscall.EPOLLHUP | syscall.EPOLLRDHUP | syscall.EPOLLPRI | syscall.EPOLLIN})
+	return unix.EpollCtl(state.epfd, op, fd, &unix.EpollEvent{Fd: int32(fd), Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN})
 }
 
 // 删除事件
