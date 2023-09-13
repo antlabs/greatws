@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/antlabs/wsutil/bufio2"
 	"github.com/antlabs/wsutil/bytespool"
 	"golang.org/x/sys/unix"
 )
@@ -71,18 +72,6 @@ func getFdFromConn(c net.Conn) (fd int, err error) {
 	return
 }
 
-func newConn(fd int, client bool, conf *Config) *Conn {
-	c := &Conn{
-		conn: conn{
-			fd:   fd,
-			wbuf: make([]byte, 1024),
-		},
-		Config: conf,
-		client: client,
-	}
-	return c
-}
-
 func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn, err error) {
 	if ecode, err := checkRequest(r); err != nil {
 		http.Error(w, err.Error(), ecode)
@@ -96,9 +85,12 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 
 	// var read *bufio.Reader
 	var conn net.Conn
-	conn, _, err = hi.Hijack()
+	conn, rw, err := hi.Hijack()
 	if err != nil {
 		return nil, err
+	}
+	if !conf.disableBufioClearHack {
+		bufio2.ClearReadWriter(rw)
 	}
 
 	fd, err := getFdFromConn(conn)
@@ -106,32 +98,8 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		conn.Close()
 		return nil, err
 	}
-	// 已经dup了一份fd，所以这里可以关闭
-	conn.Close()
-
 	c = newConn(fd, false, conf)
 	conf.multiEventLoop.add(c)
-
-	// TODO
-	// var rw *bufio.ReadWriter
-	// if conf.parseMode == ParseModeWindows {
-	// 	// 这里不需要rw，直接使用conn
-	// 	conn, rw, err = hi.Hijack()
-	// 	if !conf.disableBufioClearHack {
-	// 		bufio2.ClearReadWriter(rw)
-	// 	}
-	// 	// TODO
-	// 	// rsp.ClearRsp(w)
-	// 	rw = nil
-	// } else {
-	// 	var rw *bufio.ReadWriter
-	// 	conn, rw, err = hi.Hijack()
-	// 	read = rw.Reader
-	// 	rw = nil
-	// }
-	// if err != nil {
-	// 	return nil, err
-	// }
 
 	// 是否打开解压缩
 	// 外层接收压缩, 并且客户端发送扩展过来
@@ -154,12 +122,8 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		return nil, err
 	}
 
-	// var fr fixedreader.FixedReader
-	// var bp bytespool.BytesPool
-	// bp.Init()
-	// if conf.parseMode == ParseModeWindows {
-	// 	fr.Init(conn, bytespool.GetBytes(conf.initPayloadSize()))
-	// }
+	// 已经dup了一份fd，所以这里可以关闭
+	conn.Close()
 
 	conn.SetDeadline(time.Time{})
 	// return newConn(conn, false, conf, fr, read, bp), nil

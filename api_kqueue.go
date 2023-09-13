@@ -18,6 +18,8 @@
 package bigws
 
 import (
+	"fmt"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -36,6 +38,13 @@ func (e *EventLoop) apiCreate() (err error) {
 		return err
 	}
 	e.apidata = &state
+	e.apidata.events = make([]unix.Kevent_t, 1024)
+
+	_, err = unix.Kevent(state.kqfd, []unix.Kevent_t{{
+		Ident:  0,
+		Filter: unix.EVFILT_USER,
+		Flags:  unix.EV_ADD | unix.EV_CLEAR,
+	}}, nil, nil)
 	return nil
 }
 
@@ -55,6 +64,7 @@ func (e *EventLoop) trigger() {
 	unix.Kevent(e.apidata.kqfd, []unix.Kevent_t{{Ident: 0, Filter: unix.EVFILT_USER, Fflags: unix.NOTE_TRIGGER}}, nil, nil)
 }
 
+// 新加读事件
 func (e *EventLoop) addRead(fd int) {
 	e.mu.Lock()
 	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_READ, Flags: unix.EV_ADD})
@@ -62,6 +72,7 @@ func (e *EventLoop) addRead(fd int) {
 	e.trigger()
 }
 
+// 新加写事件
 func (e *EventLoop) addWrite(fd int) {
 	e.mu.Lock()
 	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_ADD})
@@ -69,54 +80,15 @@ func (e *EventLoop) addWrite(fd int) {
 	e.trigger()
 }
 
-func (e *EventLoop) apiAddEvent(fd int, mask Action) (err error) {
-	state := e.apidata
-	ke := make([]unix.Kevent_t, 0, 2)
-
-	if mask&READABLE > 0 {
-		ke = append(ke, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_READ, Flags: unix.EV_ADD})
-	}
-
-	if mask&WRITABLE > 0 {
-		ke = append(ke, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_ADD})
-	}
-
-	if len(ke) > 0 {
-		_, err = unix.Kevent(state.kqfd, ke, nil, nil)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+func (e *EventLoop) del(fd int) {
+	e.mu.Lock()
+	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Flags: syscall.EV_DELETE, Filter: syscall.EVFILT_READ})
+	e.mu.Unlock()
+	e.trigger()
 }
 
-func (e *EventLoop) apiDelEvent(fd int, mask Action) (err error) {
+func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 	state := e.apidata
-	ke := make([]unix.Kevent_t, 0, 2)
-
-	if mask&READABLE > 0 {
-		ke = append(ke, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_READ, Flags: unix.EV_DELETE})
-	}
-
-	if mask&WRITABLE > 0 {
-		ke = append(ke, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_DELETE})
-	}
-
-	if len(ke) > 0 {
-		_, err = unix.Kevent(state.kqfd, ke, nil, nil)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (e *EventLoop) apiPoll(tv time.Duration) int {
-	state := e.apidata
-
-	retVal := 0
-	numEvents := 0
 
 	var changes []unix.Kevent_t
 	e.mu.Lock()
@@ -128,14 +100,17 @@ func (e *EventLoop) apiPoll(tv time.Duration) int {
 		timeout.Sec = int64(tv / time.Second)
 		timeout.Nsec = int64(tv % time.Second)
 
-		retVal, _ = unix.Kevent(state.kqfd, changes, state.events, &timeout)
+		retVal, err = unix.Kevent(state.kqfd, changes, state.events, &timeout)
 	} else {
-		retVal, _ = unix.Kevent(state.kqfd, changes, state.events, nil)
+		retVal, err = unix.Kevent(state.kqfd, changes, state.events, nil)
+	}
+	if err != nil {
+		return 0, err
 	}
 
+	fmt.Printf("有新的事件发生 %d, err :%v\n", retVal, err)
 	if retVal > 0 {
-		numEvents = retVal
-		for j := 0; j < numEvents; j++ {
+		for j := 0; j < retVal; j++ {
 			ev := &state.events[j]
 			fd := int(ev.Ident)
 			conn := e.parent.getConn(fd)
@@ -153,9 +128,14 @@ func (e *EventLoop) apiPoll(tv time.Duration) int {
 				// 刷新下直接写入失败的数据
 				conn.flushOrClose()
 			}
+			if ev.Flags&syscall.EV_DELETE > 0 {
+				conn.Close()
+				continue
+			}
+
 		}
 	}
-	return numEvents
+	return retVal, nil
 }
 
 func apiName() string {

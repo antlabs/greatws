@@ -19,3 +19,9 @@
 
 # Go workspace file
 go.work
+
+autobahn-client-darwin-arm64
+autobahn-client-linux-amd64
+autobahn-server-darwin-arm64
+autobahn-server-darwin-arm64-arena
+autobahn-server-linux-amd64

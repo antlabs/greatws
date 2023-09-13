@@ -70,6 +70,19 @@ type Conn struct {
 	closed  int32 // 是否关闭
 }
 
+func newConn(fd int, client bool, conf *Config) *Conn {
+	c := &Conn{
+		conn: conn{
+			fd:   fd,
+			rbuf: make([]byte, 1024),
+			wbuf: make([]byte, 1024),
+		},
+		Config: conf,
+		client: client,
+	}
+	return c
+}
+
 func (c *conn) Write(b []byte) (n int, err error) {
 	// 如果缓冲区有数据，将数据写入缓冲区
 	curN := len(b)
@@ -428,11 +441,19 @@ func (c *Conn) readPayloadAndCallback() {
 func (c *Conn) processWebsocketFrame() {
 	// 1. 处理frame header
 	for {
-		_, err := unix.Read(c.fd, c.rbuf[c.rw:])
+		n, err := unix.Read(c.fd, c.rbuf[c.rw:])
+		fmt.Printf("read %d bytes\n", n)
 		if err != nil {
 			// TODO: 区别是EAGAIN还是其他错误
 			break
 		}
+
+		if n == 0 {
+			c.Callback.OnClose(c, io.EOF)
+			unix.Close(c.fd)
+			return
+		}
+		c.rw += n
 	}
 	c.readHeader()
 

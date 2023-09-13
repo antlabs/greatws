@@ -16,6 +16,7 @@ package bigws
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -31,11 +32,13 @@ type EventLoop struct {
 }
 
 // 初始化函数
-func CreateEventLoop(setSize int) *EventLoop {
-	return &EventLoop{
+func CreateEventLoop(setSize int) (e *EventLoop, err error) {
+	e = &EventLoop{
 		setSize: setSize,
 		maxFd:   -1,
 	}
+	err = e.apiCreate()
+	return e, err
 }
 
 // 柔性关闭所有的连接
@@ -71,7 +74,11 @@ func (el *EventLoop) StartLoop() {
 
 func (el *EventLoop) Loop() {
 	for !el.shutdown {
-		el.apiPoll(time.Duration(0))
+		_, err := el.apiPoll(time.Duration(time.Second * 100))
+		if err != nil {
+			fmt.Println("apiPoll error:", err)
+			return
+		}
 	}
 }
 

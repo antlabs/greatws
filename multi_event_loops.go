@@ -13,8 +13,16 @@ func (m *MultiEventLoop) initDefaultSetting() {
 	m.maxEventNum = 10000
 }
 
+func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
+	m, err := NewMultiEventLoop(opts...)
+	if err != nil {
+		panic(err)
+	}
+	return m
+}
+
 // 创建一个多路事件循环
-func CreateMultiEventLoop(opts ...EvOption) *MultiEventLoop {
+func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m := &MultiEventLoop{}
 
 	m.initDefaultSetting()
@@ -24,10 +32,13 @@ func CreateMultiEventLoop(opts ...EvOption) *MultiEventLoop {
 
 	m.loops = make([]*EventLoop, m.numLoops)
 	for i := 0; i < m.numLoops; i++ {
-		m.loops[i] = CreateEventLoop(m.maxEventNum)
+		m.loops[i], err = CreateEventLoop(m.maxEventNum)
+		if err != nil {
+			return nil, err
+		}
 		m.loops[i].parent = m
 	}
-	return m
+	return m, nil
 }
 
 // 启动多路事件循环

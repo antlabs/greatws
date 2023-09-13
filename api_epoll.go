@@ -44,7 +44,7 @@ func (e *EventLoop) apiCreate() (err error) {
 // 调速大小
 func (e *EventLoop) apiResize(setSize int) {
 	oldEvents := e.apidata.events
-	newEvents := make([]e, setSize)
+	newEvents := make([]unix.EpollEvent, setSize)
 	copy(newEvents, oldEvents)
 	e.apidata.events = newEvents
 }
@@ -54,74 +54,69 @@ func (e *EventLoop) apiFree() {
 	unix.Close(e.apidata.epfd)
 }
 
-// 新加事件
+// 新加读事件
 func (e *EventLoop) addRead(fd int) error {
 	state := e.apidata
 
-	return unix.EpollCtl(state.epfd, op, fd, &unix.EpollEvent{Fd: int32(fd), Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN})
+	return unix.EpollCtl(state.epfd, unix.EPOLL_CTL_ADD, fd, &unix.EpollEvent{Fd: int32(fd), Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN})
+}
+
+// 新加写事件
+func (e *EventLoop) addWrite(fd int) error {
+	state := e.apidata
+	return unix.EpollCtl(state.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
+		Fd:     int32(fd),
+		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT,
+	},
+	)
 }
 
 // 删除事件
-func (e *EventLoop) apiDelEvent(fd int, delmask int) (err error) {
+func (e *EventLoop) del(fd int) error {
 	state := e.apidata
-	var ee unix.EpollEvent
-
-	mask := e.events[fd].mask & ^delmask
-
-	if mask&READABLE > 0 {
-		ee.Events |= unix.EPOLLIN
-	}
-
-	if mask&WRITABLE > 0 {
-		ee.Events |= unix.EPOLLOUT
-	}
-	ee.Fd = fd
-	if mask != NONE {
-		err = unix.EpollCtl(state.epfd, unix.EPOLL_CTL_MOD, fd, ee)
-	} else {
-		err = unix.EpollCtl(state.epfd, unix.EPOLL_CTL_DEL, fd, ee)
-	}
-
-	return err
+	return unix.EpollCtl(state.epfd, unix.EPOLL_CTL_DEL, fd, &unix.EpollEvent{Fd: int32(fd)})
 }
 
 // 事件循环
-func (e *EventLoop) apiPoll(tv time.Duration) int {
+func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 	state := e.apidata
 
 	msec := -1
 	if tv > 0 {
-		msec = tv / time.Millisecond
+		msec = int(tv) / int(time.Millisecond)
 	}
 
-	retVal, _ := unix.EpollWait(state.epfd, state.events, msec)
+	retVal, err = unix.EpollWait(state.epfd, state.events, msec)
+	if err != nil {
+		return 0, err
+	}
 	numEvents := 0
 	if retVal > 0 {
 		numEvents = retVal
-		for j := 0; i < numEvents; j++ {
-			mask := 0
-			e := &state.events[j]
-			if e.Events&unix.EPOLLIN > 0 {
-				mask |= READABLE
+		for i := 0; i < numEvents; i++ {
+			ev := &state.events[i]
+			conn := e.parent.getConn(int(ev.Fd))
+			if conn == nil {
+				unix.Close(int(ev.Fd))
+				continue
 			}
-			if e.Events&unix.EPOLLOUT > 0 {
-				mask |= WRITABLE
+			if ev.Events&(unix.EPOLLIN|unix.EPOLLPRI) > 0 {
+				// 读取数据，这里要发行下websocket的解析变成流式解析
+				conn.processWebsocketFrame()
 			}
-			if e.EpollEvent&unix.EPOLLERR > 0 {
-				mask |= READABLE
-				mask |= WRITABLE
+			if ev.Events&unix.EPOLLOUT > 0 {
+				// 刷新下直接写入失败的数据
+				conn.flushOrClose()
 			}
-			if e.EpollEvent&unix.EPOLLHUP > 0 {
-				mask |= READABLE
-				mask |= WRITABLE
+			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
+				// TODO 完善下细节
+				conn.Close()
 			}
-			e.fired[j].fd = e.Fd
-			e.fired[j].mask = mask
 		}
 
 	}
 
-	return numEvents
+	return numEvents, nil
 }
 
 func apiName() string {
