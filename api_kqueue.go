@@ -67,7 +67,7 @@ func (e *EventLoop) trigger() {
 // 新加读事件
 func (e *EventLoop) addRead(fd int) {
 	e.mu.Lock()
-	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_READ, Flags: unix.EV_ADD})
+	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_READ, Flags: unix.EV_ADD | unix.EV_CLEAR})
 	e.mu.Unlock()
 	e.trigger()
 }
@@ -75,7 +75,7 @@ func (e *EventLoop) addRead(fd int) {
 // 新加写事件
 func (e *EventLoop) addWrite(fd int) {
 	e.mu.Lock()
-	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_ADD})
+	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_ADD | unix.EV_CLEAR})
 	e.mu.Unlock()
 	e.trigger()
 }
@@ -113,6 +113,7 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 		for j := 0; j < retVal; j++ {
 			ev := &state.events[j]
 			fd := int(ev.Ident)
+			fmt.Printf("fd :%d, filter :%x, flags :%x\n", fd, ev.Filter, ev.Flags)
 			conn := e.parent.getConn(fd)
 			if conn == nil {
 				unix.Close(fd)
@@ -121,16 +122,16 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 
 			if ev.Filter == unix.EVFILT_READ {
 				// 读取数据，这里要发行下websocket的解析变成流式解析
-				conn.processWebsocketFrame()
+				_, _ = conn.processWebsocketFrame()
+				if ev.Flags&unix.EV_EOF != 0 {
+					fmt.Printf("conn.Close")
+					conn.Close()
+				}
 			}
 
 			if ev.Filter == unix.EVFILT_WRITE {
 				// 刷新下直接写入失败的数据
 				conn.flushOrClose()
-			}
-			if ev.Flags&syscall.EV_DELETE > 0 {
-				conn.Close()
-				continue
 			}
 
 		}

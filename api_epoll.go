@@ -37,6 +37,7 @@ func (e *EventLoop) apiCreate() (err error) {
 		return err
 	}
 
+	state.events = make([]unix.EpollEvent, 1024)
 	e.apidata = &state
 	return nil
 }

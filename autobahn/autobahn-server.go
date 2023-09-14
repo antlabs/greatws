@@ -25,7 +25,7 @@ func (e *echoHandler) OnOpen(c *bigws.Conn) {
 }
 
 func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
-	// fmt.Println("OnMessage:", c, msg, op)
+	fmt.Printf("OnMessage: %s, len(%d), op:%d\n", msg, len(msg), op)
 	// if err := c.WriteTimeout(op, msg, 3*time.Second); err != nil {
 	// 	fmt.Println("write fail:", err)
 	// }

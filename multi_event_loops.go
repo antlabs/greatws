@@ -50,20 +50,20 @@ func (m *MultiEventLoop) Start() {
 
 // 添加一个连接到多路事件循环
 func (m *MultiEventLoop) add(c *Conn) {
-	index := c.getFd() % m.numLoops
+	index := c.getFd() % len(m.loops)
 	m.loops[index].addRead(c.getFd())
 	m.loops[index].conns.Store(c.getFd(), c)
 }
 
 // 从多路事件循环中删除一个连接
 func (m *MultiEventLoop) del(c *Conn) {
-	index := c.getFd() % m.numLoops
+	index := c.getFd() % len(m.loops)
 	m.loops[index].conns.Delete(c.getFd())
 	unix.Close(c.getFd())
 }
 
 func (m *MultiEventLoop) getConn(fd int) *Conn {
-	index := fd % m.numLoops
+	index := fd % len(m.loops)
 	v, ok := m.loops[index].conns.Load(fd)
 	if !ok {
 		return nil

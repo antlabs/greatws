@@ -48,14 +48,14 @@ const (
 )
 
 type conn struct {
-	fd       int        // 文件描述符fd
-	rbuf     []byte     // 读缓冲区
-	wbuf     []byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	rr       int        // rbuf读索引
-	rw       int        // rbuf写索引
-	curState frameState // 保存当前状态机的状态
-	haveSize int
-	rh       frame.FrameHeader
+	fd             int        // 文件描述符fd
+	rbuf           []byte     // 读缓冲区
+	wbuf           []byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	rr             int        // rbuf读索引
+	rw             int        // rbuf写索引
+	curState       frameState // 保存当前状态机的状态
+	lenAndMaskSize int        // payload长度和掩码的长度
+	rh             frame.FrameHeader
 
 	fragmentFramePayload []byte // 存放分片帧的缓冲区
 	fragmentFrameHeader  *frame.FrameHeader
@@ -75,7 +75,7 @@ func newConn(fd int, client bool, conf *Config) *Conn {
 		conn: conn{
 			fd:   fd,
 			rbuf: make([]byte, 1024),
-			wbuf: make([]byte, 1024),
+			wbuf: make([]byte, 0, 1024),
 		},
 		Config: conf,
 		client: client,
@@ -115,7 +115,7 @@ func (c *Conn) readHeader() (err error) {
 	// 开始解析frame
 	if state == frameStateHeaderStart {
 		// fin rsv1 rsv2 rsv3 opcode
-		if len(c.rbuf)-c.rr < 2 {
+		if c.rw-c.rr < 2 {
 			return
 		}
 		c.rh.Head = c.rbuf[c.rr]
@@ -132,7 +132,6 @@ func (c *Conn) readHeader() (err error) {
 
 		if c.rh.Mask {
 			have += 4
-			// size += 4
 		}
 
 		c.rh.PayloadLen = int64(maskAndPayloadLen & 0x7F)
@@ -155,15 +154,15 @@ func (c *Conn) readHeader() (err error) {
 			return errs.ErrFramePayloadLength
 		}
 		c.curState, state = frameStateHeaderPayloadAndMask, frameStateHeaderPayloadAndMask
-		c.haveSize = have
+		c.lenAndMaskSize = have
 		c.rr += 2
 	}
 
 	if state == frameStateHeaderPayloadAndMask {
-		if len(c.rbuf)-c.rr < c.haveSize {
+		if c.rw-c.rr < c.lenAndMaskSize {
 			return
 		}
-		have := c.haveSize
+		have := c.lenAndMaskSize
 		head := c.rbuf[c.rr : c.rr+have]
 		switch c.rh.PayloadLen {
 		case 126:
@@ -178,6 +177,7 @@ func (c *Conn) readHeader() (err error) {
 			c.rh.MaskKey = binary.LittleEndian.Uint32(head[:4])
 		}
 		c.curState = frameStatePayload
+		c.rr += c.lenAndMaskSize
 	}
 
 	return
@@ -253,6 +253,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 	// 前面的reset已经保证了，buffer的大小是够的
 	needRead := c.rh.PayloadLen - readUnhandle
 
+	fmt.Printf("needRead:%d:rr(%d):rw(%d):PayloadLen(%d)\n", needRead, c.rr, c.rw, c.rh.PayloadLen)
 	if needRead > 0 {
 		return
 	}
@@ -429,37 +430,41 @@ func (c *Conn) readPayloadAndCallback() {
 	if c.curState == frameStatePayload {
 		f, success, err := c.readPayload()
 		if err != nil {
-			// TODO
+			fmt.Printf("read payload err: %v\n", err)
 		}
 
+		fmt.Printf("read payload, success:%t\n", success)
 		if success {
 			c.processCallback(f)
+			c.curState = frameStateHeaderStart
+			fmt.Printf("callback after rr:%d, rw:%d\n", c.rr, c.rw)
 		}
 	}
 }
 
-func (c *Conn) processWebsocketFrame() {
+func (c *Conn) processWebsocketFrame() (n int, err error) {
 	// 1. 处理frame header
 	for {
-		n, err := unix.Read(c.fd, c.rbuf[c.rw:])
+		n, err = unix.Read(c.fd, c.rbuf[c.rw:])
 		fmt.Printf("read %d bytes\n", n)
 		if err != nil {
 			// TODO: 区别是EAGAIN还是其他错误
 			break
 		}
-
-		if n == 0 {
-			c.Callback.OnClose(c, io.EOF)
-			unix.Close(c.fd)
-			return
+		if n <= 0 {
+			break
 		}
+
 		c.rw += n
 	}
-	c.readHeader()
+	if err := c.readHeader(); err != nil {
+		fmt.Printf("read header err: %v\n", err)
+	}
 
 	// 2. 处理frame payload
 	// TODO 这个函数要放到协程里面运行
 	c.readPayloadAndCallback()
+	return
 }
 
 // 该函数有3个动作
@@ -531,4 +536,5 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 }
 
 func (c *Conn) Close() {
+	unix.Close(c.fd)
 }

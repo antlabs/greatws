@@ -17,6 +17,7 @@ package bigws
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -67,7 +68,7 @@ func getFdFromConn(c net.Conn) (fd int, err error) {
 	err = unix.SetNonblock(fd, true)
 	if err != nil {
 		unix.Close(fd)
-		fd = 0
+		fd = -1
 	}
 	return
 }
@@ -93,14 +94,6 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		bufio2.ClearReadWriter(rw)
 	}
 
-	fd, err := getFdFromConn(conn)
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-	c = newConn(fd, false, conf)
-	conf.multiEventLoop.add(c)
-
 	// 是否打开解压缩
 	// 外层接收压缩, 并且客户端发送扩展过来
 	if conf.decompression {
@@ -122,10 +115,18 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		return nil, err
 	}
 
+	conn.SetDeadline(time.Time{})
+	fd, err := getFdFromConn(conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
 	// 已经dup了一份fd，所以这里可以关闭
 	conn.Close()
+	c = newConn(fd, false, conf)
+	conf.multiEventLoop.add(c)
+	fmt.Printf("new fd = %d\n", fd)
 
-	conn.SetDeadline(time.Time{})
 	// return newConn(conn, false, conf, fr, read, bp), nil
-	return nil, nil
+	return c, nil
 }
