@@ -52,7 +52,21 @@ func (m *MultiEventLoop) Start() {
 func (m *MultiEventLoop) add(c *Conn) {
 	index := c.getFd() % len(m.loops)
 	m.loops[index].addRead(c.getFd())
-	m.loops[index].conns.Store(c.getFd(), c)
+	m.loops[index].conns.LoadOrStore(c.getFd(), c)
+}
+
+// 添加一个可写事件到多路事件循环
+func (m *MultiEventLoop) addWrite(c *Conn) {
+	index := c.getFd() % len(m.loops)
+	m.loops[index].addWrite(c.getFd())
+	m.loops[index].conns.LoadOrStore(c.getFd(), c)
+}
+
+// 添加一个可写事件到多路事件循环
+func (m *MultiEventLoop) delWrite(c *Conn) {
+	index := c.getFd() % len(m.loops)
+	m.loops[index].delWrite(c.getFd())
+	m.loops[index].conns.LoadOrStore(c.getFd(), c)
 }
 
 // 从多路事件循环中删除一个连接
@@ -62,6 +76,7 @@ func (m *MultiEventLoop) del(c *Conn) {
 	unix.Close(c.getFd())
 }
 
+// 获取一个连接
 func (m *MultiEventLoop) getConn(fd int) *Conn {
 	index := fd % len(m.loops)
 	v, ok := m.loops[index].conns.Load(fd)

@@ -83,8 +83,8 @@ func newConn(fd int, client bool, conf *Config) *Conn {
 	return c
 }
 
-func (c *conn) Write(b []byte) (n int, err error) {
-	// 如果缓冲区有数据，将数据写入缓冲区
+func (c *Conn) Write(b []byte) (n int, err error) {
+	// 如果缓冲区有数据，合并数据
 	curN := len(b)
 	if len(c.wbuf) > 0 {
 		c.wbuf = append(c.wbuf, b...)
@@ -94,10 +94,12 @@ func (c *conn) Write(b []byte) (n int, err error) {
 	// 直接写入数据
 	n, err = unix.Write(c.fd, b)
 	if err != nil {
+		// 如果是EAGAIN或EINTR错误，说明是写缓冲区满了，或者被信号中断，将数据写入缓冲区
 		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
 			newBuf := make([]byte, len(b)-n)
 			copy(newBuf, b[n:])
 			c.wbuf = newBuf
+			c.multiEventLoop.addWrite(c)
 			return curN, nil
 		}
 	}
@@ -485,7 +487,11 @@ func (c *Conn) flushOrClose() {
 		}
 		unix.Close(c.fd)
 		atomic.StoreInt32(&c.closed, 1)
+		return
 	}
+
+	// 如果写成功就把write事件从事件循环中删除
+	c.multiEventLoop.delWrite(c)
 }
 
 type wrapBuffer struct {
@@ -530,7 +536,7 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 
 	var fw fixedwriter.FixedWriter
 	c.mu.Lock()
-	err = frame.WriteFrame(&fw, &c.conn, writeBuf, true, rsv1, c.client, op, maskValue)
+	err = frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
 	c.mu.Unlock()
 	return err
 }

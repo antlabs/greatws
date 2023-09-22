@@ -72,6 +72,13 @@ func (e *EventLoop) addRead(fd int) {
 	e.trigger()
 }
 
+func (e *EventLoop) delWrite(fd int) {
+	e.mu.Lock()
+	e.apidata.changes = append(e.apidata.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_DELETE | unix.EV_CLEAR})
+	e.mu.Unlock()
+	e.trigger()
+}
+
 // 新加写事件
 func (e *EventLoop) addWrite(fd int) {
 	e.mu.Lock()

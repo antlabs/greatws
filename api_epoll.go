@@ -23,22 +23,21 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type apiState struct {
-	epfd   int
-	events []unix.EpollEvent
+type epollState struct {
+	epfd     int
+	events   []unix.EpollEvent
+	isCreate bool
 }
 
-// 创建
-func (e *EventLoop) apiCreate() (err error) {
-	var state apiState
-
-	state.epfd, err = unix.EpollCreate1(0)
+// 创建epoll handler
+func (e *epollState) apiCreate(flag int) (err error) {
+	e.epfd, err = unix.EpollCreate1(0)
 	if err != nil {
 		return err
 	}
 
-	state.events = make([]unix.EpollEvent, 1024)
-	e.apidata = &state
+	e.events = make([]unix.EpollEvent, 1024)
+	e.isCreate = true
 	return nil
 }
 
@@ -51,43 +50,66 @@ func (e *EventLoop) apiResize(setSize int) {
 }
 
 // 释放
-func (e *EventLoop) apiFree() {
-	unix.Close(e.apidata.epfd)
+func (e *epollState) apiFree() {
+	if e.isCreate {
+		unix.Close(e.epfd)
+	}
 }
 
 // 新加读事件
-func (e *EventLoop) addRead(fd int) error {
-	state := e.apidata
+func (e *epollState) addRead(fd int) error {
+	if !e.isCreate {
+		return nil
+	}
 
-	return unix.EpollCtl(state.epfd, unix.EPOLL_CTL_ADD, fd, &unix.EpollEvent{Fd: int32(fd), Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN})
+	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_ADD, fd, &unix.EpollEvent{
+		Fd:     int32(fd),
+		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN,
+	})
 }
 
-// 新加写事件
-func (e *EventLoop) addWrite(fd int) error {
-	state := e.apidata
-	return unix.EpollCtl(state.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
+func (e *epollState) addWrite(fd int) error {
+	if !e.isCreate {
+		return nil
+	}
+
+	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
 		Fd:     int32(fd),
 		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT,
-	},
-	)
+	})
+}
+
+func (e *epollState) delWrite(fd int) error {
+	if !e.isCreate {
+		return nil
+	}
+
+	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
+		Fd:     int32(fd),
+		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN 
+	})
 }
 
 // 删除事件
-func (e *EventLoop) del(fd int) error {
-	state := e.apidata
-	return unix.EpollCtl(state.epfd, unix.EPOLL_CTL_DEL, fd, &unix.EpollEvent{Fd: int32(fd)})
+func (e *epollState) del(fd int) error {
+	if !e.isCreate {
+		return nil
+	}
+	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_DEL, fd, &unix.EpollEvent{Fd: int32(fd)})
 }
 
 // 事件循环
-func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
-	state := e.apidata
+func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
+	if !e.isCreate {
+		return
+	}
 
 	msec := -1
 	if tv > 0 {
 		msec = int(tv) / int(time.Millisecond)
 	}
 
-	retVal, err = unix.EpollWait(state.epfd, state.events, msec)
+	retVal, err = unix.EpollWait(e.epfd, e.events, msec)
 	if err != nil {
 		return 0, err
 	}
@@ -95,7 +117,7 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 	if retVal > 0 {
 		numEvents = retVal
 		for i := 0; i < numEvents; i++ {
-			ev := &state.events[i]
+			ev := &e.events[i]
 			conn := e.parent.getConn(int(ev.Fd))
 			if conn == nil {
 				unix.Close(int(ev.Fd))
@@ -118,8 +140,4 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 	}
 
 	return numEvents, nil
-}
-
-func apiName() string {
-	return "epoll"
 }
