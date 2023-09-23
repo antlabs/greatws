@@ -17,54 +17,45 @@
 
 package bigws
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // linux 有两个api，一个是epoll，一个是io_uring
 type apiState struct {
-	epollState
-	iouringState
+	linuxApi
+}
+
+type linuxApi interface {
+	apiFree()
+	apiPoll(tv time.Duration) (retVal int, err error)
+	apiName() string
+	addRead(fd int) error
+	addWrite(fd int) error
+	delWrite(fd int) error
 }
 
 // 创建
-func (e *EventLoop) apiCreate() (err error) {
+func (e *EventLoop) apiCreate(flag evFlag) (err error) {
 	var state apiState
 
-	state.epollState.apiCreate()
-	state.iouringState.apiCreate()
-	e.apidata = &state
-	return nil
-}
-
-// 释放
-func (e *EventLoop) apiFree() {
-	e.epollState.apiFree()
-	e.iouringState.apiFree()
-}
-
-// 新增
-func (e *EventLoop) addRead(fd int) error {
-	e.epollState.addRead(fd)
-	e.iouringState.addRead(fd)
-}
-
-func (e *EventLoop) addWrite(fd int) error {
-	e.epollState.addWrite(fd)
-	e.iouringState.addWrite(fd)
-}
-
-func (e *EventLoop) del(fd int) error {
-	e.epollState.del(fd)
-	e.iouringState.del(fd)
-}
-
-func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
-	e.epollState.apiPoll(tv)
-	e.iouringState.apiPoll(tv)
-}
-
-func (e.EventLoop) apiName() string {
-	if e.epollState.isCreate {
-		return "epoll"
+	if flag&EVENT_EPOLL != 0 {
+		la, err := apiEpollCreate(e)
+		if err != nil {
+			return err
+		}
+		state.linuxApi = la
+	} else if flag&EVENT_IOURING != 0 {
+		la, err := apiIoUringCreate(e, 1024)
+		if err != nil {
+			return err
+		}
+		state.linuxApi = la
+	} else {
+		return fmt.Errorf("not support api")
 	}
-	return "io_uring"
+
+	e.apiState = &state
+	return nil
 }

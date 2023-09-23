@@ -15,20 +15,26 @@ package bigws
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 )
 
+type evFlag int
+
+const (
+	EVENT_EPOLL evFlag = 1 << iota
+	EVENT_IOURING
+)
+
 type EventLoop struct {
-	mu       sync.Mutex
-	conns    sync.Map
-	maxFd    int // highest file descriptor currently registered
-	setSize  int // max number of file descriptors tracked
-	apidata  *apiState
-	shutdown bool
-	parent   *MultiEventLoop
+	mu        sync.Mutex
+	conns     sync.Map
+	maxFd     int // highest file descriptor currently registered
+	setSize   int // max number of file descriptors tracked
+	*apiState     // 每个平台对应的异步io接口/epoll/kqueue/iouring/iocp
+	shutdown  bool
+	parent    *MultiEventLoop
 }
 
 // 初始化函数
@@ -37,34 +43,12 @@ func CreateEventLoop(setSize int) (e *EventLoop, err error) {
 		setSize: setSize,
 		maxFd:   -1,
 	}
-	err = e.apiCreate()
+	err = e.apiCreate(EVENT_EPOLL)
 	return e, err
 }
 
 // 柔性关闭所有的连接
 func (e *EventLoop) Shutdown(ctx context.Context) error {
-	return nil
-}
-
-func (el *EventLoop) GetSetSize() int {
-	return el.setSize
-}
-
-func (el *EventLoop) Resize(setSize int) error {
-	if setSize == el.setSize {
-		return nil
-	}
-
-	if el.maxFd >= setSize {
-		return errors.New("TODO 定义下错误消息")
-	}
-
-	el.apiResize(setSize)
-
-	el.setSize = setSize
-
-	for i := el.maxFd + 1; i < setSize; i++ {
-	}
 	return nil
 }
 
@@ -83,5 +67,5 @@ func (el *EventLoop) Loop() {
 }
 
 func (el *EventLoop) GetApiName() string {
-	return apiName()
+	return el.apiName()
 }

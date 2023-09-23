@@ -38,6 +38,8 @@ type Config struct {
 	maxDelayWriteDuration    time.Duration // 最大延迟时间, 默认值是10ms
 	subProtocols             []string      // 设置支持的子协议
 	multiEventLoop           *MultiEventLoop
+
+	useIoUring bool // 如果全貌和io-uring 系统调用
 }
 
 func (c *Config) initPayloadSize() int {

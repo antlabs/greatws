@@ -446,18 +446,21 @@ func (c *Conn) readPayloadAndCallback() {
 
 func (c *Conn) processWebsocketFrame() (n int, err error) {
 	// 1. 处理frame header
-	for {
-		n, err = unix.Read(c.fd, c.rbuf[c.rw:])
-		fmt.Printf("read %d bytes\n", n)
-		if err != nil {
-			// TODO: 区别是EAGAIN还是其他错误
-			break
-		}
-		if n <= 0 {
-			break
-		}
+	if !c.useIoUring {
+		// 不使用io_uring的直接调用read获取buffer数据
+		for {
+			n, err = unix.Read(c.fd, c.rbuf[c.rw:])
+			fmt.Printf("read %d bytes\n", n)
+			if err != nil {
+				// TODO: 区别是EAGAIN还是其他错误
+				break
+			}
+			if n <= 0 {
+				break
+			}
 
-		c.rw += n
+			c.rw += n
+		}
 	}
 	if err := c.readHeader(); err != nil {
 		fmt.Printf("read header err: %v\n", err)
