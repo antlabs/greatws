@@ -51,8 +51,8 @@ func (m *MultiEventLoop) Start() {
 // 添加一个连接到多路事件循环
 func (m *MultiEventLoop) add(c *Conn) {
 	index := c.getFd() % len(m.loops)
-	m.loops[index].addRead(c.getFd())
 	m.loops[index].conns.LoadOrStore(c.getFd(), c)
+	m.loops[index].addRead(c.getFd())
 }
 
 // 添加一个可写事件到多路事件循环

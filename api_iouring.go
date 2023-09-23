@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -76,7 +77,42 @@ func (e *iouringState) shutdown(err error) {
 	})
 }
 
+type iouringConn struct {
+	*iouringState
+	fd int
+}
+
+func newIouringConn(e *iouringState, fd int) *iouringConn {
+	return &iouringConn{iouringState: e, fd: fd}
+}
+
+func (e *iouringConn) Write(data []byte) (n int, err error) {
+	nn := 0 // number of bytes sent
+	var cb completionCallback
+	var pinner runtime.Pinner
+	pinner.Pin(&data[0])
+	cb = func(res int32, flags uint32, err *ErrErrno) {
+		nn += int(res) // bytes written so far
+		if err != nil {
+			pinner.Unpin()
+			tc.shutdown(err)
+			return
+		}
+		if nn >= len(data) {
+			pinner.Unpin()
+			tc.up.Sent() // all sent call callback
+			return
+		}
+		// send rest of the data
+		e.prepareSend(e.fd, data[nn:], cb)
+	}
+	e.prepareSend(e.fd, data, cb)
+}
+
 func (e *iouringState) addRead(fd int) error {
+	c := e.parent.parent.getConn(fd)
+	c.w = e
+
 	var cb completionCallback
 	cb = func(res int32, flags uint32, err *ErrErrno) {
 		if err != nil {

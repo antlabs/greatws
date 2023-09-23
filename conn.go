@@ -64,6 +64,7 @@ type conn struct {
 type Conn struct {
 	conn
 
+	w       io.Writer
 	mu      sync.Mutex
 	client  bool  // 客户端为true，服务端为false
 	*Config       // 配置
@@ -84,6 +85,10 @@ func newConn(fd int, client bool, conf *Config) *Conn {
 }
 
 func (c *Conn) Write(b []byte) (n int, err error) {
+	if c.w != nil {
+		return c.w.Write(b)
+	}
+
 	// 如果缓冲区有数据，合并数据
 	curN := len(b)
 	if len(c.wbuf) > 0 {
