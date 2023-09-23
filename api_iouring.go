@@ -5,6 +5,7 @@ package bigws
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"syscall"
@@ -35,10 +36,80 @@ func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error
 }
 
 func (e *iouringState) apiFree() {
+	e.closePendingConnections()
+	// run loop until all operations finishes
+	if err := l.runUntilDone(); err != nil {
+		return err
+	}
+}
+
+func (e *iouringState) shutdown(err error) {
+	if err == nil {
+		panic("tcp conn missing shutdown reason")
+	}
+	if e.shutdownError != nil {
+		return
+	}
+	e.shutdownError = err
+	e.prepareShutdown(tc.fd, func(res int32, flags uint32, err *ErrErrno) {
+		if err != nil {
+			if !err.ConnectionReset() {
+				slog.Debug("tcp conn shutdown", "fd", tc.fd, "err", err, "res", res, "flags", flags)
+			}
+			if tc.closedCallback != nil {
+				e.closedCallback()
+			}
+			// TODO
+			tc.up.Closed(tc.shutdownError)
+			return
+		}
+
+		e.prepareClose(tc.fd, func(res int32, flags uint32, err *ErrErrno) {
+			if err != nil {
+				slog.Debug("tcp conn close", "fd", tc.fd, "errno", err, "res", res, "flags", flags)
+			}
+			if e.closedCallback != nil {
+				e.closedCallback()
+			}
+			e.Closed(tc.shutdownError)
+		})
+	})
 }
 
 func (e *iouringState) addRead(fd int) error {
-	e.prepareMultishotAccept(fd, cb)
+	var cb completionCallback
+	cb = func(res int32, flags uint32, err *ErrErrno) {
+		if err != nil {
+			if err.Temporary() {
+				slog.Debug("tcp conn read temporary error", "error", err.Error())
+				tc.loop.prepareRecv(tc.fd, cb)
+				return
+			}
+			if !err.ConnectionReset() {
+				slog.Warn("tcp conn read error", "error", err.Error())
+			}
+			tc.shutdown(err)
+			return
+		}
+		if res == 0 {
+			e.shutdown(io.EOF)
+			return
+		}
+		buf, id := tc.loop.buffers.get(res, flags)
+
+		// TODO
+		tc.up.Received(buf)
+		// 读取数据后，释放buffer
+		e.buffers.release(buf, id)
+		if !isMultiShot(flags) {
+			slog.Debug("tcp conn multishot terminated", slog.Uint64("flags", uint64(flags)), slog.String("error", err.Error()))
+			// io_uring can terminate multishot recv when cqe is full
+			// need to restart it then
+			// ref: https://lore.kernel.org/lkml/20220630091231.1456789-3-dylany@fb.com/T/#re5daa4d5b6e4390ecf024315d9693e5d18d61f10
+			e.prepareRecv(fd, cb)
+		}
+	}
+	e.prepareRecv(fd, cb)
 	return nil
 }
 
@@ -100,6 +171,15 @@ func (e *iouringState) runCtx(ctx context.Context, timeout time.Duration) error 
 	return nil
 }
 
+func (e *iouringState) prepareRecv(fd int, cb completionCallback) {
+	l.prepare(func(sqe *giouring.SubmissionQueueEntry) {
+		sqe.PrepareRecvMultishot(fd, 0, 0, 0)
+		sqe.Flags = giouring.SqeBufferSelect
+		sqe.BufIG = buffersGroupID
+		l.callbacks.set(sqe, cb)
+	})
+}
+
 func (e *iouringState) runUntilDone() error {
 	for {
 		if e.callbacks.count() == 0 {
@@ -116,11 +196,6 @@ func (e *iouringState) runUntilDone() error {
 
 func (e *iouringState) apiPoll(tv time.Duration) (retVal int, err error) {
 	if err := l.runCtx(ctx, time.Millisecond*333); err != nil {
-		return err
-	}
-	l.closePendingConnections()
-	// run loop until all operations finishes
-	if err := l.runUntilDone(); err != nil {
 		return err
 	}
 	return 0, nil
