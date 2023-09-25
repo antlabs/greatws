@@ -4,23 +4,35 @@
 package bigws
 
 import (
-	"context"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/pawelgaczynski/giouring"
 )
 
+const (
+	batchSize      = 128
+	buffersGroupID = 0 // currently using only 1 provided buffer group
+)
+
 type (
 	completionCallback = func(res int32, flags uint32, err *ErrErrno)
-	iouringState       struct {
+	operation          = func(*giouring.SubmissionQueueEntry)
+
+	iouringState struct {
 		ring        *giouring.Ring
 		ringEntries uint32
 		parent      *EventLoop
+		callbacks   callbacks
+		buffers     providedBuffers
+		pending     []operation
 	}
 )
 
@@ -37,42 +49,44 @@ func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error
 }
 
 func (e *iouringState) apiFree() {
-	e.closePendingConnections()
+	// TODO
+	// e.closePendingConnections()
 	// run loop until all operations finishes
-	if err := l.runUntilDone(); err != nil {
-		return err
-	}
+	_ = e.runUntilDone()
 }
 
-func (e *iouringState) shutdown(err error) {
+func (e *iouringState) prepareShutdown(fd int, cb completionCallback) {
+	e.prepare(func(sqe *giouring.SubmissionQueueEntry) {
+		const SHUT_RDWR = 2
+		sqe.PrepareShutdown(fd, SHUT_RDWR)
+		// TODO
+		e.callbacks.set(sqe, cb)
+	})
+}
+
+func (e *iouringState) shutdown(err error, fd int) {
 	if err == nil {
 		panic("tcp conn missing shutdown reason")
 	}
-	if e.shutdownError != nil {
-		return
-	}
-	e.shutdownError = err
-	e.prepareShutdown(tc.fd, func(res int32, flags uint32, err *ErrErrno) {
+	// if e.shutdownError != nil {
+	// 	return
+	// }
+	// e.shutdownError = err
+	e.prepareShutdown(fd, func(res int32, flags uint32, err *ErrErrno) {
 		if err != nil {
 			if !err.ConnectionReset() {
-				slog.Debug("tcp conn shutdown", "fd", tc.fd, "err", err, "res", res, "flags", flags)
+				slog.Debug("tcp conn shutdown", "fd", fd, "err", err, "res", res, "flags", flags)
 			}
-			if tc.closedCallback != nil {
-				e.closedCallback()
-			}
-			// TODO
-			tc.up.Closed(tc.shutdownError)
+			// TODO:: close fd
 			return
 		}
 
-		e.prepareClose(tc.fd, func(res int32, flags uint32, err *ErrErrno) {
+		e.prepareClose(fd, func(res int32, flags uint32, err *ErrErrno) {
 			if err != nil {
-				slog.Debug("tcp conn close", "fd", tc.fd, "errno", err, "res", res, "flags", flags)
+				slog.Debug("tcp conn close", "fd", fd, "errno", err, "res", res, "flags", flags)
 			}
-			if e.closedCallback != nil {
-				e.closedCallback()
-			}
-			e.Closed(tc.shutdownError)
+			// TODO: close fd
+			// e.Closed(tc.shutdownError)
 		})
 	})
 }
@@ -95,46 +109,48 @@ func (e *iouringConn) Write(data []byte) (n int, err error) {
 		nn += int(res) // bytes written so far
 		if err != nil {
 			pinner.Unpin()
-			tc.shutdown(err)
+			e.shutdown(err, e.fd)
 			return
 		}
 		if nn >= len(data) {
 			pinner.Unpin()
-			tc.up.Sent() // all sent call callback
+			// tc.up.Sent() // all sent call callback
 			return
 		}
 		// send rest of the data
 		e.prepareSend(e.fd, data[nn:], cb)
 	}
+
 	e.prepareSend(e.fd, data, cb)
+	return len(data), nil
 }
 
 func (e *iouringState) addRead(fd int) error {
 	c := e.parent.parent.getConn(fd)
-	c.w = e
+	c.w = newIouringConn(e, fd)
 
 	var cb completionCallback
 	cb = func(res int32, flags uint32, err *ErrErrno) {
 		if err != nil {
 			if err.Temporary() {
 				slog.Debug("tcp conn read temporary error", "error", err.Error())
-				tc.loop.prepareRecv(tc.fd, cb)
+				e.prepareRecv(fd, cb)
 				return
 			}
 			if !err.ConnectionReset() {
 				slog.Warn("tcp conn read error", "error", err.Error())
 			}
-			tc.shutdown(err)
+			e.shutdown(err, fd)
 			return
 		}
 		if res == 0 {
-			e.shutdown(io.EOF)
+			e.shutdown(io.EOF, fd)
 			return
 		}
-		buf, id := tc.loop.buffers.get(res, flags)
+		buf, id := e.buffers.get(res, flags)
 
 		// TODO
-		tc.up.Received(buf)
+		// tc.up.Received(buf)
 		// 读取数据后，释放buffer
 		e.buffers.release(buf, id)
 		if !isMultiShot(flags) {
@@ -187,16 +203,8 @@ func (e *iouringState) runOnce() error {
 	return nil
 }
 
-func (e *iouringState) runCtx(ctx context.Context, timeout time.Duration) error {
+func (e *iouringState) run(timeout time.Duration) error {
 	ts := syscall.NsecToTimespec(int64(timeout))
-	done := func() bool {
-		select {
-		case <-ctx.Done():
-			return true
-		default:
-		}
-		return false
-	}
 	if err := e.submit(); err != nil {
 		return err
 	}
@@ -207,21 +215,9 @@ func (e *iouringState) runCtx(ctx context.Context, timeout time.Duration) error 
 	return nil
 }
 
-func (e *iouringState) prepareRecv(fd int, cb completionCallback) {
-	l.prepare(func(sqe *giouring.SubmissionQueueEntry) {
-		sqe.PrepareRecvMultishot(fd, 0, 0, 0)
-		sqe.Flags = giouring.SqeBufferSelect
-		sqe.BufIG = buffersGroupID
-		l.callbacks.set(sqe, cb)
-	})
-}
-
 func (e *iouringState) runUntilDone() error {
 	for {
 		if e.callbacks.count() == 0 {
-			if len(e.connections) > 0 || len(e.listeners) > 0 {
-				panic("unclean shutdown")
-			}
 			return nil
 		}
 		if err := e.runOnce(); err != nil {
@@ -231,8 +227,8 @@ func (e *iouringState) runUntilDone() error {
 }
 
 func (e *iouringState) apiPoll(tv time.Duration) (retVal int, err error) {
-	if err := l.runCtx(ctx, time.Millisecond*333); err != nil {
-		return err
+	if err := e.run(time.Millisecond * 333); err != nil {
+		return 0, err
 	}
 	return 0, nil
 }
@@ -258,6 +254,40 @@ func (e *iouringState) prepare(op operation) {
 	op(sqe)
 }
 
+func (e *iouringState) preparePending() {
+	prepared := 0
+	for _, op := range e.pending {
+		sqe := e.ring.GetSQE()
+		if sqe == nil {
+			break
+		}
+		op(sqe)
+		prepared++
+	}
+	if prepared == len(e.pending) {
+		e.pending = nil
+	} else {
+		e.pending = e.pending[prepared:]
+	}
+}
+
+func (e *iouringState) submitAndWait(waitNr uint32) error {
+	for {
+		if len(e.pending) > 0 {
+			_, err := e.ring.SubmitAndWait(0)
+			if err == nil {
+				e.preparePending()
+			}
+		}
+
+		_, err := e.ring.SubmitAndWait(waitNr)
+		if err != nil && TemporaryError(err) {
+			continue
+		}
+		return err
+	}
+}
+
 func (e *iouringState) submit() error {
 	return e.submitAndWait(0)
 }
@@ -268,6 +298,20 @@ func (e *iouringState) prepareRecv(fd int, cb completionCallback) {
 		sqe.Flags = giouring.SqeBufferSelect
 		sqe.BufIG = buffersGroupID
 		e.callbacks.set(sqe, cb)
+	})
+}
+
+func (l *iouringState) prepareSend(fd int, buf []byte, cb completionCallback) {
+	l.prepare(func(sqe *giouring.SubmissionQueueEntry) {
+		sqe.PrepareSend(fd, uintptr(unsafe.Pointer(&buf[0])), uint32(len(buf)), 0)
+		l.callbacks.set(sqe, cb)
+	})
+}
+
+func (l *iouringState) prepareClose(fd int, cb completionCallback) {
+	l.prepare(func(sqe *giouring.SubmissionQueueEntry) {
+		sqe.PrepareClose(fd)
+		l.callbacks.set(sqe, cb)
 	})
 }
 
@@ -308,4 +352,109 @@ func TemporaryError(err error) bool {
 		return true
 	}
 	return false
+}
+
+type callbacks struct {
+	m      map[uint64]completionCallback
+	callNo uint64
+}
+
+func (c *callbacks) init() {
+	c.m = make(map[uint64]completionCallback)
+	c.callNo = math.MaxUint16 // reserve first few userdata values for internal use
+}
+
+func (c *callbacks) set(sqe *giouring.SubmissionQueueEntry, cb completionCallback) {
+	newNo := atomic.AddUint64(&c.callNo, 1)
+	c.m[newNo] = cb
+	sqe.UserData = newNo
+}
+
+func (c *callbacks) get(cqe *giouring.CompletionQueueEvent) completionCallback {
+	ms := isMultiShot(cqe.Flags)
+	cb := c.m[cqe.UserData]
+	if !ms {
+		delete(c.m, cqe.UserData)
+	}
+	return cb
+}
+
+func (c *callbacks) count() int {
+	return len(c.m)
+}
+
+func isMultiShot(flags uint32) bool {
+	return flags&giouring.CQEFMore > 0
+}
+
+type providedBuffers struct {
+	br      *giouring.BufAndRing
+	data    []byte
+	entries uint32
+	bufLen  uint32
+}
+
+func (b *providedBuffers) init(ring *giouring.Ring, entries uint32, bufLen uint32) error {
+	b.entries = entries
+	b.bufLen = bufLen
+	// mmap allocated space for all buffers
+	var err error
+	size := int(b.entries * b.bufLen)
+	b.data, err = syscall.Mmap(-1, 0, size,
+		syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
+	if err != nil {
+		return err
+	}
+	// share buffers with io_uring
+	b.br, err = ring.SetupBufRing(b.entries, buffersGroupID, 0)
+	if err != nil {
+		return err
+	}
+	for i := uint32(0); i < b.entries; i++ {
+		b.br.BufRingAdd(
+			uintptr(unsafe.Pointer(&b.data[b.bufLen*i])),
+			b.bufLen,
+			uint16(i),
+			giouring.BufRingMask(b.entries),
+			int(i),
+		)
+	}
+	b.br.BufRingAdvance(int(b.entries))
+	return nil
+}
+
+// get provided buffer from cqe res, flags
+func (b *providedBuffers) get(res int32, flags uint32) ([]byte, uint16) {
+	isProvidedBuffer := flags&giouring.CQEFBuffer > 0
+	if !isProvidedBuffer {
+		panic("missing buffer flag")
+	}
+	bufferID := uint16(flags >> giouring.CQEBufferShift)
+	start := uint32(bufferID) * b.bufLen
+	n := uint32(res)
+	return b.data[start : start+n], bufferID
+}
+
+// return provided buffer to the kernel
+func (b *providedBuffers) release(buf []byte, bufferID uint16) {
+	b.br.BufRingAdd(
+		uintptr(unsafe.Pointer(&buf[0])),
+		b.bufLen,
+		uint16(bufferID),
+		giouring.BufRingMask(b.entries),
+		0,
+	)
+	b.br.BufRingAdvance(1)
+}
+
+func (b *providedBuffers) deinit() {
+	_ = syscall.Munmap(b.data)
+}
+
+func cqeErr(c *giouring.CompletionQueueEvent) *ErrErrno {
+	if c.Res > -4096 && c.Res < 0 {
+		errno := syscall.Errno(-c.Res)
+		return &ErrErrno{Errno: errno}
+	}
+	return nil
 }
