@@ -1,15 +1,16 @@
 all:
+	# 1. server
 	# mac, arm64
-	GOOS=darwin GOARCH=arm64 go build -o autobahn-server-darwin-arm64 ./autobahn-server.go 
-	# mac, arm64
-	GOOS=darwin GOARCH=arm64 go build -tags=goexperiment.arenas -o autobahn-server-darwin-arm64-arena ./autobahn-server.go 
+	GOOS=darwin GOARCH=arm64 go build -o autobahn-server-darwin-arm64.out ./autobahn-server.go 
 	# linux amd64
-	GOOS=linux GOARCH=amd64 go build -o autobahn-server-linux-amd64 ./autobahn-server.go 
+	GOOS=linux GOARCH=amd64 go build -o autobahn-server-linux-amd64.out ./autobahn-server.go 
+	# windows amd64
+	GOOS=windows GOARCH=amd64 go build -o autobahn-server-windows-amd64.exe ./autobahn-server.go 
 
 	# mac, arm64
-	GOOS=darwin GOARCH=arm64 go build -o autobahn-client-darwin-arm64 ./autobahn-client.go 
+	#GOOS=darwin GOARCH=arm64 go build -o autobahn-client-darwin-arm64 ./autobahn-client.go 
 	# linux amd64
-	GOOS=linux GOARCH=amd64 go build -o autobahn-client-linux-amd64 ./autobahn-client.go 
+	#GOOS=linux GOARCH=amd64 go build -o autobahn-client-linux-amd64 ./autobahn-client.go 
 
 key:
 	openssl genrsa 2048 > privatekey.pem

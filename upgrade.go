@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"syscall"
 	"time"
 
 	"github.com/antlabs/wsutil/bufio2"
 	"github.com/antlabs/wsutil/bytespool"
-	"golang.org/x/sys/unix"
 )
 
 type UpgradeServer struct {
@@ -53,24 +53,26 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...ServerOption) (c *C
 	return upgradeInner(w, r, &conf.Config)
 }
 
-func getFdFromConn(c net.Conn) (fd int, err error) {
-	var TCPConn *net.TCPConn
-	var ok bool
-	TCPConn, ok = c.(*net.TCPConn)
+func getFdFromConn(c net.Conn) (newFd int, err error) {
+	sc, ok := c.(interface {
+		SyscallConn() (syscall.RawConn, error)
+	})
 	if !ok {
-		return 0, errors.New("not tcp conn")
+		return 0, errors.New("RawConn Unsupported")
 	}
-	file, err := TCPConn.File()
+	rc, err := sc.SyscallConn()
+	if err != nil {
+		return 0, errors.New("RawConn Unsupported")
+	}
+
+	err = rc.Control(func(fd uintptr) {
+		newFd = int(fd)
+	})
 	if err != nil {
 		return 0, err
 	}
-	fd = int(file.Fd())
-	err = unix.SetNonblock(fd, true)
-	if err != nil {
-		unix.Close(fd)
-		fd = -1
-	}
-	return
+
+	return duplicateSocket(int(newFd))
 }
 
 func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn, err error) {

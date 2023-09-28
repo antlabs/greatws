@@ -1,7 +1,5 @@
 package bigws
 
-import "golang.org/x/sys/unix"
-
 type MultiEventLoop struct {
 	numLoops    int
 	maxEventNum int
@@ -73,7 +71,7 @@ func (m *MultiEventLoop) delWrite(c *Conn) {
 func (m *MultiEventLoop) del(c *Conn) {
 	index := c.getFd() % len(m.loops)
 	m.loops[index].conns.Delete(c.getFd())
-	unix.Close(c.getFd())
+	closeFd(c.getFd())
 }
 
 // 获取一个连接
