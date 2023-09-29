@@ -72,11 +72,21 @@ func (e *EventLoop) addRead(c *Conn) error {
 		return err
 	}
 	e.iocp = tmpIocp
-	buf := newIocpRBuf(clientIoRead, c)
+	rbuf := newIocpRBuf(clientIoRead, c)
 	if c.iocpRBuf == nil {
-		c.iocpRBuf = buf
+		c.iocpRBuf = rbuf
 	}
 	e.Unlock()
+
+	rbuf.wsabuf.Buf = &c.rbuf[c.rr:][0]
+	rbuf.wsabuf.Len = uint32(len(c.rbuf) - c.rr)
+	bytesSent := uint32(0)
+	dwFlags := uint32(0)
+	// TODO: 如果等于0， 需要给个大的buf
+	err = windows.WSARecv(windows.Handle(c.fd), &rbuf.wsabuf, 1, &bytesSent, &dwFlags, &rbuf.overlapped, nil)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
