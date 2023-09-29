@@ -6,10 +6,36 @@ package bigws
 import (
 	"errors"
 	"fmt"
+	"io"
+	"sync"
 	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 )
+
+type Conn struct {
+	conn
+
+	wbuf    []byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	w       io.Writer
+	mu      sync.Mutex
+	client  bool  // 客户端为true，服务端为false
+	*Config       // 配置
+	closed  int32 // 是否关闭
+}
+
+func newConn(fd int, client bool, conf *Config) *Conn {
+	c := &Conn{
+		conn: conn{
+			fd:   fd,
+			rbuf: make([]byte, 1024),
+		},
+		wbuf:   make([]byte, 0, 1024),
+		Config: conf,
+		client: client,
+	}
+	return c
+}
 
 func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
@@ -20,6 +46,7 @@ func (c *Conn) Close() {
 }
 
 func (c *Conn) Write(b []byte) (n int, err error) {
+	// c.w 里放的iouring
 	if c.w != nil {
 		return c.w.Write(b)
 	}

@@ -49,7 +49,8 @@ func (e *epollState) apiFree() {
 }
 
 // 新加读事件
-func (e *epollState) addRead(fd int) error {
+func (e *epollState) addRead(c *Conn) error {
+	fd := c.getFd()
 	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_ADD, fd, &unix.EpollEvent{
 		Fd:     int32(fd),
 		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN,

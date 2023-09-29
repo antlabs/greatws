@@ -3,7 +3,6 @@
 
 // 参考文档
 // https://tboox.org/cn/2018/08/16/coroutine-iocp-some-issues/
-// https://github.com/tboox/tbox/blob/6d19e51563d005660d3789bf218d9e376fc84b06/src/tbox/platform/windows/poller_iocp.c#L53
 // https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/netds/winsock/iocp/server/IocpServer.Cpp
 package bigws
 
@@ -64,14 +63,19 @@ func (e *EventLoop) apiFree() {
 	})
 }
 
-func (e *EventLoop) addRead(fd int) error {
+func (e *EventLoop) addRead(c *Conn) error {
+	fd := c.getFd()
 	e.Lock()
-	tmpIocp, err := windows.CreateIoCompletionPort(windows.Handle(fd), e.iocp, 0, 0)
+	tmpIocp, err := windows.CreateIoCompletionPort(windows.Handle(uintptr(fd)), e.iocp, uintptr(unsafe.Pointer(c)), 0)
 	if err != nil {
 		e.Unlock()
 		return err
 	}
 	e.iocp = tmpIocp
+	buf := newIocpRBuf(clientIoRead, c)
+	if c.iocpRBuf == nil {
+		c.iocpRBuf = buf
+	}
 	e.Unlock()
 	return nil
 }
@@ -81,8 +85,63 @@ func (e *EventLoop) addWrite(fd int) error {
 }
 
 func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
-	var qty *uint32
-	windows.GetQueuedCompletionStatus(e.iocp, qty, &fd, &overlapped, 0)
+	var dwIoSize uint32
+	var overlapped *windows.Overlapped
+
+	var buf *iocpBuf
+	buf = (*iocpBuf)((unsafe.Pointer)(overlapped))
+	c := buf.parent
+
+	err = windows.GetQueuedCompletionStatus(e.iocp, &dwIoSize, nil, &overlapped, 0)
+	if err != nil {
+		return 0, nil
+	}
+
+	bytesSent := uint32(0)
+	dwFlags := uint32(0)
+	switch buf.IOOperation {
+	case clientIoWrite:
+		buf.nSentBytes += int(dwIoSize)
+		// 处理写事件
+		if buf.nSentBytes < len(buf.wbuf) {
+			buf.IOOperation = clientIoWrite
+			buf.wsabuf.Buf = &buf.wbuf[buf.nSentBytes:][0]
+			buf.wsabuf.Len = uint32(len(buf.wbuf) - buf.nSentBytes)
+			err = windows.WSASend(windows.Handle(c.fd), &buf.wsabuf, 1, &bytesSent, dwFlags, &buf.overlapped, nil)
+			if err != nil {
+				return 0, err
+			}
+		} else {
+
+			e.Lock()
+			rbuf := c.iocpRBuf
+			if rbuf == nil {
+				rbuf = newIocpRBuf(clientIoRead, c)
+			}
+			e.Unlock()
+			rbuf.wsabuf.Buf = &c.rbuf[c.rr:][0]
+			rbuf.wsabuf.Len = uint32(len(c.rbuf) - c.rr)
+			// TODO: 如果等于0， 需要给个大的buf
+			err = windows.WSARecv(windows.Handle(c.fd), &rbuf.wsabuf, 1, &bytesSent, &dwFlags, &rbuf.overlapped, nil)
+			if err != nil {
+				return 0, err
+			}
+			// 注册下读的事件
+		}
+	case clientIoRead:
+		if _, err := c.processWebsocketFrame(int(dwIoSize)); err != nil {
+			return 0, err
+		}
+		rbuf := c.iocpRBuf
+		rbuf.wsabuf.Buf = &c.rbuf[c.rr:][0]
+		rbuf.wsabuf.Len = uint32(len(c.rbuf) - c.rr)
+		// TODO: 如果等于0， 需要给个大的buf
+		err = windows.WSARecv(windows.Handle(c.fd), &rbuf.wsabuf, 1, &bytesSent, &dwFlags, &rbuf.overlapped, nil)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return 0, nil
 }
 
 func (e *EventLoop) apiName() string {

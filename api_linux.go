@@ -31,7 +31,7 @@ type linuxApi interface {
 	apiFree()
 	apiPoll(tv time.Duration) (retVal int, err error)
 	apiName() string
-	addRead(fd int) error
+	addRead(c *Conn) error
 	addWrite(fd int) error
 	delWrite(fd int) error
 }

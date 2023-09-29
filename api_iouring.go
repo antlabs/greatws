@@ -125,8 +125,9 @@ func (e *iouringConn) Write(data []byte) (n int, err error) {
 	return len(data), nil
 }
 
-func (e *iouringState) addRead(fd int) error {
-	c := e.parent.parent.getConn(fd)
+func (e *iouringState) addRead(c *Conn) error {
+	fd := c.getFd()
+	// c := e.parent.parent.getConn(fd)
 	c.w = newIouringConn(e, fd)
 
 	var cb completionCallback

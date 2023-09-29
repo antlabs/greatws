@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,7 +47,6 @@ const (
 type conn struct {
 	fd             int        // 文件描述符fd
 	rbuf           []byte     // 读缓冲区
-	wbuf           []byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
 	rr             int        // rbuf读索引
 	rw             int        // rbuf写索引
 	curState       frameState // 保存当前状态机的状态
@@ -57,29 +55,6 @@ type conn struct {
 
 	fragmentFramePayload []byte // 存放分片帧的缓冲区
 	fragmentFrameHeader  *frame.FrameHeader
-}
-
-type Conn struct {
-	conn
-
-	w       io.Writer
-	mu      sync.Mutex
-	client  bool  // 客户端为true，服务端为false
-	*Config       // 配置
-	closed  int32 // 是否关闭
-}
-
-func newConn(fd int, client bool, conf *Config) *Conn {
-	c := &Conn{
-		conn: conn{
-			fd:   fd,
-			rbuf: make([]byte, 1024),
-			wbuf: make([]byte, 0, 1024),
-		},
-		Config: conf,
-		client: client,
-	}
-	return c
 }
 
 func (c *Conn) getFd() int {
