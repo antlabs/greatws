@@ -65,12 +65,13 @@ func (e *EventLoop) trigger() {
 }
 
 // 新加读事件
-func (e *EventLoop) addRead(c *Conn) {
+func (e *EventLoop) addRead(c *Conn) error {
 	fd := c.getFd()
 	e.mu.Lock()
 	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_READ, Flags: unix.EV_ADD | unix.EV_CLEAR})
 	e.mu.Unlock()
 	e.trigger()
+	return nil
 }
 
 func (e *EventLoop) delWrite(fd int) {

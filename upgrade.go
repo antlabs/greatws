@@ -126,7 +126,10 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 	// 已经dup了一份fd，所以这里可以关闭
 	conn.Close()
 	c = newConn(fd, false, conf)
-	conf.multiEventLoop.add(c)
+	if err = conf.multiEventLoop.add(c); err != nil {
+		return nil, err
+	}
+
 	fmt.Printf("new fd = %d\n", fd)
 
 	// return newConn(conn, false, conf, fr, read, bp), nil

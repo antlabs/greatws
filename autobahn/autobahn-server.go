@@ -67,7 +67,7 @@ func main() {
 	mux := &http.ServeMux{}
 	mux.HandleFunc("/autobahn", h.echo)
 
-	rawTCP, err := net.Listen("tcp", "localhost:9001")
+	rawTCP, err := net.Listen("tcp", ":9001")
 	if err != nil {
 		fmt.Println("Listen fail:", err)
 		return

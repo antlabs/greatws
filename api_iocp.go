@@ -53,7 +53,9 @@ type apiState struct {
 }
 
 func (e *EventLoop) apiCreate(flag evFlag) (err error) {
-	e.iocp, err = windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 0)
+	var state apiState
+	state.iocp, err = windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 0)
+	e.apiState = &state
 	return err
 }
 
@@ -99,13 +101,13 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 	var overlapped *windows.Overlapped
 
 	var buf *iocpBuf
-	buf = (*iocpBuf)((unsafe.Pointer)(overlapped))
-	c := buf.parent
-
 	err = windows.GetQueuedCompletionStatus(e.iocp, &dwIoSize, nil, &overlapped, 0)
 	if err != nil {
 		return 0, nil
 	}
+
+	buf = (*iocpBuf)((unsafe.Pointer)(overlapped))
+	c := buf.parent
 
 	bytesSent := uint32(0)
 	dwFlags := uint32(0)

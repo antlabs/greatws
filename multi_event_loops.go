@@ -47,10 +47,14 @@ func (m *MultiEventLoop) Start() {
 }
 
 // 添加一个连接到多路事件循环
-func (m *MultiEventLoop) add(c *Conn) {
+func (m *MultiEventLoop) add(c *Conn) error {
 	index := c.getFd() % len(m.loops)
 	m.loops[index].conns.LoadOrStore(c.getFd(), c)
-	m.loops[index].addRead(c)
+	if err := m.loops[index].addRead(c); err != nil {
+		m.loops[index].conns.Delete(c.getFd())
+		return err
+	}
+	return nil
 }
 
 // 添加一个可写事件到多路事件循环
