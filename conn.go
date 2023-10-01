@@ -78,6 +78,7 @@ func (c *Conn) readHeader() (err error) {
 	state := c.curState
 	// 开始解析frame
 	if state == frameStateHeaderStart {
+		// 小于最小的frame头部长度, 有空间就挪一挪
 		if len(c.rbuf)-c.rr < enum.MaxFrameHeaderSize {
 			c.leftMove()
 		}

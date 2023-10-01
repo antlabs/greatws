@@ -63,9 +63,11 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	if err != nil {
 		// 如果是EAGAIN或EINTR错误，说明是写缓冲区满了，或者被信号中断，将数据写入缓冲区
 		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
-			newBuf := make([]byte, len(b)-n)
-			copy(newBuf, b[n:])
-			c.wbuf = newBuf
+			if n > 0 {
+				newBuf := make([]byte, len(b)-n)
+				copy(newBuf, b[n:])
+				c.wbuf = newBuf
+			}
 			c.multiEventLoop.addWrite(c)
 			return curN, nil
 		}
@@ -113,9 +115,11 @@ func (c *Conn) flushOrClose() {
 	n, err := unix.Write(c.fd, c.wbuf)
 	if err != nil {
 		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
-			wbuf := c.wbuf
-			copy(wbuf, wbuf[n:])
-			c.wbuf = wbuf[:len(wbuf)-n]
+			if n > 0 {
+				wbuf := c.wbuf
+				copy(wbuf, wbuf[n:])
+				c.wbuf = wbuf[:len(wbuf)-n]
+			}
 			return
 		}
 		unix.Close(c.fd)
