@@ -84,7 +84,14 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 			n, err = unix.Read(c.fd, c.rbuf[c.rw:])
 			fmt.Printf("read %d bytes, %v, %d, rbuf.len:%d, r:%d, w:%d, %s\n", n, err, len(c.rbuf[c.rw:]), len(c.rbuf), c.rr, c.rw, c.curState)
 			if err != nil {
-				// TODO: 区别是EAGAIN还是其他错误
+				// 信号中断，继续读
+				if errors.Is(err, unix.EINTR) {
+					continue
+				}
+				if !errors.Is(err, unix.EAGAIN) {
+					return 0, err
+				}
+				err = nil
 				break
 			}
 			if n <= 0 {

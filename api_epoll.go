@@ -103,7 +103,10 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 			}
 			if ev.Events&(unix.EPOLLIN|unix.EPOLLPRI) > 0 {
 				// 读取数据，这里要发行下websocket的解析变成流式解析
-				conn.processWebsocketFrame()
+				_, err = conn.processWebsocketFrame()
+				if err != nil {
+					conn.Close()
+				}
 			}
 			if ev.Events&unix.EPOLLOUT > 0 {
 				// 刷新下直接写入失败的数据
