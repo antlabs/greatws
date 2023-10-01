@@ -51,7 +51,7 @@ func (m *MultiEventLoop) add(c *Conn) error {
 	index := c.getFd() % len(m.loops)
 	m.loops[index].conns.LoadOrStore(c.getFd(), c)
 	if err := m.loops[index].addRead(c); err != nil {
-		m.loops[index].conns.Delete(c.getFd())
+		m.del(c)
 		return err
 	}
 	return nil

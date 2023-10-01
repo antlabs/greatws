@@ -130,7 +130,7 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		return nil, err
 	}
 
-	fmt.Printf("new fd = %d\n", fd)
+	fmt.Printf("new fd = %d, %p\n", fd, c)
 
 	// return newConn(conn, false, conf, fr, read, bp), nil
 	return c, nil

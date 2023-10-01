@@ -42,6 +42,7 @@ func duplicateSocket(socketFD int) (int, error) {
 }
 
 func (c *Conn) Close() {
+	c.multiEventLoop.del(c)
 	unix.Close(c.fd)
 }
 
@@ -82,15 +83,19 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for {
 			n, err = unix.Read(c.fd, c.rbuf[c.rw:])
-			fmt.Printf("read %d bytes, %v, %d, rbuf.len:%d, r:%d, w:%d, %s\n", n, err, len(c.rbuf[c.rw:]), len(c.rbuf), c.rr, c.rw, c.curState)
+			fmt.Printf("%p, read %d bytes, %v, %d, rbuf.len:%d, r:%d, w:%d, %s\n",
+				c, n, err, len(c.rbuf[c.rw:]), len(c.rbuf), c.rr, c.rw, c.curState)
+
 			if err != nil {
 				// 信号中断，继续读
 				if errors.Is(err, unix.EINTR) {
 					continue
 				}
+				// 出错返回
 				if !errors.Is(err, unix.EAGAIN) {
 					return 0, err
 				}
+				// 缓冲区没有数据，等待可读
 				err = nil
 				break
 			}
