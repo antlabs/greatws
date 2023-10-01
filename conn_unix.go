@@ -83,7 +83,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for {
 			n, err = unix.Read(c.fd, c.rbuf[c.rw:])
-			fmt.Printf("%p, read %d bytes, %v, %d, rbuf.len:%d, r:%d, w:%d, %s\n",
+			fmt.Printf("%p, read %d bytes, err=%v, free:%d, rbuf.len:%d, r:%d, w:%d, %s, %v\n",
 				c, n, err, len(c.rbuf[c.rw:]), len(c.rbuf), c.rr, c.rw, c.curState)
 
 			if err != nil {
@@ -106,6 +106,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 			c.rw += n
 		}
 	}
+
 	if err := c.readHeader(); err != nil {
 		fmt.Printf("read header err: %v\n", err)
 	}
@@ -134,7 +135,9 @@ func (c *Conn) flushOrClose() {
 			}
 			return
 		}
+		c.multiEventLoop.del(c)
 		unix.Close(c.fd)
+
 		atomic.StoreInt32(&c.closed, 1)
 		return
 	}

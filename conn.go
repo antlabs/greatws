@@ -208,6 +208,11 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 		oldBuf := c.rbuf
 		// 2.获取新的buf
 		newBuf := bytespool.GetBytes(int(float32(c.rh.PayloadLen+enum.MaxFrameHeaderSize) * multipletimes))
+		// 把旧的数据拷贝到新的buf里
+		copy(*newBuf, oldBuf[c.rr:c.rw])
+		c.rw -= c.rr
+		c.rr = 0
+
 		// 3.重置缓存区
 		c.rbuf = *newBuf
 		// 4.将旧的buf放回池子里
@@ -221,7 +226,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 	// 前面的reset已经保证了，buffer的大小是够的
 	needRead := c.rh.PayloadLen - readUnhandle
 
-	fmt.Printf("needRead:%d:rr(%d):rw(%d):PayloadLen(%d)\n", needRead, c.rr, c.rw, c.rh.PayloadLen)
+	fmt.Printf("needRead:%d:rr(%d):rw(%d):PayloadLen(%d), %v\n", needRead, c.rr, c.rw, c.rh.PayloadLen, c.rbuf)
 	if needRead > 0 {
 		return
 	}
@@ -401,7 +406,7 @@ func (c *Conn) readPayloadAndCallback() {
 			fmt.Printf("read payload err: %v\n", err)
 		}
 
-		fmt.Printf("read payload, success:%t\n", success)
+		fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
 		if success {
 			c.processCallback(f)
 			c.curState = frameStateHeaderStart
