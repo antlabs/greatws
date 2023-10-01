@@ -80,7 +80,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for {
 			n, err = unix.Read(c.fd, c.rbuf[c.rw:])
-			fmt.Printf("read %d bytes\n", n)
+			fmt.Printf("read %d bytes, %v, %d, rbuf.len:%d, r:%d, w:%d, %s\n", n, err, len(c.rbuf[c.rw:]), len(c.rbuf), c.rr, c.rw, c.curState)
 			if err != nil {
 				// TODO: 区别是EAGAIN还是其他错误
 				break

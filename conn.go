@@ -38,6 +38,18 @@ const (
 
 type frameState int
 
+func (f frameState) String() string {
+	switch f {
+	case frameStateHeaderStart:
+		return "frameStateHeaderStart"
+	case frameStateHeaderPayloadAndMask:
+		return "frameStateHeaderPayloadAndMask"
+	case frameStatePayload:
+		return "frameStatePayload"
+	}
+	return ""
+}
+
 const (
 	frameStateHeaderStart frameState = iota
 	frameStateHeaderPayloadAndMask
@@ -66,6 +78,9 @@ func (c *Conn) readHeader() (err error) {
 	state := c.curState
 	// 开始解析frame
 	if state == frameStateHeaderStart {
+		if len(c.rbuf)-c.rr < enum.MaxFrameHeaderSize {
+			c.leftMove()
+		}
 		// fin rsv1 rsv2 rsv3 opcode
 		if c.rw-c.rr < 2 {
 			return
