@@ -18,6 +18,7 @@
 package bigws
 
 import (
+	"errors"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -85,6 +86,9 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 
 	retVal, err = unix.EpollWait(e.epfd, e.events, msec)
 	if err != nil {
+		if errors.Is(err, unix.EINTR) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	numEvents := 0
