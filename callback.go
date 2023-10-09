@@ -25,6 +25,7 @@ type (
 	OnOpenFunc func(*Conn)
 )
 
+// 1. 默认的OnOpen, OnMessage, OnClose都是空函数
 type DefCallback struct{}
 
 func (defcallback *DefCallback) OnOpen(_ *Conn) {
@@ -36,7 +37,7 @@ func (defcallback *DefCallback) OnMessage(_ *Conn, _ Opcode, _ []byte) {
 func (defcallback *DefCallback) OnClose(_ *Conn, _ error) {
 }
 
-// 只设置OnMessage, 和OnClose互斥
+// 2. 只设置OnMessage, 和OnClose互斥
 type OnMessageFunc func(*Conn, Opcode, []byte)
 
 func (o OnMessageFunc) OnOpen(_ *Conn) {
@@ -49,7 +50,7 @@ func (o OnMessageFunc) OnMessage(c *Conn, op Opcode, data []byte) {
 func (o OnMessageFunc) OnClose(_ *Conn, _ error) {
 }
 
-// 只设置OnClose, 和OnMessage互斥
+// 3. 只设置OnClose, 和OnMessage互斥
 type OnCloseFunc func(*Conn, error)
 
 func (o OnCloseFunc) OnOpen(_ *Conn) {
@@ -62,6 +63,7 @@ func (o OnCloseFunc) OnClose(c *Conn, err error) {
 	o(c, err)
 }
 
+// 4. 函数转换为接口
 type funcToCallback struct {
 	onOpen    func(*Conn)
 	onMessage func(*Conn, Opcode, []byte)
@@ -84,4 +86,24 @@ func (f *funcToCallback) OnClose(c *Conn, err error) {
 	if f.onClose != nil {
 		f.onClose(c, err)
 	}
+}
+
+type goCallback struct {
+	c Callback
+}
+
+func newGoCallback(c Callback) *goCallback {
+	return &goCallback{c: c}
+}
+
+func (g *goCallback) OnOpen(c *Conn) {
+	g.c.OnOpen(c)
+}
+
+func (g *goCallback) OnMessage(c *Conn, op Opcode, data []byte) {
+	go g.c.OnMessage(c, op, data)
+}
+
+func (g *goCallback) OnClose(c *Conn, err error) {
+	g.c.OnClose(c, err)
 }

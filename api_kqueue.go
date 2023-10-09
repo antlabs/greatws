@@ -56,7 +56,9 @@ func (e *EventLoop) apiResize(setSize int) {
 }
 
 func (e *EventLoop) apiFree() {
-	unix.Close(e.apiState.kqfd)
+	if e.apiState != nil {
+		unix.Close(e.apiState.kqfd)
+	}
 }
 
 // 在另外一个线程唤醒kqueue
@@ -117,12 +119,12 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 		return 0, err
 	}
 
-	fmt.Printf("有新的事件发生 %d, err :%v\n", retVal, err)
+	// fmt.Printf("有新的事件发生 %d, err :%v\n", retVal, err)
 	if retVal > 0 {
 		for j := 0; j < retVal; j++ {
 			ev := &state.events[j]
 			fd := int(ev.Ident)
-			fmt.Printf("fd :%d, filter :%x, flags :%x\n", fd, ev.Filter, ev.Flags)
+			// fmt.Printf("fd :%d, filter :%x, flags :%x\n", fd, ev.Filter, ev.Flags)
 			conn := e.parent.getConn(fd)
 			if conn == nil {
 				unix.Close(fd)

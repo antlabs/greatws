@@ -226,7 +226,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 	// 前面的reset已经保证了，buffer的大小是够的
 	needRead := c.rh.PayloadLen - readUnhandle
 
-	fmt.Printf("needRead:%d:rr(%d):rw(%d):PayloadLen(%d), %v\n", needRead, c.rr, c.rw, c.rh.PayloadLen, c.rbuf)
+	// fmt.Printf("needRead:%d:rr(%d):rw(%d):PayloadLen(%d), %v\n", needRead, c.rr, c.rw, c.rh.PayloadLen, c.rbuf)
 	if needRead > 0 {
 		return
 	}
@@ -399,20 +399,22 @@ func (c *Conn) WriteTimeout(op Opcode, data []byte, t time.Duration) (err error)
 	return c.WriteMessage(op, data)
 }
 
-func (c *Conn) readPayloadAndCallback() {
+func (c *Conn) readPayloadAndCallback() error {
 	if c.curState == frameStatePayload {
 		f, success, err := c.readPayload()
 		if err != nil {
 			fmt.Printf("read payload err: %v\n", err)
+			return err
 		}
 
-		fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
+		// fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
 		if success {
 			c.processCallback(f)
 			c.curState = frameStateHeaderStart
-			fmt.Printf("callback after rr:%d, rw:%d\n", c.rr, c.rw)
+			// fmt.Printf("callback after rr:%d, rw:%d\n", c.rr, c.rw)
 		}
 	}
+	return nil
 }
 
 type wrapBuffer struct {

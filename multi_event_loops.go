@@ -29,6 +29,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	}
 
 	m.loops = make([]*EventLoop, m.numLoops)
+
 	for i := 0; i < m.numLoops; i++ {
 		m.loops[i], err = CreateEventLoop(m.maxEventNum)
 		if err != nil {

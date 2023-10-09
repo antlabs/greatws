@@ -83,8 +83,8 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for {
 			n, err = unix.Read(c.fd, c.rbuf[c.rw:])
-			fmt.Printf("%p, read %d bytes, err=%v, free:%d, rbuf.len:%d, r:%d, w:%d, %s, %v\n",
-				c, n, err, len(c.rbuf[c.rw:]), len(c.rbuf), c.rr, c.rw, c.curState)
+			// fmt.Printf("%p, read %d bytes, err=%v, free:%d, rbuf.len:%d, r:%d, w:%d, %s, %v\n",
+			// 	c, n, err, len(c.rbuf[c.rw:]), len(c.rbuf), c.rr, c.rw, c.curState)
 
 			if err != nil {
 				// 信号中断，继续读
@@ -108,13 +108,13 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 	}
 
 	if err := c.readHeader(); err != nil {
-		fmt.Printf("read header err: %v\n", err)
+		return 0, fmt.Errorf("read header err: %w", err)
+		// fmt.Printf("read header err: %v\n", err)
 	}
 
 	// 2. 处理frame payload
 	// TODO 这个函数要放到协程里面运行
-	c.readPayloadAndCallback()
-	return
+	return 0, c.readPayloadAndCallback()
 }
 
 // 该函数有3个动作
