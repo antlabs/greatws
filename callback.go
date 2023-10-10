@@ -90,10 +90,11 @@ func (f *funcToCallback) OnClose(c *Conn, err error) {
 
 type goCallback struct {
 	c Callback
+	t *task
 }
 
-func newGoCallback(c Callback) *goCallback {
-	return &goCallback{c: c}
+func newGoCallback(c Callback, t *task) *goCallback {
+	return &goCallback{c: c, t: t}
 }
 
 func (g *goCallback) OnOpen(c *Conn) {
@@ -101,7 +102,10 @@ func (g *goCallback) OnOpen(c *Conn) {
 }
 
 func (g *goCallback) OnMessage(c *Conn, op Opcode, data []byte) {
-	go g.c.OnMessage(c, op, data)
+	//	g.c.OnMessage(c, op, data)
+	g.t.addTask(func() {
+		g.c.OnMessage(c, op, data)
+	})
 }
 
 func (g *goCallback) OnClose(c *Conn, err error) {

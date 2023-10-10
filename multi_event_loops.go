@@ -1,13 +1,16 @@
 package bigws
 
+import "runtime"
+
 type MultiEventLoop struct {
 	numLoops    int
 	maxEventNum int
 	loops       []*EventLoop
+	t           *task
 }
 
 func (m *MultiEventLoop) initDefaultSetting() {
-	m.numLoops = 1
+	m.numLoops = 0
 	m.maxEventNum = 10000
 }
 
@@ -16,6 +19,7 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 	if err != nil {
 		panic(err)
 	}
+
 	return m
 }
 
@@ -27,6 +31,12 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	for _, o := range opts {
 		o(m)
 	}
+
+	if m.numLoops == 0 {
+		m.numLoops = runtime.NumCPU()
+	}
+
+	m.t = newTask(100)
 
 	m.loops = make([]*EventLoop, m.numLoops)
 

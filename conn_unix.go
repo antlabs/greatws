@@ -28,7 +28,7 @@ func newConn(fd int, client bool, conf *Config) *Conn {
 	c := &Conn{
 		conn: conn{
 			fd:   fd,
-			rbuf: make([]byte, 1024),
+			rbuf: make([]byte, 1024+15),
 		},
 		wbuf:   make([]byte, 0, 1024),
 		Config: conf,
@@ -100,6 +100,9 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 				break
 			}
 			if n <= 0 {
+				if len(c.rbuf[c.rw:]) == 0 {
+					panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d)", c.rw, c.rr))
+				}
 				break
 			}
 

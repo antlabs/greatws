@@ -24,6 +24,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const (
+
+	// EPOLLET .
+	EPOLLET = 0x80000000
+)
+
 type epollState struct {
 	epfd   int
 	events []unix.EpollEvent
@@ -39,7 +45,7 @@ func apiEpollCreate(parent *EventLoop) (la linuxApi, err error) {
 		return nil, err
 	}
 
-	e.events = make([]unix.EpollEvent, 1024)
+	e.events = make([]unix.EpollEvent, 128)
 	e.parent = parent
 	return &e, nil
 }
@@ -54,7 +60,7 @@ func (e *epollState) addRead(c *Conn) error {
 	fd := c.getFd()
 	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_ADD, fd, &unix.EpollEvent{
 		Fd:     int32(fd),
-		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN,
+		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | EPOLLET,
 	})
 }
 
@@ -101,7 +107,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				unix.Close(int(ev.Fd))
 				continue
 			}
-			if ev.Events&(unix.EPOLLIN|unix.EPOLLPRI) > 0 {
+			if ev.Events&(unix.EPOLLIN|unix.EPOLLRDHUP|unix.EPOLLHUP|unix.EPOLLERR) > 0 {
 				// 读取数据，这里要发行下websocket的解析变成流式解析
 				_, err = conn.processWebsocketFrame()
 				if err != nil {

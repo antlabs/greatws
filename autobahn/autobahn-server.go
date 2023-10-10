@@ -44,11 +44,11 @@ type handler struct {
 
 func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
 	c, err := bigws.Upgrade(w, r,
-		bigws.WithServerReplyPing(),
-		bigws.WithServerDecompression(),
+		// bigws.WithServerReplyPing(),
+		// bigws.WithServerDecompression(),
 		bigws.WithServerIgnorePong(),
 		bigws.WithServerCallback(&echoHandler{}),
-		bigws.WithServerEnableUTF8Check(),
+		// bigws.WithServerEnableUTF8Check(),
 		bigws.WithServerReadTimeout(5*time.Second),
 		bigws.WithServerMultiEventLoop(h.m),
 	)
@@ -61,6 +61,7 @@ func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	var h handler
+
 	h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(8), bigws.WithMaxEventNum(1000))
 	h.m.Start()
 
