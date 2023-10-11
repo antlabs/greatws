@@ -231,9 +231,16 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 		return
 	}
 
-	f.Payload = c.rbuf[c.rr : c.rr+int(c.rh.PayloadLen)]
+	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
+	copy(*newBuf, c.rbuf[c.rr:c.rr+int(c.rh.PayloadLen)])
+	f.Payload = *newBuf
+
 	f.FrameHeader = c.rh
 	c.rr += int(c.rh.PayloadLen)
+	if len(c.rbuf)-c.rw < 1024 {
+		c.leftMove()
+	}
+
 	if c.rh.Mask {
 		mask.Mask(f.Payload, c.rh.MaskKey)
 	}

@@ -105,6 +105,7 @@ func (g *goCallback) OnMessage(c *Conn, op Opcode, data []byte) {
 	//	g.c.OnMessage(c, op, data)
 	g.t.addTask(func() {
 		g.c.OnMessage(c, op, data)
+		PutPayloadBytes(&data)
 	})
 }
 
