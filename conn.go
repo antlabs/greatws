@@ -231,9 +231,10 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 		return
 	}
 
-	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
-	copy(*newBuf, c.rbuf[c.rr:c.rr+int(c.rh.PayloadLen)])
-	f.Payload = *newBuf
+	newBuf := *GetPayloadBytes(int(c.rh.PayloadLen))
+	copy(newBuf, c.rbuf[c.rr:c.rr+int(c.rh.PayloadLen)])
+	newBuf = newBuf[:c.rh.PayloadLen]
+	f.Payload = newBuf
 
 	f.FrameHeader = c.rh
 	c.rr += int(c.rh.PayloadLen)

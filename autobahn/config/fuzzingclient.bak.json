@@ -7,6 +7,13 @@
 			"options": {
 				"version": 18
 			}
+		},
+		{
+			"agent": "tls",
+			"url": "wss://localhost:9002/autobahn",
+			"options": {
+				"version": 18
+			}
 		}
 	],
 	"cases": [

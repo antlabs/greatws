@@ -21,7 +21,10 @@ const (
 	maxIndex = 64
 )
 
-var pools = make([]sync.Pool, 0, maxIndex)
+var (
+	pools      = make([]sync.Pool, 0, maxIndex)
+	emptyBytes = make([]byte, 0)
+)
 
 func selectIndex(n int) int {
 	index := n / page
@@ -29,6 +32,10 @@ func selectIndex(n int) int {
 }
 
 func GetPayloadBytes(n int) (rv *[]byte) {
+	if n == 0 {
+		return &emptyBytes
+	}
+
 	index := selectIndex(n - 1)
 	if index >= len(pools) {
 		rv := make([]byte, n)
@@ -41,6 +48,10 @@ func GetPayloadBytes(n int) (rv *[]byte) {
 }
 
 func PutPayloadBytes(bytes *[]byte) {
+	if bytes == &emptyBytes {
+		return
+	}
+
 	if len(*bytes)%page != 0 {
 		return
 	}

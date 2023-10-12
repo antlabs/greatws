@@ -44,11 +44,11 @@ type handler struct {
 
 func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
 	c, err := bigws.Upgrade(w, r,
-		// bigws.WithServerReplyPing(),
-		// bigws.WithServerDecompression(),
+		bigws.WithServerReplyPing(),
+		bigws.WithServerDecompression(),
 		bigws.WithServerIgnorePong(),
 		bigws.WithServerCallback(&echoHandler{}),
-		// bigws.WithServerEnableUTF8Check(),
+		bigws.WithServerEnableUTF8Check(),
 		bigws.WithServerReadTimeout(5*time.Second),
 		bigws.WithServerMultiEventLoop(h.m),
 	)
