@@ -2,8 +2,6 @@ package bigws
 
 import (
 	"sync"
-
-	"github.com/antlabs/wsutil/enum"
 )
 
 func init() {
@@ -11,7 +9,7 @@ func init() {
 		j := i
 		pools = append(pools, sync.Pool{
 			New: func() interface{} {
-				buf := make([]byte, j*page+enum.MaxFrameHeaderSize)
+				buf := make([]byte, j*page)
 				return &buf
 			},
 		})
@@ -37,7 +35,9 @@ func GetPayloadBytes(n int) (rv *[]byte) {
 		return &rv
 	}
 
-	return pools[index].Get().(*[]byte)
+	rv2 := *pools[index].Get().(*[]byte)
+	rv2 = rv2[:cap(rv2)]
+	return &rv2
 }
 
 func PutPayloadBytes(bytes *[]byte) {

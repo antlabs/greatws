@@ -24,3 +24,12 @@ func Test_Pool(t *testing.T) {
 		}
 	}
 }
+
+func Test_PutGet(t *testing.T) {
+	buf := GetPayloadBytes(1024)
+	if len(*buf) != 1024 {
+		t.Fatalf("GetPayloadBytes error:%d\n", len(*buf))
+	}
+
+	PutPayloadBytes(buf)
+}
