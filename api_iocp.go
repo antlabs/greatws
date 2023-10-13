@@ -80,7 +80,7 @@ func (e *EventLoop) addRead(c *Conn) error {
 	}
 	e.Unlock()
 
-	rbuf.wsabuf.Buf = &c.rbuf[c.rr:][0]
+	rbuf.wsabuf.Buf = (c.rbuf)[c.rr:][0]
 	rbuf.wsabuf.Len = uint32(len(c.rbuf) - c.rr)
 	bytesSent := uint32(0)
 	dwFlags := uint32(0)

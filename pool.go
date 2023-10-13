@@ -48,7 +48,7 @@ func GetPayloadBytes(n int) (rv *[]byte) {
 }
 
 func PutPayloadBytes(bytes *[]byte) {
-	if bytes == &emptyBytes {
+	if cap(*bytes) == 0 {
 		return
 	}
 

@@ -25,10 +25,11 @@ type Conn struct {
 }
 
 func newConn(fd int, client bool, conf *Config) *Conn {
+	rbuf := make([]byte, 1024+15)
 	c := &Conn{
 		conn: conn{
 			fd:   fd,
-			rbuf: make([]byte, 1024+15),
+			rbuf: &rbuf,
 		},
 		wbuf:   make([]byte, 0, 1024),
 		Config: conf,
@@ -81,18 +82,15 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 	// 1. 处理frame header
 	if !c.useIoUring {
 		// 不使用io_uring的直接调用read获取buffer数据
-		for {
-			n, err = unix.Read(c.fd, c.rbuf[c.rw:])
-			// fmt.Printf("%p, read %d bytes, err=%v, free:%d, rbuf.len:%d, r:%d, w:%d, %s, %v\n",
-			// 	c, n, err, len(c.rbuf[c.rw:]), len(c.rbuf), c.rr, c.rw, c.curState)
-
+		for i := 0; ; i++ {
+			n, err = unix.Read(c.fd, (*c.rbuf)[c.rw:])
 			if err != nil {
 				// 信号中断，继续读
 				if errors.Is(err, unix.EINTR) {
 					continue
 				}
 				// 出错返回
-				if !errors.Is(err, unix.EAGAIN) {
+				if !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EWOULDBLOCK) {
 					return 0, err
 				}
 				// 缓冲区没有数据，等待可读
@@ -100,26 +98,28 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 				break
 			}
 
-			if n <= 0 {
-				// 如果读到0字节，说明缓存区已经满了。需要扩容
-				// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
-				// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
-				for i := 0; len(c.rbuf[c.rw:]) == 0 && i < 3; i++ {
-					if err := c.readHeader(); err != nil {
-						return 0, fmt.Errorf("read header err: %w", err)
-					}
-					if err := c.readPayloadAndCallback(); err != nil {
-						return 0, fmt.Errorf("read header err: %w", err)
-					}
-
-				}
-				if len(c.rbuf[c.rw:]) == 0 {
-					panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
-				}
-				break
+			// oldLen := len(*c.rbuf)
+			if n > 0 {
+				c.rw += n
 			}
 
-			c.rw += n
+			if len((*c.rbuf)[c.rw:]) == 0 {
+				// 说明缓存区已经满了。可能需要扩容
+				// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
+				// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
+				if err := c.readHeader(); err != nil {
+					return 0, fmt.Errorf("read header err: %w", err)
+				}
+				if err := c.readPayloadAndCallback(); err != nil {
+					return 0, fmt.Errorf("read header err: %w", err)
+				}
+
+				if len((*c.rbuf)[c.rw:]) == 0 {
+					panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
+				}
+				continue
+			}
+
 		}
 	}
 

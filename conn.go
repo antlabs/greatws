@@ -58,7 +58,7 @@ const (
 
 type conn struct {
 	fd             int        // 文件描述符fd
-	rbuf           []byte     // 读缓冲区
+	rbuf           *[]byte    // 读缓冲区
 	rr             int        // rbuf读索引
 	rw             int        // rbuf写索引
 	curState       frameState // 保存当前状态机的状态
@@ -79,14 +79,14 @@ func (c *Conn) readHeader() (err error) {
 	// 开始解析frame
 	if state == frameStateHeaderStart {
 		// 小于最小的frame头部长度, 有空间就挪一挪
-		if len(c.rbuf)-c.rr < enum.MaxFrameHeaderSize {
+		if len(*c.rbuf)-c.rr < enum.MaxFrameHeaderSize {
 			c.leftMove()
 		}
 		// fin rsv1 rsv2 rsv3 opcode
 		if c.rw-c.rr < 2 {
 			return
 		}
-		c.rh.Head = c.rbuf[c.rr]
+		c.rh.Head = (*c.rbuf)[c.rr]
 
 		// h.Fin = head[0]&(1<<7) > 0
 		// h.Rsv1 = head[0]&(1<<6) > 0
@@ -94,7 +94,7 @@ func (c *Conn) readHeader() (err error) {
 		// h.Rsv3 = head[0]&(1<<4) > 0
 		c.rh.Opcode = opcode.Opcode(c.rh.Head & 0xF)
 
-		maskAndPayloadLen := c.rbuf[c.rr+1]
+		maskAndPayloadLen := (*c.rbuf)[c.rr+1]
 		have := 0
 		c.rh.Mask = maskAndPayloadLen&(1<<7) > 0
 
@@ -131,7 +131,7 @@ func (c *Conn) readHeader() (err error) {
 			return
 		}
 		have := c.lenAndMaskSize
-		head := c.rbuf[c.rr : c.rr+have]
+		head := (*c.rbuf)[c.rr : c.rr+have]
 		switch c.rh.PayloadLen {
 		case 126:
 			c.rh.PayloadLen = int64(binary.BigEndian.Uint16(head[:2]))
@@ -182,13 +182,13 @@ func (c *Conn) leftMove() {
 	}
 	// b.CountMove++
 	// b.MoveBytes += b.W - b.R
-	copy(c.rbuf, c.rbuf[c.rr:c.rw])
+	copy(*c.rbuf, (*c.rbuf)[c.rr:c.rw])
 	c.rw -= c.rr
 	c.rr = 0
 }
 
 func (c *Conn) writeCap() int {
-	return len(c.rbuf[c.rw:])
+	return len((*c.rbuf)[c.rw:])
 }
 
 // 需要考虑几种情况
@@ -203,20 +203,20 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 	// 已读取未处理的数据
 	readUnhandle := int64(c.rw - c.rr)
 	// 情况 1，需要读的长度 > 剩余可用空间(未写的+已经被读取走的)
-	if c.rh.PayloadLen-readUnhandle > int64(len(c.rbuf[c.rw:])+c.rr) {
+	if c.rh.PayloadLen-readUnhandle > int64(len((*c.rbuf)[c.rw:])+c.rr) {
 		// 1.取得旧的buf
 		oldBuf := c.rbuf
 		// 2.获取新的buf
 		newBuf := bytespool.GetBytes(int(float32(c.rh.PayloadLen+enum.MaxFrameHeaderSize) * multipletimes))
 		// 把旧的数据拷贝到新的buf里
-		copy(*newBuf, oldBuf[c.rr:c.rw])
+		copy(*newBuf, (*oldBuf)[c.rr:c.rw])
 		c.rw -= c.rr
 		c.rr = 0
 
 		// 3.重置缓存区
-		c.rbuf = *newBuf
+		c.rbuf = newBuf
 		// 4.将旧的buf放回池子里
-		bytespool.PutBytes(&oldBuf)
+		bytespool.PutBytes(oldBuf)
 
 		// 情况 2。 空间是够的，需要挪一挪, 把已经读过的覆盖掉
 	} else if c.rh.PayloadLen-readUnhandle > int64(c.writeCap()) {
@@ -231,14 +231,14 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 		return
 	}
 
-	newBuf := *GetPayloadBytes(int(c.rh.PayloadLen))
-	copy(newBuf, c.rbuf[c.rr:c.rr+int(c.rh.PayloadLen)])
-	newBuf = newBuf[:c.rh.PayloadLen]
-	f.Payload = newBuf
+	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
+	copy(*newBuf, (*c.rbuf)[c.rr:c.rr+int(c.rh.PayloadLen)])
+	newBuf2 := (*newBuf)[:c.rh.PayloadLen]
+	f.Payload = newBuf2
 
 	f.FrameHeader = c.rh
 	c.rr += int(c.rh.PayloadLen)
-	if len(c.rbuf)-c.rw < 1024 {
+	if len(*c.rbuf)-c.rw < 1024 {
 		c.leftMove()
 	}
 
@@ -417,7 +417,9 @@ func (c *Conn) readPayloadAndCallback() error {
 
 		// fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
 		if success {
-			c.processCallback(f)
+			if err := c.processCallback(f); err != nil {
+				c.Close()
+			}
 			c.curState = frameStateHeaderStart
 			// fmt.Printf("callback after rr:%d, rw:%d\n", c.rr, c.rw)
 		}

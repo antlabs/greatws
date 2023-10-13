@@ -5,7 +5,7 @@ all:
 	# linux amd64
 	CGO_ENABLE=0 GOOS=linux GOARCH=amd64 go build -o autobahn-server-linux-amd64.out ./autobahn-server.go 
 	# windows amd64
-	GOOS=windows GOARCH=amd64 go build -o autobahn-server-windows-amd64.exe ./autobahn-server.go 
+	#GOOS=windows GOARCH=amd64 go build -o autobahn-server-windows-amd64.exe ./autobahn-server.go 
 
 	# mac, arm64
 	#GOOS=darwin GOARCH=arm64 go build -o autobahn-client-darwin-arm64 ./autobahn-client.go 
