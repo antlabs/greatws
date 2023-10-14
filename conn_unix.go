@@ -79,6 +79,10 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	return n, err
 }
 
+// 该函数从缓冲区读取数据，并且解析出websocket frame
+// 有几种情况需要处理下
+// 1. 缓冲区空间不句够，需要扩容
+// 2. 缓冲区数据不够，并且一次性读取了多个frame
 func (c *Conn) processWebsocketFrame() (n int, err error) {
 	// 1. 处理frame header
 	if !c.useIoUring {
