@@ -62,6 +62,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 
 	// 直接写入数据
 	n, err = unix.Write(c.fd, b)
+	fmt.Printf("write %d:%v:%v\n", n, err, b[:4])
 	if err != nil {
 		// 如果是EAGAIN或EINTR错误，说明是写缓冲区满了，或者被信号中断，将数据写入缓冲区
 		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
@@ -84,6 +85,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for i := 0; ; i++ {
 			n, err = unix.Read(c.fd, (*c.rbuf)[c.rw:])
+			fmt.Printf("i = %d, n = %d, err = %v\n", i, n, err)
 			if err != nil {
 				// 信号中断，继续读
 				if errors.Is(err, unix.EINTR) {
@@ -94,23 +96,24 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 					return 0, err
 				}
 				// 缓冲区没有数据，等待可读
+				fmt.Printf("######\n")
 				err = nil
 				break
 			}
 
-			// oldLen := len(*c.rbuf)
 			if n > 0 {
 				c.rw += n
 			}
 
 			if len((*c.rbuf)[c.rw:]) == 0 {
-				// 说明缓存区已经满了。可能需要扩容
+				// 说明缓存区已经满了。需要扩容
 				// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
 				// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
-				if err := c.readHeader(); err != nil {
+				// for i := 0; len((*c.rbuf)[c.rw:]) == 0 && i < 3; i++ {
+				if _, err := c.readHeader(); err != nil {
 					return 0, fmt.Errorf("read header err: %w", err)
 				}
-				if err := c.readPayloadAndCallback(); err != nil {
+				if _, err := c.readPayloadAndCallback(); err != nil {
 					return 0, fmt.Errorf("read header err: %w", err)
 				}
 
@@ -123,14 +126,24 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		}
 	}
 
-	if err := c.readHeader(); err != nil {
-		return 0, fmt.Errorf("read header err: %w", err)
-		// fmt.Printf("read header err: %v\n", err)
-	}
+	for {
+		sucess, err := c.readHeader()
+		if err != nil {
+			return 0, fmt.Errorf("read header err: %w", err)
+		}
 
-	// 2. 处理frame payload
-	// TODO 这个函数要放到协程里面运行
-	return 0, c.readPayloadAndCallback()
+		if !sucess {
+			return 0, nil
+		}
+		sucess, err = c.readPayloadAndCallback()
+		if err != nil {
+			return 0, fmt.Errorf("read header err: %w", err)
+		}
+
+		if !sucess {
+			return 0, nil
+		}
+	}
 }
 
 // 该函数有3个动作

@@ -74,7 +74,7 @@ func (c *Conn) getFd() int {
 }
 
 // 基于状态机解析frame
-func (c *Conn) readHeader() (err error) {
+func (c *Conn) readHeader() (sucess bool, err error) {
 	state := c.curState
 	// 开始解析frame
 	if state == frameStateHeaderStart {
@@ -84,7 +84,7 @@ func (c *Conn) readHeader() (err error) {
 		}
 		// fin rsv1 rsv2 rsv3 opcode
 		if c.rw-c.rr < 2 {
-			return
+			return false, nil
 		}
 		c.rh.Head = (*c.rbuf)[c.rr]
 
@@ -119,11 +119,12 @@ func (c *Conn) readHeader() (err error) {
 			// size += 8
 		default:
 			// 预期之外的, 直接报错
-			return errs.ErrFramePayloadLength
+			return sucess, errs.ErrFramePayloadLength
 		}
 		c.curState, state = frameStateHeaderPayloadAndMask, frameStateHeaderPayloadAndMask
 		c.lenAndMaskSize = have
 		c.rr += 2
+
 	}
 
 	if state == frameStateHeaderPayloadAndMask {
@@ -146,9 +147,10 @@ func (c *Conn) readHeader() (err error) {
 		}
 		c.curState = frameStatePayload
 		c.rr += c.lenAndMaskSize
+		return true, nil
 	}
 
-	return
+	return state == frameStatePayload, nil
 }
 
 func (c *Conn) failRsv1(op opcode.Opcode) bool {
@@ -407,12 +409,12 @@ func (c *Conn) WriteTimeout(op Opcode, data []byte, t time.Duration) (err error)
 	return c.WriteMessage(op, data)
 }
 
-func (c *Conn) readPayloadAndCallback() error {
+func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 	if c.curState == frameStatePayload {
 		f, success, err := c.readPayload()
 		if err != nil {
 			fmt.Printf("read payload err: %v\n", err)
-			return err
+			return sucess, err
 		}
 
 		// fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
@@ -421,10 +423,10 @@ func (c *Conn) readPayloadAndCallback() error {
 				c.Close()
 			}
 			c.curState = frameStateHeaderStart
-			// fmt.Printf("callback after rr:%d, rw:%d\n", c.rr, c.rw)
+			return true, err
 		}
 	}
-	return nil
+	return false, nil
 }
 
 type wrapBuffer struct {
