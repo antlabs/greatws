@@ -45,7 +45,6 @@ func duplicateSocket(socketFD int) (int, error) {
 
 func (c *Conn) Close() {
 	c.multiEventLoop.del(c)
-	unix.Close(c.fd)
 }
 
 func (c *Conn) Write(b []byte) (n int, err error) {
@@ -96,7 +95,6 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 				return len(b), nil
 			}
 			c.multiEventLoop.del(c)
-			unix.Close(c.fd)
 
 			atomic.StoreInt32(&c.closed, 1)
 			return
@@ -141,12 +139,13 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 					return 0, err
 				}
 				// 缓冲区没有数据，等待可读
-				fmt.Printf("######\n")
 				err = nil
 				break
 			}
 
 			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
+				c.multiEventLoop.del(c)
+				c.OnClose(c, io.EOF)
 				return
 			}
 
