@@ -69,10 +69,13 @@ func (m *MultiEventLoop) add(c *Conn) error {
 }
 
 // 添加一个可写事件到多路事件循环
-func (m *MultiEventLoop) addWrite(c *Conn) {
+func (m *MultiEventLoop) addWrite(c *Conn) error {
 	index := c.getFd() % len(m.loops)
-	m.loops[index].addWrite(c.getFd())
+	if err := m.loops[index].addWrite(c.getFd()); err != nil {
+		return err
+	}
 	m.loops[index].conns.LoadOrStore(c.getFd(), c)
+	return nil
 }
 
 // 添加一个可写事件到多路事件循环

@@ -9,6 +9,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -55,28 +56,68 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 
 	// 如果缓冲区有数据，合并数据
 	curN := len(b)
+
 	if len(c.wbuf) > 0 {
 		c.wbuf = append(c.wbuf, b...)
 		b = c.wbuf
 	}
-
-	// 直接写入数据
-	n, err = unix.Write(c.fd, b)
-	fmt.Printf("write %d:%v:%v\n", n, err, b[:4])
+	_, err = c.writeOrAddPoll(b)
 	if err != nil {
-		// 如果是EAGAIN或EINTR错误，说明是写缓冲区满了，或者被信号中断，将数据写入缓冲区
-		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
-			if n > 0 {
-				newBuf := make([]byte, len(b)-n)
-				copy(newBuf, b[n:])
-				c.wbuf = newBuf
-			}
-			c.multiEventLoop.addWrite(c)
-			return curN, nil
-		}
+		return 0, err
 	}
 	// 出错
-	return n, err
+	return curN, err
+}
+
+func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
+	total := 0
+	for len(b) > 0 {
+
+		// 直接写入数据
+		n, err = unix.Write(c.fd, b)
+		fmt.Printf("write %d:%v\n", n, err)
+		if err != nil {
+			// 如果是EAGAIN或EINTR错误，说明是写缓冲区满了，或者被信号中断，将数据写入缓冲区
+			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
+				if n < 0 {
+					n = 0
+				}
+				if len(b) > 0 {
+					// TODO
+					newBuf := make([]byte, len(b)-n)
+					copy(newBuf, b[n:])
+
+					c.wbuf = newBuf
+
+				}
+				if err = c.multiEventLoop.addWrite(c); err != nil {
+					return 0, err
+				}
+				return len(b), nil
+			}
+			c.multiEventLoop.del(c)
+			unix.Close(c.fd)
+
+			atomic.StoreInt32(&c.closed, 1)
+			return
+		}
+		if n > 0 {
+			b = b[n:]
+			total += n
+		}
+	}
+	return total, nil
+}
+
+// 该函数有3个动作
+// 写成功
+// EAGAIN，等待可写再写
+// 报错，直接关闭这个fd
+func (c *Conn) flushOrClose() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.writeOrAddPoll(c.wbuf)
 }
 
 // 该函数从缓冲区读取数据，并且解析出websocket frame
@@ -89,7 +130,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for i := 0; ; i++ {
 			n, err = unix.Read(c.fd, (*c.rbuf)[c.rw:])
-			fmt.Printf("i = %d, n = %d, err = %v\n", i, n, err)
+			fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n", i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
 			if err != nil {
 				// 信号中断，继续读
 				if errors.Is(err, unix.EINTR) {
@@ -103,6 +144,10 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 				fmt.Printf("######\n")
 				err = nil
 				break
+			}
+
+			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
+				return
 			}
 
 			if n > 0 {
@@ -148,35 +193,6 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 			return 0, nil
 		}
 	}
-}
-
-// 该函数有3个动作
-// 写成功
-// EAGAIN，等待可写再写
-// 报错，直接关闭这个fd
-func (c *Conn) flushOrClose() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	n, err := unix.Write(c.fd, c.wbuf)
-	if err != nil {
-		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
-			if n > 0 {
-				wbuf := c.wbuf
-				copy(wbuf, wbuf[n:])
-				c.wbuf = wbuf[:len(wbuf)-n]
-			}
-			return
-		}
-		c.multiEventLoop.del(c)
-		unix.Close(c.fd)
-
-		atomic.StoreInt32(&c.closed, 1)
-		return
-	}
-
-	// 如果写成功就把write事件从事件循环中删除
-	c.multiEventLoop.delWrite(c)
 }
 
 func closeFd(fd int) {
