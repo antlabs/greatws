@@ -6,12 +6,10 @@ package bigws
 import (
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"sync"
 	"sync/atomic"
-	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 type Conn struct {
@@ -32,7 +30,7 @@ func newConn(fd int, client bool, conf *Config) *Conn {
 			fd:   fd,
 			rbuf: &rbuf,
 		},
-		wbuf:   make([]byte, 0, 1024),
+		//wbuf:   make([]byte, 0, 1024),
 		Config: conf,
 		client: client,
 	}
@@ -74,7 +72,8 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 
 		// 直接写入数据
 		n, err = unix.Write(c.fd, b)
-		fmt.Printf("write %d:%v\n", n, err)
+		//fmt.Printf("1.write %d:%v: %d\n", n, err, len(b))
+
 		if err != nil {
 			// 如果是EAGAIN或EINTR错误，说明是写缓冲区满了，或者被信号中断，将数据写入缓冲区
 			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
@@ -92,7 +91,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 				if err = c.multiEventLoop.addWrite(c); err != nil {
 					return 0, err
 				}
-				return len(b), nil
+				return total, nil
 			}
 			c.multiEventLoop.del(c)
 
@@ -103,6 +102,10 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 			b = b[n:]
 			total += n
 		}
+	}
+
+	if len(c.wbuf) == total {
+		c.wbuf = nil
 	}
 	return total, nil
 }
@@ -128,7 +131,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for i := 0; ; i++ {
 			n, err = unix.Read(c.fd, (*c.rbuf)[c.rw:])
-			fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n", i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
+			//fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n", i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
 			if err != nil {
 				// 信号中断，继续读
 				if errors.Is(err, unix.EINTR) {
@@ -174,7 +177,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		}
 	}
 
-	for {
+	for i := 0; ; i++ {
 		sucess, err := c.readHeader()
 		if err != nil {
 			return 0, fmt.Errorf("read header err: %w", err)

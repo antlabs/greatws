@@ -84,11 +84,12 @@ func (e *EventLoop) delWrite(fd int) {
 }
 
 // 新加写事件
-func (e *EventLoop) addWrite(fd int) {
+func (e *EventLoop) addWrite(fd int) error {
 	e.mu.Lock()
 	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_ADD | unix.EV_CLEAR})
 	e.mu.Unlock()
 	e.trigger()
+	return nil
 }
 
 func (e *EventLoop) del(fd int) {
