@@ -156,7 +156,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 
 			// 读到eof，直接关闭
 			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
-				c.closeInner()
+				c.Close()
 				c.OnClose(c, io.EOF)
 				return
 			}
