@@ -6,10 +6,11 @@ package bigws
 import (
 	"errors"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"io"
 	"sync"
 	"sync/atomic"
+
+	"golang.org/x/sys/unix"
 )
 
 type Conn struct {
@@ -30,7 +31,7 @@ func newConn(fd int, client bool, conf *Config) *Conn {
 			fd:   fd,
 			rbuf: &rbuf,
 		},
-		//wbuf:   make([]byte, 0, 1024),
+		// wbuf:   make([]byte, 0, 1024),
 		Config: conf,
 		client: client,
 	}
@@ -41,8 +42,15 @@ func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
 }
 
-func (c *Conn) Close() {
+func (c *Conn) closeInner() {
 	c.multiEventLoop.del(c)
+	c.fd = -1
+}
+
+func (c *Conn) Close() {
+	c.mu.Lock()
+	c.closeInner()
+	c.mu.Unlock()
 }
 
 func (c *Conn) Write(b []byte) (n int, err error) {
@@ -72,7 +80,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 
 		// 直接写入数据
 		n, err = unix.Write(c.fd, b)
-		//fmt.Printf("1.write %d:%v: %d\n", n, err, len(b))
+		// fmt.Printf("1.write %d:%v: %d\n", n, err, len(b))
 
 		if err != nil {
 			// 如果是EAGAIN或EINTR错误，说明是写缓冲区满了，或者被信号中断，将数据写入缓冲区
@@ -93,7 +101,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 				}
 				return total, nil
 			}
-			c.multiEventLoop.del(c)
+			c.closeInner()
 
 			atomic.StoreInt32(&c.closed, 1)
 			return
@@ -131,7 +139,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for i := 0; ; i++ {
 			n, err = unix.Read(c.fd, (*c.rbuf)[c.rw:])
-			//fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n", i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
+			// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n", i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
 			if err != nil {
 				// 信号中断，继续读
 				if errors.Is(err, unix.EINTR) {
@@ -146,8 +154,9 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 				break
 			}
 
+			// 读到eof，直接关闭
 			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
-				c.multiEventLoop.del(c)
+				c.closeInner()
 				c.OnClose(c, io.EOF)
 				return
 			}

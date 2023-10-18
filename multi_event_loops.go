@@ -87,6 +87,9 @@ func (m *MultiEventLoop) delWrite(c *Conn) {
 
 // 从多路事件循环中删除一个连接
 func (m *MultiEventLoop) del(c *Conn) {
+	if c.fd == -1 {
+		return
+	}
 	index := c.getFd() % len(m.loops)
 	m.loops[index].conns.Delete(c.getFd())
 	closeFd(c.getFd())
