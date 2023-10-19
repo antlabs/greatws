@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"sync/atomic"
 	"time"
@@ -67,6 +68,10 @@ type conn struct {
 
 	fragmentFramePayload []byte // 存放分片帧的缓冲区
 	fragmentFrameHeader  *frame.FrameHeader
+}
+
+func (c *Conn) getLogger() *slog.Logger {
+	return c.multiEventLoop.Logger
 }
 
 func (c *Conn) getFd() int {
@@ -413,7 +418,7 @@ func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 	if c.curState == frameStatePayload {
 		f, success, err := c.readPayload()
 		if err != nil {
-			fmt.Printf("read payload err: %v\n", err)
+			c.getLogger().Error("readPayloadAndCallback.read payload err", "err", err.Error())
 			return sucess, err
 		}
 
@@ -421,6 +426,7 @@ func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 		if success {
 			if err := c.processCallback(f); err != nil {
 				c.Close()
+				return false, err
 			}
 			c.curState = frameStateHeaderStart
 			return true, err

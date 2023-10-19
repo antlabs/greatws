@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
@@ -43,6 +44,7 @@ func duplicateSocket(socketFD int) (int, error) {
 }
 
 func (c *Conn) closeInner() {
+	c.getLogger().Debug("close conn", slog.Int("fd", c.fd))
 	c.multiEventLoop.del(c)
 	c.fd = -1
 }
@@ -76,7 +78,8 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 
 func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 	total := 0
-	for len(b) > 0 {
+	// i 的目的是debug的时候使用
+	for i := 0; len(b) > 0; i++ {
 
 		// 直接写入数据
 		n, err = unix.Write(c.fd, b)
@@ -94,13 +97,14 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 					copy(newBuf, b[n:])
 
 					c.wbuf = newBuf
-
 				}
+
 				if err = c.multiEventLoop.addWrite(c); err != nil {
 					return 0, err
 				}
 				return total, nil
 			}
+			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int("fd", c.fd), slog.Int("b.len", len(b)))
 			c.closeInner()
 
 			atomic.StoreInt32(&c.closed, 1)
@@ -178,7 +182,8 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 				}
 
 				if len((*c.rbuf)[c.rw:]) == 0 {
-					panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
+					//
+					//panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
 				}
 				continue
 			}

@@ -1,12 +1,17 @@
 package bigws
 
-import "runtime"
+import (
+	"log/slog"
+	"os"
+	"runtime"
+)
 
 type MultiEventLoop struct {
 	numLoops    int
 	maxEventNum int
 	loops       []*EventLoop
 	t           *task
+	*slog.Logger
 }
 
 func (m *MultiEventLoop) initDefaultSetting() {
@@ -20,6 +25,7 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 		panic(err)
 	}
 
+	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	return m
 }
 
