@@ -17,12 +17,13 @@ import (
 type Conn struct {
 	conn
 
-	wbuf    []byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	w       io.Writer
-	mu      sync.Mutex
-	client  bool  // 客户端为true，服务端为false
-	*Config       // 配置
-	closed  int32 // 是否关闭
+	wbuf             []byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	w                io.Writer
+	mu               sync.Mutex
+	client           bool  // 客户端为true，服务端为false
+	*Config                // 配置
+	closed           int32 // 是否关闭
+	waitOnMessageRun sync.WaitGroup
 }
 
 func newConn(fd int, client bool, conf *Config) *Conn {
@@ -43,16 +44,31 @@ func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
 }
 
-func (c *Conn) closeInner() {
+func (c *Conn) closeInner(wait bool) {
 	c.getLogger().Debug("close conn", slog.Int("fd", c.fd))
+	if true {
+		c.waitOnMessageRun.Wait()
+	}
+
 	c.multiEventLoop.del(c)
 	c.fd = -1
+	atomic.StoreInt32(&c.closed, 1)
 }
 
-func (c *Conn) Close() {
+func (c *Conn) closeAndWaitOnMessage(wait bool) {
+	if atomic.LoadInt32(&c.closed) == 1 {
+		return
+	}
+	if wait {
+		c.waitOnMessageRun.Wait()
+	}
+
 	c.mu.Lock()
-	c.closeInner()
+	c.closeInner(false)
 	c.mu.Unlock()
+}
+func (c *Conn) Close() {
+	c.closeAndWaitOnMessage(false)
 }
 
 func (c *Conn) Write(b []byte) (n int, err error) {
@@ -105,7 +121,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 				return total, nil
 			}
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int("fd", c.fd), slog.Int("b.len", len(b)))
-			c.closeInner()
+			c.closeInner(true)
 
 			atomic.StoreInt32(&c.closed, 1)
 			return
@@ -160,7 +176,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 
 			// 读到eof，直接关闭
 			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
-				c.Close()
+				c.closeAndWaitOnMessage(true)
 				c.OnClose(c, io.EOF)
 				return
 			}

@@ -111,7 +111,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				// 读取数据，这里要发行下websocket的解析变成流式解析
 				_, err = conn.processWebsocketFrame()
 				if err != nil {
-					conn.Close()
+					conn.closeAndWaitOnMessage(true)
 				}
 			}
 			if ev.Events&unix.EPOLLOUT > 0 {
@@ -120,7 +120,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 			}
 			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
 				// TODO 完善下细节
-				conn.Close()
+				conn.closeAndWaitOnMessage(true)
 			}
 		}
 

@@ -103,7 +103,9 @@ func (g *goCallback) OnOpen(c *Conn) {
 
 func (g *goCallback) OnMessage(c *Conn, op Opcode, data []byte) {
 	//	g.c.OnMessage(c, op, data)
+	c.waitOnMessageRun.Add(1)
 	g.t.addTask(func() {
+		defer c.waitOnMessageRun.Done()
 		g.c.OnMessage(c, op, data)
 		PutPayloadBytes(&data)
 	})
