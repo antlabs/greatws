@@ -67,6 +67,7 @@ func (c *Conn) closeAndWaitOnMessage(wait bool) {
 	c.closeInner(false)
 	c.mu.Unlock()
 }
+
 func (c *Conn) Close() {
 	c.closeAndWaitOnMessage(false)
 }
@@ -121,9 +122,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 				return total, nil
 			}
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int("fd", c.fd), slog.Int("b.len", len(b)))
-			c.closeInner(true)
-
-			atomic.StoreInt32(&c.closed, 1)
+			go c.closeInner(true)
 			return
 		}
 		if n > 0 {
@@ -176,7 +175,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 
 			// 读到eof，直接关闭
 			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
-				c.closeAndWaitOnMessage(true)
+				go c.closeAndWaitOnMessage(true)
 				c.OnClose(c, io.EOF)
 				return
 			}

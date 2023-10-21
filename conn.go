@@ -326,7 +326,7 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 
 		if f.Opcode == opcode.Text {
 			if !c.utf8Check(f.Payload) {
-				c.closeAndWaitOnMessage(true)
+				go c.closeAndWaitOnMessage(true)
 				c.Callback.OnClose(c, ErrTextNotUTF8)
 				return ErrTextNotUTF8
 			}
@@ -425,7 +425,7 @@ func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 		// fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
 		if success {
 			if err := c.processCallback(f); err != nil {
-				c.closeAndWaitOnMessage(true)
+				go c.closeAndWaitOnMessage(true)
 				return false, err
 			}
 			c.curState = frameStateHeaderStart

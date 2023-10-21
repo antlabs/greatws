@@ -137,7 +137,7 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 				_, _ = conn.processWebsocketFrame()
 				if ev.Flags&unix.EV_EOF != 0 {
 					fmt.Printf("conn.Close")
-					conn.closeAndWaitOnMessage(true)
+					go conn.closeAndWaitOnMessage(true)
 				}
 			}
 
