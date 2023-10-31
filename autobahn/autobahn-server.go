@@ -21,7 +21,7 @@ var keyPEMBlock []byte
 type echoHandler struct{}
 
 func (e *echoHandler) OnOpen(c *bigws.Conn) {
-	// fmt.Printf("OnOpen: %p\n", c)
+	fmt.Printf("OnOpen: %p\n", c)
 }
 
 func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
@@ -69,7 +69,7 @@ func main() {
 	go func() {
 		for {
 			time.Sleep(time.Second)
-			fmt.Printf("curConn:%d\n", h.m.GetCurNum())
+			fmt.Printf("curConn:%d, curTask:%d\n", h.m.GetCurConnNum(), h.m.GetCurTaskNum())
 		}
 	}()
 	mux := &http.ServeMux{}

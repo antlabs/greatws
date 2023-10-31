@@ -1,8 +1,11 @@
 package bigws
 
+import "sync/atomic"
+
 type task struct {
-	c   chan func()
-	max int
+	c       chan func()
+	max     int
+	curTask int64
 }
 
 func newTask(max int) *task {
@@ -14,9 +17,15 @@ func newTask(max int) *task {
 	return t
 }
 
+func (t *task) getCurTask() int64 {
+	return atomic.LoadInt64(&t.curTask)
+}
+
 func (t *task) runLoop() {
 	for f := range t.c {
+		atomic.AddInt64(&t.curTask, 1)
 		f()
+		atomic.AddInt64(&t.curTask, -1)
 	}
 }
 

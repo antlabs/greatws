@@ -17,9 +17,14 @@ type MultiEventLoop struct {
 	*slog.Logger
 }
 
-// 主要是debug使用
-func (m *MultiEventLoop) GetCurNum() int64 {
+// 获取当前连接数
+func (m *MultiEventLoop) GetCurConnNum() int64 {
 	return atomic.LoadInt64(&m.curConn)
+}
+
+// 获取当前运行的任务数
+func (m *MultiEventLoop) GetCurTaskNum() int64 {
+	return m.t.getCurTask()
 }
 
 func (m *MultiEventLoop) initDefaultSettingBefore() {
