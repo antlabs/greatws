@@ -109,10 +109,13 @@ func (m *MultiEventLoop) addWrite(c *Conn) error {
 }
 
 // 添加一个可写事件到多路事件循环
-func (m *MultiEventLoop) delWrite(c *Conn) {
+func (m *MultiEventLoop) delWrite(c *Conn) error {
 	index := c.getFd() % len(m.loops)
-	m.loops[index].delWrite(c.getFd())
+	if err := m.loops[index].delWrite(c.getFd()); err != nil {
+		return err
+	}
 	m.loops[index].conns.LoadOrStore(c.getFd(), c)
+	return nil
 }
 
 // 从多路事件循环中删除一个连接
