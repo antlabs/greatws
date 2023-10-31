@@ -18,7 +18,7 @@
 package bigws
 
 import (
-	"fmt"
+	"errors"
 	"syscall"
 	"time"
 
@@ -45,14 +45,7 @@ func (e *EventLoop) apiCreate(flag evFlag) (err error) {
 		Filter: unix.EVFILT_USER,
 		Flags:  unix.EV_ADD | unix.EV_CLEAR,
 	}}, nil, nil)
-	return nil
-}
-
-func (e *EventLoop) apiResize(setSize int) {
-	oldEvents := e.apiState.events
-	newEvents := make([]unix.Kevent_t, setSize)
-	copy(newEvents, oldEvents)
-	e.apiState.events = newEvents
+	return err
 }
 
 func (e *EventLoop) apiFree() {
@@ -62,8 +55,9 @@ func (e *EventLoop) apiFree() {
 }
 
 // 在另外一个线程唤醒kqueue
-func (e *EventLoop) trigger() {
-	unix.Kevent(e.apiState.kqfd, []unix.Kevent_t{{Ident: 0, Filter: unix.EVFILT_USER, Fflags: unix.NOTE_TRIGGER}}, nil, nil)
+func (e *EventLoop) trigger() (err error) {
+	_, err = unix.Kevent(e.apiState.kqfd, []unix.Kevent_t{{Ident: 0, Filter: unix.EVFILT_USER, Fflags: unix.NOTE_TRIGGER}}, nil, nil)
+	return err
 }
 
 // 新加读事件
@@ -72,15 +66,14 @@ func (e *EventLoop) addRead(c *Conn) error {
 	e.mu.Lock()
 	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_READ, Flags: unix.EV_ADD | unix.EV_CLEAR})
 	e.mu.Unlock()
-	e.trigger()
-	return nil
+	return e.trigger()
 }
 
-func (e *EventLoop) delWrite(fd int) {
+func (e *EventLoop) delWrite(fd int) (err error) {
 	e.mu.Lock()
 	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_DELETE | unix.EV_CLEAR})
 	e.mu.Unlock()
-	e.trigger()
+	return e.trigger()
 }
 
 // 新加写事件
@@ -88,15 +81,14 @@ func (e *EventLoop) addWrite(fd int) error {
 	e.mu.Lock()
 	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_ADD | unix.EV_CLEAR})
 	e.mu.Unlock()
-	e.trigger()
-	return nil
+	return e.trigger()
 }
 
-func (e *EventLoop) del(fd int) {
+func (e *EventLoop) del(fd int) error {
 	e.mu.Lock()
 	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Flags: syscall.EV_DELETE, Filter: syscall.EVFILT_READ})
 	e.mu.Unlock()
-	e.trigger()
+	return e.trigger()
 }
 
 func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
@@ -117,6 +109,9 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 		retVal, err = unix.Kevent(state.kqfd, changes, state.events, nil)
 	}
 	if err != nil {
+		if errors.Is(err, unix.EINTR) {
+			return 0, nil
+		}
 		return 0, err
 	}
 
@@ -134,10 +129,15 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 
 			if ev.Filter == unix.EVFILT_READ {
 				// 读取数据，这里要发行下websocket的解析变成流式解析
-				_, _ = conn.processWebsocketFrame()
-				if ev.Flags&unix.EV_EOF != 0 {
-					fmt.Printf("conn.Close")
+				_, err = conn.processWebsocketFrame()
+				if err != nil {
 					go conn.closeAndWaitOnMessage(true)
+					continue
+				}
+
+				if ev.Flags&unix.EV_EOF != 0 {
+					go conn.closeAndWaitOnMessage(true)
+					continue
 				}
 			}
 

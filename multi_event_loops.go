@@ -4,19 +4,45 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"sync/atomic"
 )
 
 type MultiEventLoop struct {
-	numLoops    int
-	maxEventNum int
-	loops       []*EventLoop
-	t           *task
+	numLoops         int // 事件循环数量
+	maxEventNum      int
+	minBusinessGoNum int // 起多少个业务goroutine
+	loops            []*EventLoop
+	t                *task
+	curConn          int64
 	*slog.Logger
 }
 
-func (m *MultiEventLoop) initDefaultSetting() {
+// 主要是debug使用
+func (m *MultiEventLoop) GetCurNum() int64 {
+	return atomic.LoadInt64(&m.curConn)
+}
+
+func (m *MultiEventLoop) initDefaultSettingBefore() {
 	m.numLoops = 0
 	m.maxEventNum = 10000
+	m.minBusinessGoNum = 50
+}
+
+func (m *MultiEventLoop) initDefaultSettingAfter() {
+	if m.numLoops == 0 {
+		m.numLoops = runtime.NumCPU() / 4
+		if m.numLoops == 0 {
+			m.numLoops = 1
+		}
+	}
+
+	if m.maxEventNum == 0 {
+		m.maxEventNum = 256
+	}
+
+	if m.minBusinessGoNum == 0 {
+		m.minBusinessGoNum = 50
+	}
 }
 
 func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
@@ -33,16 +59,13 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m := &MultiEventLoop{}
 
-	m.initDefaultSetting()
+	m.initDefaultSettingBefore()
 	for _, o := range opts {
 		o(m)
 	}
+	m.initDefaultSettingAfter()
 
-	if m.numLoops == 0 {
-		m.numLoops = runtime.NumCPU()
-	}
-
-	m.t = newTask(100)
+	m.t = newTask(m.minBusinessGoNum)
 
 	m.loops = make([]*EventLoop, m.numLoops)
 
@@ -71,6 +94,7 @@ func (m *MultiEventLoop) add(c *Conn) error {
 		m.del(c)
 		return err
 	}
+	atomic.AddInt64(&m.curConn, 1)
 	return nil
 }
 
@@ -96,6 +120,7 @@ func (m *MultiEventLoop) del(c *Conn) {
 	if c.fd == -1 {
 		return
 	}
+	atomic.AddInt64(&m.curConn, -1)
 	index := c.getFd() % len(m.loops)
 	m.loops[index].conns.Delete(c.getFd())
 	closeFd(c.getFd())

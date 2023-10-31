@@ -32,7 +32,7 @@ type EventLoop struct {
 	conns     sync.Map
 	maxFd     int // highest file descriptor currently registered
 	setSize   int // max number of file descriptors tracked
-	*apiState     // 每个平台对应的异步io接口/epoll/kqueue/iouring/iocp
+	*apiState     // 每个平台对应的异步io接口/epoll/kqueue/iouring
 	shutdown  bool
 	parent    *MultiEventLoop
 }

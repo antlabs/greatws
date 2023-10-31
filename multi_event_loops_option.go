@@ -15,3 +15,10 @@ func WithMaxEventNum(num int) EvOption {
 		e.maxEventNum = num
 	}
 }
+
+// 最小业务goroutine数量
+func WithMinBusinessGoNum(num int) EvOption {
+	return func(e *MultiEventLoop) {
+		e.minBusinessGoNum = num
+	}
+}

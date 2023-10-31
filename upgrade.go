@@ -118,14 +118,20 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		return nil, err
 	}
 
-	conn.SetDeadline(time.Time{})
+	if err = conn.SetDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+
 	fd, err := getFdFromConn(conn)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
 	// 已经dup了一份fd，所以这里可以关闭
-	conn.Close()
+	if err = conn.Close(); err != nil {
+		return nil, err
+	}
+
 	c = newConn(fd, false, conf)
 	if err = conf.multiEventLoop.add(c); err != nil {
 		return nil, err

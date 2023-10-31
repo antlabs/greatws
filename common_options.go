@@ -205,27 +205,6 @@ func WithClientDisableBufioClearHack() ClientOption {
 	}
 }
 
-// 12 配置多倍payload缓冲区, 1.是1024 2。是2048
-// 为何不让用户自己配置呢，可以和底层的buffer池结合起来，/1024就知道命中哪个缓冲区了, 不需要维护index命中的哪个sync.Pool
-// 如果用户传些奇奇怪怪的数字，就不好办了
-func WithServerBufioMultipleTimesPayloadSize(mt float32) ServerOption {
-	return func(o *ConnOption) {
-		if mt <= 0 {
-			mt = 1.0
-		}
-		o.bufioMultipleTimesPayloadSize = mt
-	}
-}
-
-func WithClientBufioMultipleTimesPayloadSize(mt float32) ClientOption {
-	return func(o *DialOption) {
-		if mt <= 0 {
-			mt = 1.0
-		}
-		o.bufioMultipleTimesPayloadSize = mt
-	}
-}
-
 // 13. 配置延迟发送
 // 配置延迟最大发送时间
 func WithServerMaxDelayWriteDuration(d time.Duration) ServerOption {

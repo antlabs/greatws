@@ -35,7 +35,7 @@ func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
 }
 
 func (e *echoHandler) OnClose(c *bigws.Conn, err error) {
-	// fmt.Printf("OnClose:%p, %v\n", c, err)
+	fmt.Printf("OnClose:%p, %v\n", c, err)
 }
 
 type handler struct {
@@ -54,6 +54,7 @@ func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		fmt.Println("Upgrade fail:", err)
+		panic(err.Error())
 		return
 	}
 	_ = c
@@ -65,6 +66,12 @@ func main() {
 	h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(8), bigws.WithMaxEventNum(1000))
 	h.m.Start()
 
+	go func() {
+		for {
+			time.Sleep(time.Second)
+			fmt.Printf("curConn:%d\n", h.m.GetCurNum())
+		}
+	}()
 	mux := &http.ServeMux{}
 	mux.HandleFunc("/autobahn", h.echo)
 

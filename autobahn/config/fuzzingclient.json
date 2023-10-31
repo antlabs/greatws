@@ -3,14 +3,14 @@
 	"servers": [
 		{
 			"agent": "non-tls",
-			"url": "ws://localhost:9001/autobahn",
+			"url": "ws://192.168.128.55:9001/autobahn",
 			"options": {
 				"version": 18
 			}
 		}
 	],
 	"cases": [
-		"*"
+    "*"
 	],
 	"exclude-cases": [
 		""
