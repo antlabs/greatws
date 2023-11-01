@@ -63,7 +63,7 @@ func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
 func main() {
 	var h handler
 
-	h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(8), bigws.WithMaxEventNum(1000))
+	h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000))
 	h.m.Start()
 
 	go func() {

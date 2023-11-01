@@ -78,7 +78,7 @@ type CloseErrMsg struct {
 func (c CloseErrMsg) Error() string {
 	var out strings.Builder
 
-	out.WriteString("<quickws close: code:")
+	out.WriteString("<bigws close: code:")
 
 	out.WriteString(strconv.Itoa(int(c.Code)))
 

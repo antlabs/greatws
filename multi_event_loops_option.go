@@ -22,3 +22,10 @@ func WithMinBusinessGoNum(num int) EvOption {
 		e.minBusinessGoNum = num
 	}
 }
+
+// 是否使用io_uring, 支持linux系统，需要内核版本6.2.0以上(以后只会在>=6.2.0的版本上测试)
+func WithIoUring() EvOption {
+	return func(e *MultiEventLoop) {
+		e.flag |= EVENT_IOURING
+	}
+}

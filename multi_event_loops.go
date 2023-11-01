@@ -14,6 +14,7 @@ type MultiEventLoop struct {
 	loops            []*EventLoop
 	t                *task
 	curConn          int64
+	flag             evFlag // 是否使用io_uring
 	*slog.Logger
 }
 
@@ -48,6 +49,10 @@ func (m *MultiEventLoop) initDefaultSettingAfter() {
 	if m.minBusinessGoNum == 0 {
 		m.minBusinessGoNum = 50
 	}
+
+	if m.flag == 0 {
+		m.flag = EVENT_EPOLL
+	}
 }
 
 func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
@@ -75,7 +80,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m.loops = make([]*EventLoop, m.numLoops)
 
 	for i := 0; i < m.numLoops; i++ {
-		m.loops[i], err = CreateEventLoop(m.maxEventNum)
+		m.loops[i], err = CreateEventLoop(m.maxEventNum, m.flag)
 		if err != nil {
 			return nil, err
 		}

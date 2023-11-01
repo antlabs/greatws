@@ -15,7 +15,6 @@ package bigws
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -38,12 +37,12 @@ type EventLoop struct {
 }
 
 // 初始化函数
-func CreateEventLoop(setSize int) (e *EventLoop, err error) {
+func CreateEventLoop(setSize int, flag evFlag) (e *EventLoop, err error) {
 	e = &EventLoop{
 		setSize: setSize,
 		maxFd:   -1,
 	}
-	err = e.apiCreate(EVENT_EPOLL)
+	err = e.apiCreate(flag)
 	return e, err
 }
 
@@ -60,7 +59,7 @@ func (el *EventLoop) Loop() {
 	for !el.shutdown {
 		_, err := el.apiPoll(time.Duration(time.Second * 100))
 		if err != nil {
-			fmt.Println("apiPoll error:", err)
+			el.parent.Error("apiPolll", "err", err.Error())
 			return
 		}
 	}
