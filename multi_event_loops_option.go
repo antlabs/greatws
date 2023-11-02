@@ -27,7 +27,7 @@ func WithMinBusinessGoNum(num int) EvOption {
 
 func WithLogLevel(level slog.Level) EvOption {
 	return func(e *MultiEventLoop) {
-		// e.Logger = slog.New(os.Stdout, level, slog.Ldefault)
+		e.level = level
 	}
 }
 
