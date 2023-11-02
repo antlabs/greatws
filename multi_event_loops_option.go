@@ -1,5 +1,7 @@
 package bigws
 
+import "log/slog"
+
 type EvOption func(e *MultiEventLoop)
 
 // 开启几个事件循环
@@ -20,6 +22,12 @@ func WithMaxEventNum(num int) EvOption {
 func WithMinBusinessGoNum(num int) EvOption {
 	return func(e *MultiEventLoop) {
 		e.minBusinessGoNum = num
+	}
+}
+
+func WithLogLevel(level slog.Level) EvOption {
+	return func(e *MultiEventLoop) {
+		// e.Logger = slog.New(os.Stdout, level, slog.Ldefault)
 	}
 }
 

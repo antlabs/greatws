@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -21,7 +22,7 @@ var keyPEMBlock []byte
 type echoHandler struct{}
 
 func (e *echoHandler) OnOpen(c *bigws.Conn) {
-	fmt.Printf("OnOpen: %p\n", c)
+	// fmt.Printf("OnOpen: %p\n", c)
 }
 
 func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
@@ -35,7 +36,7 @@ func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
 }
 
 func (e *echoHandler) OnClose(c *bigws.Conn, err error) {
-	fmt.Printf("OnClose:%p, %v\n", c, err)
+	// fmt.Printf("OnClose:%p, %v\n", c, err)
 }
 
 type handler struct {
@@ -55,7 +56,6 @@ func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fmt.Println("Upgrade fail:", err)
 		panic(err.Error())
-		return
 	}
 	_ = c
 }
@@ -63,8 +63,10 @@ func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
 func main() {
 	var h handler
 
-	h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000))
+	h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithIoUring(), bigws.WithLogLevel(slog.LevelDebug))
+	// h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000))
 	h.m.Start()
+	fmt.Printf("apiname:%s\n", h.m.GetApiName())
 
 	go func() {
 		for {

@@ -15,6 +15,7 @@ type MultiEventLoop struct {
 	t                *task
 	curConn          int64
 	flag             evFlag // 是否使用io_uring
+	level            slog.Level
 	*slog.Logger
 }
 
@@ -28,7 +29,16 @@ func (m *MultiEventLoop) GetCurTaskNum() int64 {
 	return m.t.getCurTask()
 }
 
+func (m *MultiEventLoop) GetApiName() string {
+	if len(m.loops) == 0 {
+		return ""
+	}
+
+	return m.loops[0].GetApiName()
+}
+
 func (m *MultiEventLoop) initDefaultSettingBefore() {
+	m.level = slog.LevelError // 默认打印error级别的日志
 	m.numLoops = 0
 	m.maxEventNum = 10000
 	m.minBusinessGoNum = 50
@@ -61,7 +71,7 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 		panic(err)
 	}
 
-	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: m.level}))
 	return m
 }
 

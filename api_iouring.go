@@ -27,7 +27,7 @@ type (
 	operation          = func(*giouring.SubmissionQueueEntry)
 
 	iouringState struct {
-		ring        *giouring.Ring
+		ring        *giouring.Ring // ring 对象
 		ringEntries uint32
 		parent      *EventLoop
 		callbacks   callbacks
@@ -36,15 +36,12 @@ type (
 	}
 )
 
-func (e *iouringState) settingDefault() {
-	e.ringEntries = 1024
-}
-
 func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error) {
 	var iouringState iouringState
 	ring, err := giouring.CreateRing(ringEntries)
 	iouringState.ring = ring
 	iouringState.parent = el
+	iouringState.callbacks.init()
 	return &iouringState, nil
 }
 
@@ -125,7 +122,7 @@ func (e *iouringConn) Write(data []byte) (n int, err error) {
 	return len(data), nil
 }
 
-func (e *iouringState) addRead(c *Conn) error {
+func (e *iouringState) addRead(c *Conn) (err error) {
 	fd := c.getFd()
 	// c := e.parent.parent.getConn(fd)
 	c.w = newIouringConn(e, fd)
