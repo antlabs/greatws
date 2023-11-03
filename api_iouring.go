@@ -42,6 +42,7 @@ func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error
 	iouringState.ring = ring
 	iouringState.parent = el
 	iouringState.callbacks.init()
+	iouringState.buffers.init(ring, 1000, 1000)
 	return &iouringState, nil
 }
 
@@ -72,7 +73,7 @@ func (e *iouringState) shutdown(err error, fd int) {
 	e.prepareShutdown(fd, func(res int32, flags uint32, err *ErrErrno) {
 		if err != nil {
 			if !err.ConnectionReset() {
-				slog.Debug("tcp conn shutdown", "fd", fd, "err", err, "res", res, "flags", flags)
+				e.getLogger().Debug("tcp conn shutdown", "fd", fd, "err", err, "res", res, "flags", flags)
 			}
 			// TODO:: close fd
 			return
@@ -80,7 +81,7 @@ func (e *iouringState) shutdown(err error, fd int) {
 
 		e.prepareClose(fd, func(res int32, flags uint32, err *ErrErrno) {
 			if err != nil {
-				slog.Debug("tcp conn close", "fd", fd, "errno", err, "res", res, "flags", flags)
+				e.getLogger().Debug("tcp conn close", "fd", fd, "errno", err, "res", res, "flags", flags)
 			}
 			// TODO: close fd
 			// e.Closed(tc.shutdownError)
@@ -129,14 +130,15 @@ func (e *iouringState) addRead(c *Conn) (err error) {
 
 	var cb completionCallback
 	cb = func(res int32, flags uint32, err *ErrErrno) {
+		e.getLogger().Debug("addRead cb, err:%v", err.Error())
 		if err != nil {
 			if err.Temporary() {
-				slog.Debug("tcp conn read temporary error", "error", err.Error())
+				e.getLogger().Debug("tcp conn read temporary error", "error", err.Error())
 				e.prepareRecv(fd, cb)
 				return
 			}
 			if !err.ConnectionReset() {
-				slog.Warn("tcp conn read error", "error", err.Error())
+				e.getLogger().Warn("tcp conn read error", "error", err.Error())
 			}
 			e.shutdown(err, fd)
 			return
@@ -147,12 +149,13 @@ func (e *iouringState) addRead(c *Conn) (err error) {
 		}
 		buf, id := e.buffers.get(res, flags)
 
+		e.getLogger().Debug("iouring:tcp conn read %d bytes", res)
 		// TODO
 		// tc.up.Received(buf)
 		// 读取数据后，释放buffer
 		e.buffers.release(buf, id)
 		if !isMultiShot(flags) {
-			slog.Debug("tcp conn multishot terminated", slog.Uint64("flags", uint64(flags)), slog.String("error", err.Error()))
+			e.getLogger().Debug("tcp conn multishot terminated", slog.Uint64("flags", uint64(flags)), slog.String("error", err.Error()))
 			// io_uring can terminate multishot recv when cqe is full
 			// need to restart it then
 			// ref: https://lore.kernel.org/lkml/20220630091231.1456789-3-dylany@fb.com/T/#re5daa4d5b6e4390ecf024315d9693e5d18d61f10
@@ -176,14 +179,18 @@ func (e *iouringState) flushCompletions() uint32 {
 	var noCompleted uint32 = 0
 	for {
 		peeked := e.ring.PeekBatchCQE(cqes[:])
+
 		for _, cqe := range cqes[:peeked] {
 			err := cqeErr(cqe)
 			if cqe.UserData == 0 {
-				slog.Debug("ceq without userdata", "res", cqe.Res, "flags", cqe.Flags, "err", err)
+				e.getLogger().Debug("ceq without userdata", "res", cqe.Res, "flags", cqe.Flags, "err", err)
 				continue
 			}
 			cb := e.callbacks.get(cqe)
 			cb(cqe.Res, cqe.Flags, err)
+		}
+		if peeked > 0 {
+			e.getLogger().Debug("peeked", "peeded", peeked)
 		}
 		e.ring.CQAdvance(peeked)
 		noCompleted += peeked
@@ -195,18 +202,26 @@ func (e *iouringState) flushCompletions() uint32 {
 
 func (e *iouringState) runOnce() error {
 	if err := e.submitAndWait(1); err != nil {
+		e.getLogger().Error("submitAndWait(1)", "error", err.Error())
 		return err
 	}
 	_ = e.flushCompletions()
 	return nil
 }
 
+func (e *iouringState) getLogger() *slog.Logger {
+	return e.parent.parent.Logger
+}
+
 func (e *iouringState) run(timeout time.Duration) error {
 	ts := syscall.NsecToTimespec(int64(timeout))
+
 	if err := e.submit(); err != nil {
+		e.getLogger().Error("run.submit", "err", err.Error())
 		return err
 	}
 	if _, err := e.ring.WaitCQEs(1, &ts, nil); err != nil && !TemporaryError(err) {
+		e.getLogger().Error("run.WaitCQEs", "err", err.Error())
 		return err
 	}
 	_ = e.flushCompletions()
