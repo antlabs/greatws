@@ -4,6 +4,7 @@
 package bigws
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -42,7 +43,9 @@ func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error
 	iouringState.ring = ring
 	iouringState.parent = el
 	iouringState.callbacks.init()
-	iouringState.buffers.init(ring, 1000, 1000)
+	if err = iouringState.buffers.init(ring, 256, 1024); err != nil {
+		panic(err.Error())
+	}
 	return &iouringState, nil
 }
 
@@ -130,7 +133,9 @@ func (e *iouringState) addRead(c *Conn) (err error) {
 
 	var cb completionCallback
 	cb = func(res int32, flags uint32, err *ErrErrno) {
-		e.getLogger().Debug("addRead cb, err:%v", err.Error())
+		if err != nil {
+			e.getLogger().Error("addRead cb, err:%v", err.Error())
+		}
 		if err != nil {
 			if err.Temporary() {
 				e.getLogger().Debug("tcp conn read temporary error", "error", err.Error())
@@ -416,13 +421,14 @@ func (b *providedBuffers) init(ring *giouring.Ring, entries uint32, bufLen uint3
 	b.data, err = syscall.Mmap(-1, 0, size,
 		syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
-		return err
+		return fmt.Errorf("syscall.Mmap.error:%w", err)
 	}
 	// share buffers with io_uring
 	b.br, err = ring.SetupBufRing(b.entries, buffersGroupID, 0)
 	if err != nil {
-		return err
+		return fmt.Errorf("ring.SetupBufRing:%w", err)
 	}
+
 	for i := uint32(0); i < b.entries; i++ {
 		b.br.BufRingAdd(
 			uintptr(unsafe.Pointer(&b.data[b.bufLen*i])),
