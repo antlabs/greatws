@@ -154,7 +154,7 @@ func (e *iouringState) addRead(c *Conn) (err error) {
 		}
 		buf, id := e.buffers.get(res, flags)
 
-		e.getLogger().Debug("iouring:tcp conn read %d bytes", res)
+		e.getLogger().Debug("iouring:tcp conn read bytes", "res", res)
 		// TODO
 		// tc.up.Received(buf)
 		// 读取数据后，释放buffer
