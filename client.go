@@ -236,33 +236,5 @@ func (d *DialOption) Dial() (c *Conn, err error) {
 		return
 	}
 
-	// 处理下已经在bufio里面的数据，后面都是直接操作net.Conn，所以需要取出bufio里面已读取的数据
-	// var fr fixedreader.FixedReader
-	// var bp bytespool.BytesPool
-	// bp.Init()
-	// if d.parseMode == ParseModeWindows {
-	// 	fr.Init(conn, bytespool.GetBytes(1024+enum.MaxFrameHeaderSize))
-	// 	if br.Buffered() > 0 {
-	// 		b, err := br.Peek(br.Buffered())
-	// 		if err != nil {
-	// 			return nil, err
-	// 		}
-
-	// 		buf := fr.BufPtr()
-	// 		if len(b) > 1024+enum.MaxFrameHeaderSize {
-	// 			bytespool.PutBytes(buf)
-	// 			buf = bytespool.GetBytes(len(b) + enum.MaxFrameHeaderSize)
-	// 		}
-
-	// 		copy(*buf, b)
-	// 		fr.W = len(b)
-	// 	}
-	// 	bufio2.ClearReader(br)
-	// 	br = nil
-	// }
-	// fmt.Println(brw.Reader.Buffered())
-	// return newConn(conn, true, &d.Config, fr, br, bp), nil
-
-	// TODO
 	return nil, nil
 }

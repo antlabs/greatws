@@ -109,7 +109,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 					n = 0
 				}
 				if len(b) > 0 {
-					// TODO
+					// TODO sync.Pool
 					newBuf := make([]byte, len(b)-n)
 					copy(newBuf, b[n:])
 
@@ -141,13 +141,15 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 // 写成功
 // EAGAIN，等待可写再写
 // 报错，直接关闭这个fd
-func (c *Conn) flushOrClose() {
+func (c *Conn) flushOrClose() (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.writeOrAddPoll(c.wbuf)
+	_, err = c.writeOrAddPoll(c.wbuf)
+	return err
 }
 
+// kqueu/epoll模式下，读取数据
 // 该函数从缓冲区读取数据，并且解析出websocket frame
 // 有几种情况需要处理下
 // 1. 缓冲区空间不句够，需要扩容

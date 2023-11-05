@@ -15,6 +15,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/antlabs/wsutil/bytespool"
+	"github.com/antlabs/wsutil/enum"
 	"github.com/pawelgaczynski/giouring"
 )
 
@@ -43,7 +45,7 @@ func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error
 	iouringState.ring = ring
 	iouringState.parent = el
 	iouringState.callbacks.init()
-	if err = iouringState.buffers.init(ring, 256, 1024); err != nil {
+	if err = iouringState.buffers.init(ring, 256, 2048); err != nil {
 		panic(err.Error())
 	}
 	return &iouringState, nil
@@ -126,9 +128,48 @@ func (e *iouringConn) Write(data []byte) (n int, err error) {
 	return len(data), nil
 }
 
+// iouring 模式下，读取数据
+func (c *Conn) processWebsocketFrameOnlyIoUring(buf []byte) (n int, err error) {
+	// 首先判断下相当buffer是否够用
+	// 如果不够用，扩缩下rbuf
+	if len((*c.rbuf)[c.rw:]) < len(buf) {
+		multipletimes := c.windowsMultipleTimesPayloadSize
+
+		// 申请新的buffer
+		newBuf := bytespool.GetBytes(int(float32(len(*c.rbuf)+len(buf)+enum.MaxFrameHeaderSize) * multipletimes))
+		copy(*newBuf, (*c.rbuf)[c.rw:])
+		// 把老的buffer还到池里面
+		bytespool.PutBytes(c.rbuf)
+		c.rbuf = newBuf
+	}
+
+	// 把数据拷贝到rbuf里面
+	copy((*c.rbuf)[c.rw:], buf)
+	c.rw += len(buf)
+
+	// 尽可能消耗完rbuf里面的数据
+	for {
+		sucess, err := c.readHeader()
+		if err != nil {
+			return 0, fmt.Errorf("read header err: %w", err)
+		}
+
+		if !sucess {
+			return 0, nil
+		}
+		sucess, err = c.readPayloadAndCallback()
+		if err != nil {
+			return 0, fmt.Errorf("read header err: %w", err)
+		}
+
+		if !sucess {
+			return 0, nil
+		}
+	}
+}
+
 func (e *iouringState) addRead(c *Conn) (err error) {
 	fd := c.getFd()
-	// c := e.parent.parent.getConn(fd)
 	c.w = newIouringConn(e, fd)
 
 	var cb completionCallback
@@ -136,6 +177,7 @@ func (e *iouringState) addRead(c *Conn) (err error) {
 		if err != nil {
 			e.getLogger().Error("addRead cb, err:%v", err.Error())
 		}
+
 		if err != nil {
 			if err.Temporary() {
 				e.getLogger().Debug("tcp conn read temporary error", "error", err.Error())
@@ -155,9 +197,10 @@ func (e *iouringState) addRead(c *Conn) (err error) {
 		buf, id := e.buffers.get(res, flags)
 
 		e.getLogger().Debug("iouring:tcp conn read bytes", "res", res)
-		// TODO
-		// tc.up.Received(buf)
-		// 读取数据后，释放buffer
+
+		// 处理websocket frame
+		c.processWebsocketFrameOnlyIoUring(buf[:res])
+
 		e.buffers.release(buf, id)
 		if !isMultiShot(flags) {
 			e.getLogger().Debug("tcp conn multishot terminated", slog.Uint64("flags", uint64(flags)), slog.String("error", err.Error()))
@@ -415,6 +458,7 @@ type providedBuffers struct {
 func (b *providedBuffers) init(ring *giouring.Ring, entries uint32, bufLen uint32) error {
 	b.entries = entries
 	b.bufLen = bufLen
+
 	// mmap allocated space for all buffers
 	var err error
 	size := int(b.entries * b.bufLen)
@@ -429,6 +473,7 @@ func (b *providedBuffers) init(ring *giouring.Ring, entries uint32, bufLen uint3
 		return fmt.Errorf("ring.SetupBufRing:%w", err)
 	}
 
+	// buffer注册到ring中
 	for i := uint32(0); i < b.entries; i++ {
 		b.br.BufRingAdd(
 			uintptr(unsafe.Pointer(&b.data[b.bufLen*i])),
