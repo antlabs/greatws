@@ -46,7 +46,7 @@ func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error
 	iouringState.ring = ring
 	iouringState.parent = el
 	iouringState.callbacks.init()
-	if err = iouringState.buffers.init(ring, 256, 2048); err != nil {
+	if err = iouringState.buffers.init(ring, 16384, 2048); err != nil {
 		panic(err.Error())
 	}
 	return &iouringState, nil
@@ -232,7 +232,7 @@ func (e *iouringState) flushCompletions() uint32 {
 		for _, cqe := range cqes[:peeked] {
 			err := cqeErr(cqe)
 			if cqe.UserData == 0 {
-				e.getLogger().Debug("ceq without userdata", "res", cqe.Res, "flags", cqe.Flags, "err", err)
+				e.getLogger().Debug("ceq without userdata", "res", cqe.Res, "flags", cqe.Flags)
 				continue
 			}
 			cb := e.callbacks.get(cqe)
