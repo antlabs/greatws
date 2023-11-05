@@ -36,7 +36,9 @@ type (
 		parent      *EventLoop
 		callbacks   callbacks
 		buffers     providedBuffers
-		pending     []operation
+
+		pendingMu sync.Mutex
+		pending   []operation
 	}
 )
 
@@ -310,7 +312,9 @@ func (e *iouringState) prepare(op operation) {
 		sqe = e.ring.GetSQE()
 	}
 	if sqe == nil { // still nothing, add to pending
+		e.pendingMu.Lock()
 		e.pending = append(e.pending, op)
+		e.pendingMu.Unlock()
 		return
 	}
 	op(sqe)
@@ -318,6 +322,8 @@ func (e *iouringState) prepare(op operation) {
 
 func (e *iouringState) preparePending() {
 	prepared := 0
+	e.pendingMu.Lock()
+	defer e.pendingMu.Unlock()
 	for _, op := range e.pending {
 		sqe := e.ring.GetSQE()
 		if sqe == nil {
@@ -335,7 +341,11 @@ func (e *iouringState) preparePending() {
 
 func (e *iouringState) submitAndWait(waitNr uint32) error {
 	for {
-		if len(e.pending) > 0 {
+		e.pendingMu.Lock()
+		pendingSize := len(e.pending)
+		e.pendingMu.Unlock()
+
+		if pendingSize > 0 {
 			_, err := e.ring.SubmitAndWait(0)
 			if err == nil {
 				e.preparePending()
