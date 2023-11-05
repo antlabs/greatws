@@ -37,6 +37,8 @@ type (
 		callbacks   callbacks
 		buffers     providedBuffers
 
+		sqeMu sync.Mutex
+
 		pendingMu sync.Mutex
 		pending   []operation
 	}
@@ -178,7 +180,7 @@ func (e *iouringState) addRead(c *Conn) (err error) {
 	var cb completionCallback
 	cb = func(res int32, flags uint32, err *ErrErrno) {
 		if err != nil {
-			e.getLogger().Error("addRead cb, err:%v", err.Error())
+			e.getLogger().Error("addRead cb, err", "err", err.Error())
 		}
 
 		if err != nil {
@@ -306,11 +308,14 @@ func (e *iouringState) apiName() string {
 }
 
 func (e *iouringState) prepare(op operation) {
+	e.sqeMu.Lock()
 	sqe := e.ring.GetSQE()
 	if sqe == nil { // submit and retry
 		e.submit()
 		sqe = e.ring.GetSQE()
 	}
+	e.sqeMu.Unlock()
+
 	if sqe == nil { // still nothing, add to pending
 		e.pendingMu.Lock()
 		e.pending = append(e.pending, op)
@@ -325,10 +330,14 @@ func (e *iouringState) preparePending() {
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
 	for _, op := range e.pending {
+		e.sqeMu.Lock()
 		sqe := e.ring.GetSQE()
 		if sqe == nil {
+			e.sqeMu.Unlock()
 			break
 		}
+		e.sqeMu.Unlock()
+
 		op(sqe)
 		prepared++
 	}
