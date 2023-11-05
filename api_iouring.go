@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -416,6 +417,7 @@ func TemporaryError(err error) bool {
 }
 
 type callbacks struct {
+	mu     sync.Mutex
 	m      map[uint64]completionCallback
 	callNo uint64
 }
@@ -427,21 +429,28 @@ func (c *callbacks) init() {
 
 func (c *callbacks) set(sqe *giouring.SubmissionQueueEntry, cb completionCallback) {
 	newNo := atomic.AddUint64(&c.callNo, 1)
+	c.mu.Lock()
 	c.m[newNo] = cb
+	c.mu.Unlock()
 	sqe.UserData = newNo
 }
 
 func (c *callbacks) get(cqe *giouring.CompletionQueueEvent) completionCallback {
 	ms := isMultiShot(cqe.Flags)
+	c.mu.Lock()
 	cb := c.m[cqe.UserData]
 	if !ms {
 		delete(c.m, cqe.UserData)
 	}
+	c.mu.Unlock()
 	return cb
 }
 
-func (c *callbacks) count() int {
-	return len(c.m)
+func (c *callbacks) count() (l int) {
+	c.mu.Lock()
+	l = len(c.m)
+	c.mu.Unlock()
+	return
 }
 
 func isMultiShot(flags uint32) bool {
