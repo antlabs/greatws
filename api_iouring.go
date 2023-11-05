@@ -48,7 +48,7 @@ func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error
 	iouringState.ring = ring
 	iouringState.parent = el
 	iouringState.callbacks.init()
-	if err = iouringState.buffers.init(ring, 16384, 2048); err != nil {
+	if err = iouringState.buffers.init(ring, 32768, 2048); err != nil {
 		panic(err.Error())
 	}
 	return &iouringState, nil
