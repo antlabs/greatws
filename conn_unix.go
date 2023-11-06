@@ -14,6 +14,33 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type ioUringOpState int
+
+const (
+	connInvalid ioUringOpState = iota
+	opRead
+	opWrite
+	opClose
+)
+
+func (s ioUringOpState) String() string {
+	switch s {
+	case opRead:
+		return "read"
+	case opWrite:
+		return "write"
+	case opClose:
+		return "close"
+	default:
+		return "invalid"
+	}
+}
+
+// 只存在io-uring相关的控制信息
+type onlyIoUringState struct {
+	operation ioUringOpState
+}
+
 type Conn struct {
 	conn
 
