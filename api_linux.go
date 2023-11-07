@@ -32,8 +32,8 @@ type linuxApi interface {
 	apiPoll(tv time.Duration) (retVal int, err error)
 	apiName() string
 	addRead(c *Conn) error
-	addWrite(fd int) error
-	delWrite(fd int) error
+	addWrite(c *Conn) error
+	delWrite(c *Conn) error
 }
 
 // 创建

@@ -17,7 +17,7 @@ import (
 type ioUringOpState int
 
 const (
-	connInvalid ioUringOpState = iota
+	connInvalid ioUringOpState = 1 << iota
 	opRead
 	opWrite
 	opClose
@@ -36,13 +36,15 @@ func (s ioUringOpState) String() string {
 	}
 }
 
-// 只存在io-uring相关的控制信息
+// 只存放io-uring相关的控制信息
 type onlyIoUringState struct {
 	operation ioUringOpState
 }
 
 type Conn struct {
 	conn
+
+	onlyIoUringState
 
 	wbuf             []byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
 	w                io.Writer

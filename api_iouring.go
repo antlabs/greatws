@@ -4,14 +4,9 @@
 package bigws
 
 import (
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"math"
-	"os"
-	"runtime"
-	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -27,20 +22,11 @@ const (
 )
 
 type (
-	completionCallback = func(res int32, flags uint32, err *ErrErrno)
-	operation          = func(*giouring.SubmissionQueueEntry)
-
 	iouringState struct {
 		ring        *giouring.Ring // ring 对象
 		ringEntries uint32
 		parent      *EventLoop
-		callbacks   callbacks
 		buffers     providedBuffers
-
-		sqeMu sync.Mutex
-
-		pendingMu sync.Mutex
-		pending   []operation
 	}
 )
 
@@ -49,54 +35,13 @@ func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error
 	ring, err := giouring.CreateRing(ringEntries)
 	iouringState.ring = ring
 	iouringState.parent = el
-	iouringState.callbacks.init()
-	if err = iouringState.buffers.init(ring, 32768, 2048); err != nil {
+	if err = iouringState.buffers.init(ring, 32769, 2048); err != nil {
 		panic(err.Error())
 	}
 	return &iouringState, nil
 }
 
 func (e *iouringState) apiFree() {
-	// TODO
-	// e.closePendingConnections()
-	// run loop until all operations finishes
-	_ = e.runUntilDone()
-}
-
-func (e *iouringState) prepareShutdown(fd int, cb completionCallback) {
-	e.prepare(func(sqe *giouring.SubmissionQueueEntry) {
-		const SHUT_RDWR = 2
-		sqe.PrepareShutdown(fd, SHUT_RDWR)
-		// TODO
-		e.callbacks.set(sqe, cb)
-	})
-}
-
-func (e *iouringState) shutdown(err error, fd int) {
-	if err == nil {
-		panic("tcp conn missing shutdown reason")
-	}
-	// if e.shutdownError != nil {
-	// 	return
-	// }
-	// e.shutdownError = err
-	e.prepareShutdown(fd, func(res int32, flags uint32, err *ErrErrno) {
-		if err != nil {
-			if !err.ConnectionReset() {
-				e.getLogger().Debug("tcp conn shutdown", "fd", fd, "err", err, "res", res, "flags", flags)
-			}
-			// TODO:: close fd
-			return
-		}
-
-		e.prepareClose(fd, func(res int32, flags uint32, err *ErrErrno) {
-			if err != nil {
-				e.getLogger().Debug("tcp conn close", "fd", fd, "errno", err, "res", res, "flags", flags)
-			}
-			// TODO: close fd
-			// e.Closed(tc.shutdownError)
-		})
-	})
 }
 
 type iouringConn struct {
@@ -109,27 +54,6 @@ func newIouringConn(e *iouringState, fd int) *iouringConn {
 }
 
 func (e *iouringConn) Write(data []byte) (n int, err error) {
-	nn := 0 // number of bytes sent
-	var cb completionCallback
-	var pinner runtime.Pinner
-	pinner.Pin(&data[0])
-	cb = func(res int32, flags uint32, err *ErrErrno) {
-		nn += int(res) // bytes written so far
-		if err != nil {
-			pinner.Unpin()
-			e.shutdown(err, e.fd)
-			return
-		}
-		if nn >= len(data) {
-			pinner.Unpin()
-			// tc.up.Sent() // all sent call callback
-			return
-		}
-		// send rest of the data
-		e.prepareSend(e.fd, data[nn:], cb)
-	}
-
-	e.prepareSend(e.fd, data, cb)
 	return len(data), nil
 }
 
@@ -173,92 +97,44 @@ func (c *Conn) processWebsocketFrameOnlyIoUring(buf []byte) (n int, err error) {
 	}
 }
 
-func (e *iouringState) addRead(c *Conn) (err error) {
-	fd := c.getFd()
-	c.w = newIouringConn(e, fd)
-
-	var cb completionCallback
-	cb = func(res int32, flags uint32, err *ErrErrno) {
-		if err != nil {
-			e.getLogger().Error("addRead cb, err", "err", err.Error())
-		}
-
-		if err != nil {
-			if err.Temporary() {
-				e.getLogger().Debug("tcp conn read temporary error", "error", err.Error())
-				e.prepareRecv(fd, cb)
-				return
-			}
-			if !err.ConnectionReset() {
-				e.getLogger().Warn("tcp conn read error", "error", err.Error())
-			}
-			e.shutdown(err, fd)
-			return
-		}
-		if res == 0 {
-			e.shutdown(io.EOF, fd)
-			return
-		}
-		buf, id := e.buffers.get(res, flags)
-
-		e.getLogger().Debug("iouring:tcp conn read bytes", "res", res)
-
-		// 处理websocket frame
-		c.processWebsocketFrameOnlyIoUring(buf[:res])
-
-		e.buffers.release(buf, id)
-		if !isMultiShot(flags) {
-			e.getLogger().Debug("tcp conn multishot terminated", slog.Uint64("flags", uint64(flags)), slog.String("error", err.Error()))
-			// io_uring can terminate multishot recv when cqe is full
-			// need to restart it then
-			// ref: https://lore.kernel.org/lkml/20220630091231.1456789-3-dylany@fb.com/T/#re5daa4d5b6e4390ecf024315d9693e5d18d61f10
-			e.prepareRecv(fd, cb)
-		}
+func (e *iouringState) addRead(c *Conn) error {
+	entry := e.ring.GetSQE()
+	if entry == nil {
+		return errors.New("addRead: fail:GetSQE is nil")
 	}
-	e.prepareRecv(fd, cb)
+	entry.PrepareRecv(
+		c.fd,
+		uintptr(0 /*TODO buffer address*/),
+		uint32(0 /* TODO length*/),
+		0)
+	c.operation |= opRead
 	return nil
 }
 
-func (e *iouringState) addWrite(fd int) error {
+func (e *iouringState) addWrite(c *Conn) error {
+	entry := e.ring.GetSQE()
+	if entry == nil {
+		return errors.New("addRead: fail:GetSQE is nil")
+	}
+	entry.PrepareSend(
+		c.fd,
+		uintptr(0 /**/),
+		uint32(0 /**/),
+		0)
+	entry.UserData = uint64(c.fd)
 	return nil
 }
 
-func (e *iouringState) del(fd int) error {
-	return nil
-}
-
-func (e *iouringState) flushCompletions() uint32 {
-	var cqes [batchSize]*giouring.CompletionQueueEvent
-	var noCompleted uint32 = 0
-	for {
-		peeked := e.ring.PeekBatchCQE(cqes[:])
-
-		for _, cqe := range cqes[:peeked] {
-			err := cqeErr(cqe)
-			if cqe.UserData == 0 {
-				e.getLogger().Debug("ceq without userdata", "res", cqe.Res, "flags", cqe.Flags)
-				continue
-			}
-			cb := e.callbacks.get(cqe)
-			cb(cqe.Res, cqe.Flags, err)
-		}
-		if peeked > 0 {
-			e.getLogger().Debug("peeked", "peeded", peeked)
-		}
-		e.ring.CQAdvance(peeked)
-		noCompleted += peeked
-		if peeked < uint32(len(cqes)) {
-			return noCompleted
-		}
+func (e *iouringState) del(c *Conn) error {
+	fd := c.fd
+	entry := e.ring.GetSQE()
+	if entry == nil {
+		return errors.New("del: fail: GetSQE is nil")
 	}
-}
 
-func (e *iouringState) runOnce() error {
-	if err := e.submitAndWait(1); err != nil {
-		e.getLogger().Error("submitAndWait(1)", "error", err.Error())
-		return err
-	}
-	_ = e.flushCompletions()
+	entry.PrepareClose(fd)
+	entry.UserData = uint64(fd)
+
 	return nil
 }
 
@@ -266,30 +142,36 @@ func (e *iouringState) getLogger() *slog.Logger {
 	return e.parent.parent.Logger
 }
 
-func (e *iouringState) run(timeout time.Duration) error {
-	ts := syscall.NsecToTimespec(int64(timeout))
-
-	if err := e.submit(); err != nil {
-		e.getLogger().Error("run.submit", "err", err.Error())
-		return err
-	}
-	if _, err := e.ring.WaitCQEs(1, &ts, nil); err != nil && !TemporaryError(err) {
-		e.getLogger().Error("run.WaitCQEs", "err", err.Error())
-		return err
-	}
-	_ = e.flushCompletions()
-	return nil
+func (e *iouringState) advance(n uint32) {
+	e.ring.CQAdvance(n)
 }
 
-func (e *iouringState) runUntilDone() error {
-	for {
-		if e.callbacks.count() == 0 {
-			return nil
-		}
-		if err := e.runOnce(); err != nil {
+func (e *iouringState) run(timeout time.Duration) error {
+	var err error
+	cqes := make([]*giouring.CompletionQueueEvent, 256 /*TODO:*/)
+
+	ts := syscall.NsecToTimespec(int64(timeout))
+
+	_, err = e.ring.SubmitAndWaitTimeout(256 /*TODO*/, &ts, nil)
+	if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR) ||
+		errors.Is(err, syscall.ETIME) {
+		return nil
+	}
+	numberOfCQEs := e.ring.PeekBatchCQE(cqes)
+
+	var i uint32
+	for i = 0; i < numberOfCQEs; i++ {
+		cqe := cqes[i]
+
+		err = processConn(cqe)
+		if err != nil {
+			e.advance(i + 1)
 			return err
 		}
 	}
+	e.advance(numberOfCQEs)
+
+	return nil
 }
 
 func (e *iouringState) apiPoll(tv time.Duration) (retVal int, err error) {
@@ -299,181 +181,12 @@ func (e *iouringState) apiPoll(tv time.Duration) (retVal int, err error) {
 	return 0, nil
 }
 
-func (e *iouringState) delWrite(fd int) error {
+func (e *iouringState) delWrite(c *Conn) error {
 	return nil
 }
 
 func (e *iouringState) apiName() string {
 	return "io_uring"
-}
-
-func (e *iouringState) prepare(op operation) {
-	e.sqeMu.Lock()
-	sqe := e.ring.GetSQE()
-	if sqe == nil { // submit and retry
-		e.submit()
-		sqe = e.ring.GetSQE()
-	}
-	e.sqeMu.Unlock()
-
-	if sqe == nil { // still nothing, add to pending
-		e.pendingMu.Lock()
-		e.pending = append(e.pending, op)
-		e.pendingMu.Unlock()
-		return
-	}
-	op(sqe)
-}
-
-func (e *iouringState) preparePending() {
-	prepared := 0
-	e.pendingMu.Lock()
-	defer e.pendingMu.Unlock()
-	for _, op := range e.pending {
-		e.sqeMu.Lock()
-		sqe := e.ring.GetSQE()
-		if sqe == nil {
-			e.sqeMu.Unlock()
-			break
-		}
-		e.sqeMu.Unlock()
-
-		op(sqe)
-		prepared++
-	}
-	if prepared == len(e.pending) {
-		e.pending = nil
-	} else {
-		e.pending = e.pending[prepared:]
-	}
-}
-
-func (e *iouringState) submitAndWait(waitNr uint32) error {
-	for {
-		e.pendingMu.Lock()
-		pendingSize := len(e.pending)
-		e.pendingMu.Unlock()
-
-		if pendingSize > 0 {
-			_, err := e.ring.SubmitAndWait(0)
-			if err == nil {
-				e.preparePending()
-			}
-		}
-
-		_, err := e.ring.SubmitAndWait(waitNr)
-		if err != nil && TemporaryError(err) {
-			continue
-		}
-		return err
-	}
-}
-
-func (e *iouringState) submit() error {
-	return e.submitAndWait(0)
-}
-
-func (e *iouringState) prepareRecv(fd int, cb completionCallback) {
-	e.prepare(func(sqe *giouring.SubmissionQueueEntry) {
-		sqe.PrepareRecvMultishot(fd, 0, 0, 0)
-		sqe.Flags = giouring.SqeBufferSelect
-		sqe.BufIG = buffersGroupID
-		e.callbacks.set(sqe, cb)
-	})
-}
-
-func (l *iouringState) prepareSend(fd int, buf []byte, cb completionCallback) {
-	l.prepare(func(sqe *giouring.SubmissionQueueEntry) {
-		sqe.PrepareSend(fd, uintptr(unsafe.Pointer(&buf[0])), uint32(len(buf)), 0)
-		l.callbacks.set(sqe, cb)
-	})
-}
-
-func (l *iouringState) prepareClose(fd int, cb completionCallback) {
-	l.prepare(func(sqe *giouring.SubmissionQueueEntry) {
-		sqe.PrepareClose(fd)
-		l.callbacks.set(sqe, cb)
-	})
-}
-
-type ErrErrno struct {
-	Errno syscall.Errno
-}
-
-func (e *ErrErrno) Error() string {
-	return e.Errno.Error()
-}
-
-func (e *ErrErrno) Temporary() bool {
-	o := e.Errno
-	return o == syscall.EINTR || o == syscall.EMFILE || o == syscall.ENFILE ||
-		o == syscall.ENOBUFS || e.Timeout()
-}
-
-func (e *ErrErrno) Timeout() bool {
-	o := e.Errno
-	return o == syscall.EAGAIN || o == syscall.EWOULDBLOCK || o == syscall.ETIMEDOUT ||
-		o == syscall.ETIME
-}
-
-func (e *ErrErrno) Canceled() bool {
-	return e.Errno == syscall.ECANCELED
-}
-
-func (e *ErrErrno) ConnectionReset() bool {
-	return e.Errno == syscall.ECONNRESET || e.Errno == syscall.ENOTCONN
-}
-
-// TemporaryError returns true if syscall.Errno should be threated as temporary.
-func TemporaryError(err error) bool {
-	if errno, ok := err.(syscall.Errno); ok {
-		return (&ErrErrno{Errno: errno}).Temporary()
-	}
-	if os.IsTimeout(err) {
-		return true
-	}
-	return false
-}
-
-type callbacks struct {
-	mu     sync.Mutex
-	m      map[uint64]completionCallback
-	callNo uint64
-}
-
-func (c *callbacks) init() {
-	c.m = make(map[uint64]completionCallback)
-	c.callNo = math.MaxUint16 // reserve first few userdata values for internal use
-}
-
-func (c *callbacks) set(sqe *giouring.SubmissionQueueEntry, cb completionCallback) {
-	newNo := atomic.AddUint64(&c.callNo, 1)
-	c.mu.Lock()
-	c.m[newNo] = cb
-	c.mu.Unlock()
-	sqe.UserData = newNo
-}
-
-func (c *callbacks) get(cqe *giouring.CompletionQueueEvent) completionCallback {
-	ms := isMultiShot(cqe.Flags)
-	c.mu.Lock()
-	cb := c.m[cqe.UserData]
-	if !ms {
-		delete(c.m, cqe.UserData)
-	}
-	c.mu.Unlock()
-	return cb
-}
-
-func (c *callbacks) count() (l int) {
-	c.mu.Lock()
-	l = len(c.m)
-	c.mu.Unlock()
-	return
-}
-
-func isMultiShot(flags uint32) bool {
-	return flags&giouring.CQEFMore > 0
 }
 
 type providedBuffers struct {
@@ -541,12 +254,4 @@ func (b *providedBuffers) release(buf []byte, bufferID uint16) {
 
 func (b *providedBuffers) deinit() {
 	_ = syscall.Munmap(b.data)
-}
-
-func cqeErr(c *giouring.CompletionQueueEvent) *ErrErrno {
-	if c.Res > -4096 && c.Res < 0 {
-		errno := syscall.Errno(-c.Res)
-		return &ErrErrno{Errno: errno}
-	}
-	return nil
 }
