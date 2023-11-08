@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/enum"
@@ -21,14 +20,11 @@ const (
 	buffersGroupID = 0 // currently using only 1 provided buffer group
 )
 
-type (
-	iouringState struct {
-		ring        *giouring.Ring // ring 对象
-		ringEntries uint32
-		parent      *EventLoop
-		buffers     providedBuffers
-	}
-)
+type iouringState struct {
+	ring        *giouring.Ring // ring 对象
+	ringEntries uint32
+	parent      *EventLoop
+}
 
 func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error) {
 	var iouringState iouringState
@@ -187,71 +183,4 @@ func (e *iouringState) delWrite(c *Conn) error {
 
 func (e *iouringState) apiName() string {
 	return "io_uring"
-}
-
-type providedBuffers struct {
-	br      *giouring.BufAndRing
-	data    []byte
-	entries uint32
-	bufLen  uint32
-}
-
-func (b *providedBuffers) init(ring *giouring.Ring, entries uint32, bufLen uint32) error {
-	b.entries = entries
-	b.bufLen = bufLen
-
-	// mmap allocated space for all buffers
-	var err error
-	size := int(b.entries * b.bufLen)
-	b.data, err = syscall.Mmap(-1, 0, size,
-		syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
-	if err != nil {
-		return fmt.Errorf("syscall.Mmap.error:%w", err)
-	}
-	// share buffers with io_uring
-	b.br, err = ring.SetupBufRing(b.entries, buffersGroupID, 0)
-	if err != nil {
-		return fmt.Errorf("ring.SetupBufRing:%w", err)
-	}
-
-	// buffer注册到ring中
-	for i := uint32(0); i < b.entries; i++ {
-		b.br.BufRingAdd(
-			uintptr(unsafe.Pointer(&b.data[b.bufLen*i])),
-			b.bufLen,
-			uint16(i),
-			giouring.BufRingMask(b.entries),
-			int(i),
-		)
-	}
-	b.br.BufRingAdvance(int(b.entries))
-	return nil
-}
-
-// get provided buffer from cqe res, flags
-func (b *providedBuffers) get(res int32, flags uint32) ([]byte, uint16) {
-	isProvidedBuffer := flags&giouring.CQEFBuffer > 0
-	if !isProvidedBuffer {
-		panic("missing buffer flag")
-	}
-	bufferID := uint16(flags >> giouring.CQEBufferShift)
-	start := uint32(bufferID) * b.bufLen
-	n := uint32(res)
-	return b.data[start : start+n], bufferID
-}
-
-// return provided buffer to the kernel
-func (b *providedBuffers) release(buf []byte, bufferID uint16) {
-	b.br.BufRingAdd(
-		uintptr(unsafe.Pointer(&buf[0])),
-		b.bufLen,
-		uint16(bufferID),
-		giouring.BufRingMask(b.entries),
-		0,
-	)
-	b.br.BufRingAdvance(1)
-}
-
-func (b *providedBuffers) deinit() {
-	_ = syscall.Munmap(b.data)
 }
