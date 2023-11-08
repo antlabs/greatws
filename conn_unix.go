@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/antlabs/pool/magicring"
 	"golang.org/x/sys/unix"
 )
 
@@ -39,6 +40,9 @@ func (s ioUringOpState) String() string {
 // 只存放io-uring相关的控制信息
 type onlyIoUringState struct {
 	operation ioUringOpState
+
+	inboundBuffer  *magicring.RingBuffer
+	outboundBuffer *magicring.RingBuffer
 }
 
 type Conn struct {

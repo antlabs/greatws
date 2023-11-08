@@ -11,16 +11,28 @@ import (
 
 func processConn(cqe *giouring.CompletionQueueEvent) error {
 	c := (*Conn)(unsafe.Pointer(uintptr(cqe.UserData)))
-	switch c.operation {
-	case opRead:
-		return c.processRead(cqe)
-	case opWrite:
-		return c.processWrite(cqe)
-	case opClose:
-		return c.processClose(cqe)
-	default:
-		panic("unknown operation")
+	operation := c.operation
+	if operation&opRead > 0 {
+		if err := c.processRead(cqe); err != nil {
+		}
 	}
+	if operation&opWrite > 0 {
+		if err := c.processWrite(cqe); err != nil {
+		}
+	}
+	if operation&opClose > 0 {
+		if err := c.processClose(cqe); err != nil {
+		}
+	}
+	return nil
+}
+
+func (c *Conn) outboundReadAddress() unsafe.Pointer {
+	return c.outboundBuffer.ReadAddress()
+}
+
+func (c *Conn) inboundWriteAddress() unsafe.Pointer {
+	return c.inboundBuffer.WriteAddress()
 }
 
 func (c *Conn) processRead(cqe *giouring.CompletionQueueEvent) error {

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/enum"
@@ -31,9 +32,6 @@ func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error
 	ring, err := giouring.CreateRing(ringEntries)
 	iouringState.ring = ring
 	iouringState.parent = el
-	if err = iouringState.buffers.init(ring, 32769, 2048); err != nil {
-		panic(err.Error())
-	}
 	return &iouringState, nil
 }
 
@@ -100,9 +98,10 @@ func (e *iouringState) addRead(c *Conn) error {
 	}
 	entry.PrepareRecv(
 		c.fd,
-		uintptr(0 /*TODO buffer address*/),
-		uint32(0 /* TODO length*/),
+		uintptr(c.inboundBuffer.WriteAddress()),
+		uint32(c.inboundBuffer.Available()),
 		0)
+	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
 	c.operation |= opRead
 	return nil
 }
@@ -114,10 +113,10 @@ func (e *iouringState) addWrite(c *Conn) error {
 	}
 	entry.PrepareSend(
 		c.fd,
-		uintptr(0 /**/),
-		uint32(0 /**/),
+		uintptr(c.outboundBuffer.ReadAddress()),
+		uint32(c.outboundBuffer.Buffered()),
 		0)
-	entry.UserData = uint64(c.fd)
+	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
 	return nil
 }
 
@@ -129,7 +128,7 @@ func (e *iouringState) del(c *Conn) error {
 	}
 
 	entry.PrepareClose(fd)
-	entry.UserData = uint64(fd)
+	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
 
 	return nil
 }
