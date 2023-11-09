@@ -40,6 +40,23 @@ func (c *Conn) processRead(cqe *giouring.CompletionQueueEvent) error {
 		go c.closeAndWaitOnMessage(true)
 		return nil
 	}
+
+	c.getLogger().Debug("read res", "res", cqe.Res, "fd", c.fd)
+
+	_, err := c.processWebsocketFrameOnlyIoUring(unsafe.Slice((*byte)(c.inboundBuffer.WriteAddress()), cqe.Res))
+	if err != nil {
+		c.getLogger().Error("processWebsocketFrameOnlyIoUring", "err", err)
+		return err
+	}
+
+	c.inboundBuffer.AdvanceWrite(int(cqe.Res))
+	if err := c.multiEventLoop.add(c); err != nil {
+		return err
+	}
+
+	if c.outboundBuffer.Buffered() > 0 {
+		return c.multiEventLoop.addWrite(c)
+	}
 	return nil
 }
 
