@@ -57,6 +57,7 @@ type Conn struct {
 	*Config                // 配置
 	closed           int32 // 是否关闭
 	waitOnMessageRun sync.WaitGroup
+	closeOnce        sync.Once
 }
 
 func newConn(fd int, client bool, conf *Config) *Conn {
@@ -77,7 +78,7 @@ func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
 }
 
-func (c *Conn) closeInner(wait bool) {
+func (c *Conn) closeInner(wait bool, err error) {
 	c.getLogger().Debug("close conn", slog.Int("fd", c.fd))
 	if true {
 		c.waitOnMessageRun.Wait()
@@ -85,10 +86,13 @@ func (c *Conn) closeInner(wait bool) {
 
 	c.multiEventLoop.del(c)
 	c.fd = -1
+	c.closeOnce.Do(func() {
+		c.OnClose(c, nil)
+	})
 	atomic.StoreInt32(&c.closed, 1)
 }
 
-func (c *Conn) closeAndWaitOnMessage(wait bool) {
+func (c *Conn) closeAndWaitOnMessage(wait bool, err error) {
 	if atomic.LoadInt32(&c.closed) == 1 {
 		return
 	}
@@ -97,12 +101,12 @@ func (c *Conn) closeAndWaitOnMessage(wait bool) {
 	}
 
 	c.mu.Lock()
-	c.closeInner(false)
+	c.closeInner(false, err)
 	c.mu.Unlock()
 }
 
 func (c *Conn) Close() {
-	c.closeAndWaitOnMessage(false)
+	c.closeAndWaitOnMessage(false, nil)
 }
 
 func (c *Conn) Write(b []byte) (n int, err error) {
@@ -155,7 +159,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 				return total, nil
 			}
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int("fd", c.fd), slog.Int("b.len", len(b)))
-			go c.closeInner(true)
+			go c.closeInner(true, err)
 			return
 		}
 		if n > 0 {
@@ -210,7 +214,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 
 			// 读到eof，直接关闭
 			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
-				go c.closeAndWaitOnMessage(true)
+				go c.closeAndWaitOnMessage(true, io.EOF)
 				c.OnClose(c, io.EOF)
 				return
 			}
