@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/antlabs/pool/magicring"
+	"github.com/antlabs/pool/ringbuffer"
 	"golang.org/x/sys/unix"
 )
 
@@ -70,6 +71,12 @@ func newConn(fd int, client bool, conf *Config) *Conn {
 		// wbuf:   make([]byte, 0, 1024),
 		Config: conf,
 		client: client,
+	}
+
+	if conf.useIoUring {
+
+		c.inboundBuffer = ringbuffer.Get()
+		c.outboundBuffer = ringbuffer.Get()
 	}
 	return c
 }
