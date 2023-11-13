@@ -73,29 +73,6 @@ func (c *Conn) processWebsocketFrameOnlyIoUring() (n int, err error) {
 	}
 }
 
-func (e *iouringState) addReadBackup(c *Conn) error {
-	entry := e.ring.GetSQE()
-	if entry == nil {
-		return errors.New("addRead: fail:GetSQE is nil")
-	}
-	if c.inboundBuffer.WriteAddress() == nil {
-		panic("c.inboundBuffer.WriteAddress() is nil")
-	}
-
-	c.inboundBuffer.GrowIfUnsufficientFreeSpace()
-
-	writeAddr := c.inboundBuffer.WriteAddress()
-	e.getLogger().Debug("addRead: ", "fd", c.fd, "readAddr", uintptr(writeAddr), "Available", c.inboundBuffer.Available())
-	entry.PrepareRecv(
-		c.fd,
-		uintptr(c.inboundBuffer.WriteAddress()),
-		uint32(c.inboundBuffer.Available()),
-		0)
-	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
-	c.operation |= opRead
-	return nil
-}
-
 func (e *iouringState) addRead(c *Conn) error {
 	entry := e.ring.GetSQE()
 	if entry == nil {

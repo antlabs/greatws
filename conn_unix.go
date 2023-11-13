@@ -42,7 +42,6 @@ func (s ioUringOpState) String() string {
 type onlyIoUringState struct {
 	operation ioUringOpState
 
-	inboundBuffer  *magicring.RingBuffer
 	outboundBuffer *magicring.RingBuffer
 }
 
@@ -75,10 +74,6 @@ func newConn(fd int, client bool, conf *Config) *Conn {
 
 	if conf.useIoUring() {
 
-		c.inboundBuffer = ringbuffer.Get()
-		if c.inboundBuffer.ReadAddress() == nil {
-			panic("inboundBuffer.ReadAddress() == nil")
-		}
 		c.outboundBuffer = ringbuffer.Get()
 		if c.outboundBuffer.ReadAddress() == nil {
 			panic("outboundBuffer.ReadAddress() == nil")
