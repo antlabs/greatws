@@ -468,8 +468,6 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 		writeBuf = out.Bytes()
 	}
 
-	// f.Opcode = op
-	// f.PayloadLen = int64(len(writeBuf))
 	maskValue := uint32(0)
 	if c.client {
 		maskValue = rand.Uint32()

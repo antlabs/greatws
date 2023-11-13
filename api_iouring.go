@@ -42,14 +42,6 @@ type iouringConn struct {
 	fd int
 }
 
-func newIouringConn(e *iouringState, fd int) *iouringConn {
-	return &iouringConn{iouringState: e, fd: fd}
-}
-
-func (e *iouringConn) Write(data []byte) (n int, err error) {
-	return len(data), nil
-}
-
 // iouring 模式下，读取数据
 func (c *Conn) processWebsocketFrameOnlyIoUring() (n int, err error) {
 	// 尽可能消耗完rbuf里面的数据
@@ -94,11 +86,19 @@ func (e *iouringState) addWrite(c *Conn) error {
 	if entry == nil {
 		return errors.New("addRead: fail:GetSQE is nil")
 	}
-	entry.PrepareSend(
-		c.fd,
-		uintptr(c.outboundBuffer.ReadAddress()),
-		uint32(c.outboundBuffer.Buffered()),
-		0)
+
+	// debug
+	// entry.PrepareSend(
+	// 	c.fd,
+	// 	uintptr((*reflect.SliceHeader)(unsafe.Pointer(&debug)).Data),
+	// 	uint32(len(debug)),
+	// 	0)
+
+	// entry.PrepareSend(
+	// 	c.fd,
+	// 	uintptr(c.outboundBuffer.ReadAddress()),
+	// 	uint32(c.outboundBuffer.Buffered()),
+	// 	0)
 	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
 	return nil
 }
