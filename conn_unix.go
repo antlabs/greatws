@@ -73,10 +73,16 @@ func newConn(fd int, client bool, conf *Config) *Conn {
 		client: client,
 	}
 
-	if conf.useIoUring {
+	if conf.useIoUring() {
 
 		c.inboundBuffer = ringbuffer.Get()
+		if c.inboundBuffer.ReadAddress() == nil {
+			panic("inboundBuffer.ReadAddress() == nil")
+		}
 		c.outboundBuffer = ringbuffer.Get()
+		if c.outboundBuffer.ReadAddress() == nil {
+			panic("outboundBuffer.ReadAddress() == nil")
+		}
 	}
 	return c
 }
@@ -200,7 +206,7 @@ func (c *Conn) flushOrClose() (err error) {
 // 2. 缓冲区数据不够，并且一次性读取了多个frame
 func (c *Conn) processWebsocketFrame() (n int, err error) {
 	// 1. 处理frame header
-	if !c.useIoUring {
+	if !c.useIoUring() {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for i := 0; ; i++ {
 			n, err = unix.Read(c.fd, (*c.rbuf)[c.rw:])

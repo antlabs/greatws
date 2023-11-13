@@ -7,12 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"syscall"
 	"time"
 	"unsafe"
 
-	"github.com/antlabs/wsutil/bytespool"
-	"github.com/antlabs/wsutil/enum"
 	"github.com/pawelgaczynski/giouring"
 )
 
@@ -52,24 +51,7 @@ func (e *iouringConn) Write(data []byte) (n int, err error) {
 }
 
 // iouring 模式下，读取数据
-func (c *Conn) processWebsocketFrameOnlyIoUring(buf []byte) (n int, err error) {
-	// 首先判断下相当buffer是否够用
-	// 如果不够用，扩缩下rbuf
-	if len((*c.rbuf)[c.rw:]) < len(buf) {
-		multipletimes := c.windowsMultipleTimesPayloadSize
-
-		// 申请新的buffer
-		newBuf := bytespool.GetBytes(int(float32(len(*c.rbuf)+len(buf)+enum.MaxFrameHeaderSize) * multipletimes))
-		copy(*newBuf, (*c.rbuf)[c.rw:])
-		// 把老的buffer还到池里面
-		bytespool.PutBytes(c.rbuf)
-		c.rbuf = newBuf
-	}
-
-	// 把数据拷贝到rbuf里面
-	copy((*c.rbuf)[c.rw:], buf)
-	c.rw += len(buf)
-
+func (c *Conn) processWebsocketFrameOnlyIoUring() (n int, err error) {
 	// 尽可能消耗完rbuf里面的数据
 	for {
 		sucess, err := c.readHeader()
@@ -91,15 +73,39 @@ func (c *Conn) processWebsocketFrameOnlyIoUring(buf []byte) (n int, err error) {
 	}
 }
 
+func (e *iouringState) addReadBackup(c *Conn) error {
+	entry := e.ring.GetSQE()
+	if entry == nil {
+		return errors.New("addRead: fail:GetSQE is nil")
+	}
+	if c.inboundBuffer.WriteAddress() == nil {
+		panic("c.inboundBuffer.WriteAddress() is nil")
+	}
+
+	c.inboundBuffer.GrowIfUnsufficientFreeSpace()
+
+	writeAddr := c.inboundBuffer.WriteAddress()
+	e.getLogger().Debug("addRead: ", "fd", c.fd, "readAddr", uintptr(writeAddr), "Available", c.inboundBuffer.Available())
+	entry.PrepareRecv(
+		c.fd,
+		uintptr(c.inboundBuffer.WriteAddress()),
+		uint32(c.inboundBuffer.Available()),
+		0)
+	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
+	c.operation |= opRead
+	return nil
+}
+
 func (e *iouringState) addRead(c *Conn) error {
 	entry := e.ring.GetSQE()
 	if entry == nil {
 		return errors.New("addRead: fail:GetSQE is nil")
 	}
+
 	entry.PrepareRecv(
 		c.fd,
-		uintptr(c.inboundBuffer.WriteAddress()),
-		uint32(c.inboundBuffer.Available()),
+		uintptr((*reflect.SliceHeader)(unsafe.Pointer(c.rbuf)).Data+uintptr(c.rr)),
+		uint32(len((*c.rbuf)[c.rr:])),
 		0)
 	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
 	c.operation |= opRead
