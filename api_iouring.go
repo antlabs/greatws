@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -24,11 +23,14 @@ type iouringState struct {
 	ring        *giouring.Ring // ring 对象
 	ringEntries uint32
 	parent      *EventLoop
+	submitter
 }
 
 func apiIoUringCreate(el *EventLoop, ringEntries uint32) (la linuxApi, err error) {
 	var iouringState iouringState
+
 	ring, err := giouring.CreateRing(ringEntries)
+	iouringState.submitter = newBatchSubmitter(ring)
 	iouringState.ring = ring
 	iouringState.parent = el
 	return &iouringState, nil
@@ -120,20 +122,27 @@ func (e *iouringState) getLogger() *slog.Logger {
 	return e.parent.parent.Logger
 }
 
-func (e *iouringState) advance(n uint32) {
-	e.ring.CQAdvance(n)
-}
+// func (e *iouringState) advance(n uint32) {
+// 	e.ring.CQAdvance(n)
+// }
 
 func (e *iouringState) run(timeout time.Duration) error {
 	var err error
 	cqes := make([]*giouring.CompletionQueueEvent, 256 /*TODO:*/)
 
-	ts := syscall.NsecToTimespec(int64(timeout))
+	// ts := syscall.NsecToTimespec(int64(timeout))
+	// _, err = e.ring.SubmitAndWaitTimeout(256 /*TODO*/, &ts, nil)
+	// if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR) ||
+	// 	errors.Is(err, syscall.ETIME) {
+	// 	return nil
+	// }
 
-	_, err = e.ring.SubmitAndWaitTimeout(256 /*TODO*/, &ts, nil)
-	if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR) ||
-		errors.Is(err, syscall.ETIME) {
-		return nil
+	if err = e.submit(); err != nil {
+		if errors.Is(err, ErrSkippable) {
+			return nil
+		}
+
+		return err
 	}
 	numberOfCQEs := e.ring.PeekBatchCQE(cqes)
 
