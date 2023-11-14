@@ -14,11 +14,6 @@ import (
 	"github.com/pawelgaczynski/giouring"
 )
 
-const (
-	batchSize      = 128
-	buffersGroupID = 0 // currently using only 1 provided buffer group
-)
-
 type iouringState struct {
 	ring        *giouring.Ring // ring 对象
 	ringEntries uint32
