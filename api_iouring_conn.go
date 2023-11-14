@@ -58,7 +58,6 @@ func (c *Conn) processRead(cqe *giouring.CompletionQueueEvent) error {
 
 func (c *Conn) processWrite(cqe *giouring.CompletionQueueEvent) error {
 	c.getLogger().Debug("write res", "res", cqe.Res)
-	c.outboundBuffer.AdvanceWrite(int(cqe.Res))
 	return nil
 }
 
