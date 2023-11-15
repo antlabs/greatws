@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type ioUringOpState int
+type ioUringOpState uint32
 
 const (
 	connInvalid ioUringOpState = 1 << iota
@@ -37,9 +37,7 @@ func (s ioUringOpState) String() string {
 }
 
 // 只存放io-uring相关的控制信息
-type onlyIoUringState struct {
-	operation ioUringOpState
-}
+type onlyIoUringState struct{}
 
 type Conn struct {
 	conn

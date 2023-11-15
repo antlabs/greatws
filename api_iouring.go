@@ -73,8 +73,8 @@ func (e *iouringState) addRead(c *Conn) error {
 		uintptr((*reflect.SliceHeader)(unsafe.Pointer(c.rbuf)).Data+uintptr(c.rr)),
 		uint32(len((*c.rbuf)[c.rr:])),
 		0)
-	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
-	c.operation |= opRead
+	entry.UserData = encodeUserData(uint32(c.fd), opRead, 0)
+	// entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
 	return nil
 }
 
@@ -117,9 +117,33 @@ func (e *iouringState) getLogger() *slog.Logger {
 	return e.parent.parent.Logger
 }
 
-// func (e *iouringState) advance(n uint32) {
-// 	e.ring.CQAdvance(n)
-// }
+func (e *iouringState) getConn(fd uint32) *Conn {
+	return e.parent.parent.getConn(int(fd))
+}
+
+// io-uring 处理事件的入口函数
+func (e *iouringState) processConn(cqe *giouring.CompletionQueueEvent) error {
+	// c := (*Conn)(unsafe.Pointer(uintptr(cqe.UserData)))
+	fd, op, _ := decodeUserData(cqe.UserData)
+
+	c := e.getConn(fd)
+	if op&opRead > 0 {
+		if err := c.processRead(cqe); err != nil {
+			return err
+		}
+	}
+	if op&opWrite > 0 {
+		if err := c.processWrite(cqe); err != nil {
+			return err
+		}
+	}
+	if op&opClose > 0 {
+		if err := c.processClose(cqe); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func (e *iouringState) run(timeout time.Duration) error {
 	var err error
@@ -145,7 +169,7 @@ func (e *iouringState) run(timeout time.Duration) error {
 	for i = 0; i < numberOfCQEs; i++ {
 		cqe := cqes[i]
 
-		err = processConn(cqe)
+		err = e.processConn(cqe)
 		if err != nil {
 			e.advance(i + 1)
 			return err

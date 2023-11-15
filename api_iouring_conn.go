@@ -5,32 +5,9 @@ package bigws
 
 import (
 	"io"
-	"unsafe"
 
 	"github.com/pawelgaczynski/giouring"
 )
-
-// io-uring 处理事件的入口函数
-func processConn(cqe *giouring.CompletionQueueEvent) error {
-	c := (*Conn)(unsafe.Pointer(uintptr(cqe.UserData)))
-	operation := c.operation
-	if operation&opRead > 0 {
-		if err := c.processRead(cqe); err != nil {
-			return err
-		}
-	}
-	if operation&opWrite > 0 {
-		if err := c.processWrite(cqe); err != nil {
-			return err
-		}
-	}
-	if operation&opClose > 0 {
-		if err := c.processClose(cqe); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func (c *Conn) processRead(cqe *giouring.CompletionQueueEvent) error {
 	// 返回值小于等于0，表示读取完毕，关闭连接
