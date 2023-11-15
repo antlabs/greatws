@@ -74,7 +74,6 @@ func (e *iouringState) addRead(c *Conn) error {
 		uint32(len((*c.rbuf)[c.rr:])),
 		0)
 	entry.UserData = encodeUserData(uint32(c.fd), opRead, 0)
-	// entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
 	return nil
 }
 
@@ -108,7 +107,7 @@ func (e *iouringState) del(c *Conn) error {
 	}
 
 	entry.PrepareClose(fd)
-	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
+	entry.UserData = encodeUserData(uint32(fd), opClose, 0)
 
 	return nil
 }

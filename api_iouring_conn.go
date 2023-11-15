@@ -26,7 +26,14 @@ func (c *Conn) processRead(cqe *giouring.CompletionQueueEvent) error {
 		return err
 	}
 
-	if err := c.multiEventLoop.add(c); err != nil {
+	parent := c.getParent()
+	if parent == nil {
+		c.processClose(cqe)
+		c.getLogger().Debug("parent is nil", "close", c.closed)
+		return nil
+	}
+
+	if err := parent.addRead(c); err != nil {
 		return err
 	}
 

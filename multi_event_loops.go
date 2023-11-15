@@ -114,6 +114,7 @@ func (m *MultiEventLoop) add(c *Conn) error {
 		m.del(c)
 		return err
 	}
+	c.setParent(m.loops[index])
 	atomic.AddInt64(&m.curConn, 1)
 	return nil
 }

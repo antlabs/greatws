@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -37,7 +38,9 @@ func (s ioUringOpState) String() string {
 }
 
 // 只存放io-uring相关的控制信息
-type onlyIoUringState struct{}
+type onlyIoUringState struct {
+	// TODO
+}
 
 type Conn struct {
 	conn
@@ -52,6 +55,15 @@ type Conn struct {
 	closed           int32 // 是否关闭
 	waitOnMessageRun sync.WaitGroup
 	closeOnce        sync.Once
+	parent           *EventLoop
+}
+
+func (c *Conn) setParent(el *EventLoop) {
+	atomic.StorePointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent)), unsafe.Pointer(el))
+}
+
+func (c *Conn) getParent() *EventLoop {
+	return (*EventLoop)(atomic.LoadPointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent))))
 }
 
 func newConn(fd int, client bool, conf *Config) *Conn {
@@ -84,6 +96,7 @@ func (c *Conn) closeInner(wait bool, err error) {
 	c.fd = -1
 	c.closeOnce.Do(func() {
 		c.OnClose(c, nil)
+		atomic.StorePointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent)), nil)
 	})
 	atomic.StoreInt32(&c.closed, 1)
 }
@@ -226,13 +239,13 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 					return 0, fmt.Errorf("read header err: %w", err)
 				}
 
+				// TODO
 				if len((*c.rbuf)[c.rw:]) == 0 {
 					//
 					//panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
 				}
 				continue
 			}
-
 		}
 	}
 
