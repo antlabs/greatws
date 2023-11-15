@@ -108,7 +108,7 @@ func (m *MultiEventLoop) Start() {
 
 // 添加一个连接到多路事件循环
 func (m *MultiEventLoop) add(c *Conn) error {
-	index := c.getFd() % int64(len(m.loops))
+	index := c.getFd() % len(m.loops)
 	m.loops[index].conns.Store(c.getFd(), c)
 	if err := m.loops[index].addRead(c); err != nil {
 		m.del(c)
@@ -121,7 +121,7 @@ func (m *MultiEventLoop) add(c *Conn) error {
 
 // 添加一个可写事件到多路事件循环
 func (m *MultiEventLoop) addWrite(c *Conn) error {
-	index := c.getFd() % int64(len(m.loops))
+	index := c.getFd() % len(m.loops)
 	if err := m.loops[index].addWrite(c); err != nil {
 		return err
 	}
@@ -131,7 +131,7 @@ func (m *MultiEventLoop) addWrite(c *Conn) error {
 
 // 添加一个可写事件到多路事件循环
 func (m *MultiEventLoop) delWrite(c *Conn) error {
-	index := c.getFd() % int64(len(m.loops))
+	index := c.getFd() % len(m.loops)
 	if err := m.loops[index].delWrite(c); err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (m *MultiEventLoop) del(c *Conn) {
 		return
 	}
 	atomic.AddInt64(&m.curConn, -1)
-	index := c.getFd() % int64(len(m.loops))
+	index := c.getFd() % len(m.loops)
 	m.loops[index].conns.Delete(c.getFd())
 	closeFd(c.getFd())
 }

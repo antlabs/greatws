@@ -269,6 +269,6 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 	}
 }
 
-func closeFd(fd int64) {
+func closeFd(fd int) {
 	unix.Close(int(fd))
 }

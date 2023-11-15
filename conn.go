@@ -74,8 +74,8 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
-func (c *Conn) getFd() int64 {
-	return c.fd
+func (c *Conn) getFd() int {
+	return int(c.fd)
 }
 
 // 基于状态机解析frame
