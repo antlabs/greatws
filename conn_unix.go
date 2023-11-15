@@ -66,7 +66,7 @@ func (c *Conn) getParent() *EventLoop {
 	return (*EventLoop)(atomic.LoadPointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent))))
 }
 
-func newConn(fd int, client bool, conf *Config) *Conn {
+func newConn(fd int64, client bool, conf *Config) *Conn {
 	rbuf := make([]byte, 1024+15)
 	c := &Conn{
 		conn: conn{
@@ -87,13 +87,13 @@ func duplicateSocket(socketFD int) (int, error) {
 }
 
 func (c *Conn) closeInner(wait bool, err error) {
-	c.getLogger().Debug("close conn", slog.Int("fd", c.fd))
+	c.getLogger().Debug("close conn", slog.Int64("fd", c.fd))
 	if true {
 		c.waitOnMessageRun.Wait()
 	}
 
 	c.multiEventLoop.del(c)
-	c.fd = -1
+	atomic.StoreInt64(&c.fd, -1)
 	c.closeOnce.Do(func() {
 		c.OnClose(c, nil)
 		atomic.StorePointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent)), nil)
@@ -140,7 +140,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 	for i := 0; len(b) > 0; i++ {
 
 		// 直接写入数据
-		n, err = unix.Write(c.fd, b)
+		n, err = unix.Write(int(c.fd), b)
 		// fmt.Printf("1.write %d:%v: %d\n", n, err, len(b))
 
 		if err != nil {
@@ -162,7 +162,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 				}
 				return total, nil
 			}
-			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int("fd", c.fd), slog.Int("b.len", len(b)))
+			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
 			go c.closeInner(true, err)
 			return
 		}
@@ -200,7 +200,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 	if !c.useIoUring() {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for i := 0; ; i++ {
-			n, err = unix.Read(c.fd, (*c.rbuf)[c.rw:])
+			n, err = unix.Read(int(c.fd), (*c.rbuf)[c.rw:])
 			// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n", i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
 			if err != nil {
 				// 信号中断，继续读
@@ -269,6 +269,6 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 	}
 }
 
-func closeFd(fd int) {
-	unix.Close(fd)
+func closeFd(fd int64) {
+	unix.Close(int(fd))
 }

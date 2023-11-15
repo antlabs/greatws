@@ -69,7 +69,7 @@ func (e *iouringState) addRead(c *Conn) error {
 	}
 
 	entry.PrepareRecv(
-		c.fd,
+		int(c.fd),
 		uintptr((*reflect.SliceHeader)(unsafe.Pointer(c.rbuf)).Data+uintptr(c.rr)),
 		uint32(len((*c.rbuf)[c.rr:])),
 		0)
@@ -106,7 +106,7 @@ func (e *iouringState) del(c *Conn) error {
 		return errors.New("del: fail: GetSQE is nil")
 	}
 
-	entry.PrepareClose(fd)
+	entry.PrepareClose(int(fd))
 	entry.UserData = encodeUserData(uint32(fd), opClose, 0)
 
 	return nil

@@ -58,7 +58,7 @@ const (
 )
 
 type conn struct {
-	fd             int        // 文件描述符fd
+	fd             int64      // 文件描述符fd
 	rbuf           *[]byte    // 读缓冲区
 	rr             int        // rbuf读索引
 	rw             int        // rbuf写索引
@@ -74,7 +74,7 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
-func (c *Conn) getFd() int {
+func (c *Conn) getFd() int64 {
 	return c.fd
 }
 

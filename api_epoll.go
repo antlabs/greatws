@@ -58,7 +58,7 @@ func (e *epollState) apiFree() {
 
 // 新加读事件
 func (e *epollState) addRead(c *Conn) error {
-	fd := c.getFd()
+	fd := int(c.getFd())
 	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_ADD, fd, &unix.EpollEvent{
 		Fd:     int32(fd),
 		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | EPOLLET,
@@ -66,7 +66,7 @@ func (e *epollState) addRead(c *Conn) error {
 }
 
 func (e *epollState) addWrite(c *Conn) error {
-	fd := c.getFd()
+	fd := int(c.getFd())
 	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
 		Fd:     int32(fd),
 		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | EPOLLET | unix.EPOLLOUT,
@@ -74,7 +74,7 @@ func (e *epollState) addWrite(c *Conn) error {
 }
 
 func (e *epollState) delWrite(c *Conn) error {
-	fd := c.getFd()
+	fd := int(c.getFd())
 	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
 		Fd:     int32(fd),
 		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN,
