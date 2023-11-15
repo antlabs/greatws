@@ -200,7 +200,8 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 	if !c.useIoUring() {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for i := 0; ; i++ {
-			n, err = unix.Read(int(c.fd), (*c.rbuf)[c.rw:])
+			fd := atomic.LoadInt64(&c.fd)
+			n, err = unix.Read(int(fd), (*c.rbuf)[c.rw:])
 			// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n", i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
 			if err != nil {
 				// 信号中断，继续读
