@@ -54,8 +54,7 @@ func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
 		bigws.WithServerMultiEventLoop(h.m),
 	)
 	if err != nil {
-		fmt.Println("Upgrade fail:", err)
-		panic(err.Error())
+		slog.Error("Upgrade fail:", "err", err.Error())
 	}
 	_ = c
 }
