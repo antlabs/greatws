@@ -47,7 +47,7 @@ func (e *EventLoop) apiCreate(flag evFlag) (err error) {
 		}
 		state.linuxApi = la
 	} else if flag&EVENT_IOURING != 0 {
-		la, err := apiIoUringCreate(e, 1024)
+		la, err := apiIoUringCreate(e, 16384)
 		if err != nil {
 			return err
 		}

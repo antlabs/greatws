@@ -70,8 +70,8 @@ func (e *iouringState) addRead(c *Conn) error {
 
 	entry.PrepareRecv(
 		int(c.fd),
-		uintptr((*reflect.SliceHeader)(unsafe.Pointer(c.rbuf)).Data+uintptr(c.rr)),
-		uint32(len((*c.rbuf)[c.rr:])),
+		uintptr((*reflect.SliceHeader)(unsafe.Pointer(c.rbuf)).Data+uintptr(c.rw)),
+		uint32(len((*c.rbuf)[c.rw:])),
 		0)
 	entry.UserData = encodeUserData(uint32(c.fd), opRead, 0)
 	return nil
@@ -147,13 +147,6 @@ func (e *iouringState) processConn(cqe *giouring.CompletionQueueEvent) error {
 func (e *iouringState) run(timeout time.Duration) error {
 	var err error
 	cqes := make([]*giouring.CompletionQueueEvent, 256 /*TODO:*/)
-
-	// ts := syscall.NsecToTimespec(int64(timeout))
-	// _, err = e.ring.SubmitAndWaitTimeout(256 /*TODO*/, &ts, nil)
-	// if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR) ||
-	// 	errors.Is(err, syscall.ETIME) {
-	// 	return nil
-	// }
 
 	if err = e.submit(); err != nil {
 		if errors.Is(err, ErrSkippable) {
