@@ -475,7 +475,34 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 
 	var fw fixedwriter.FixedWriter
 	c.mu.Lock()
-	err = frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
+	err = WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
 	c.mu.Unlock()
 	return err
+}
+
+func WriteFrame(fw *fixedwriter.FixedWriter, w io.Writer, payload []byte, fin bool, rsv1 bool, isMask bool, code opcode.Opcode, maskValue uint32) (err error) {
+	buf := bytespool.GetBytes(len(payload) + enum.MaxFrameHeaderSize)
+
+	var wIndex int
+	fw.Reset(*buf)
+
+	if wIndex, err = frame.WriteHeader(*buf, fin, rsv1, false, false, code, len(payload), isMask, maskValue); err != nil {
+		goto free
+	}
+
+	fw.SetW(wIndex)
+	_, err = fw.Write(payload)
+	if err != nil {
+		goto free
+	}
+	if isMask {
+		mask.Mask(fw.Bytes()[wIndex:], maskValue)
+	}
+
+	_, err = w.Write(fw.Bytes())
+
+free:
+	fw.Free()
+	bytespool.PutBytes(buf)
+	return
 }
