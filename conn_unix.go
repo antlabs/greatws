@@ -8,10 +8,17 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/antlabs/wsutil/bytespool"
+	"github.com/antlabs/wsutil/enum"
+	"github.com/antlabs/wsutil/fixedwriter"
+	"github.com/antlabs/wsutil/frame"
+	"github.com/antlabs/wsutil/mask"
+	"github.com/antlabs/wsutil/opcode"
 	"golang.org/x/sys/unix"
 )
 
@@ -37,9 +44,15 @@ func (s ioUringOpState) String() string {
 	}
 }
 
+type ioUringWrite struct {
+	free     func()
+	writeBuf []byte
+}
+
 // 只存放io-uring相关的控制信息
 type onlyIoUringState struct {
-	// TODO
+	wSeq uint32
+	m    sync.Map
 }
 
 type Conn struct {
@@ -157,7 +170,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 					c.wbuf = newBuf
 				}
 
-				if err = c.multiEventLoop.addWrite(c); err != nil {
+				if err = c.multiEventLoop.addWrite(c, 0); err != nil {
 					return 0, err
 				}
 				return total, nil
@@ -272,4 +285,58 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 
 func closeFd(fd int) {
 	unix.Close(int(fd))
+}
+
+func (c *Conn) WriteFrameOnlyIoUring(fw *fixedwriter.FixedWriter, payload []byte, fin bool, rsv1 bool, isMask bool, code opcode.Opcode, maskValue uint32) (err error) {
+	buf := bytespool.GetBytes(len(payload) + enum.MaxFrameHeaderSize)
+
+	var wIndex int
+	fw.Reset(*buf)
+
+	if wIndex, err = frame.WriteHeader(*buf, fin, rsv1, false, false, code, len(payload), isMask, maskValue); err != nil {
+		goto free
+	}
+
+	fw.SetW(wIndex)
+	_, err = fw.Write(payload)
+	if err != nil {
+		goto free
+	}
+	if isMask {
+		mask.Mask(fw.Bytes()[wIndex:], maskValue)
+	}
+
+	fw.Bytes()
+	for i := 0; i < 3; i++ {
+
+		c.mu.Lock()
+		c.wSeq++
+		if c.wSeq == math.MaxUint16 {
+			c.wSeq = 0
+		}
+		newSeq := c.wSeq
+		if _, ok := c.m.Load(newSeq); ok {
+			c.mu.Unlock()
+			continue
+		}
+
+		fb := &ioUringWrite{
+			writeBuf: fw.Bytes(),
+			free: func() {
+				bytespool.PutBytes(buf)
+			},
+		}
+		c.onlyIoUringState.m.Store(newSeq, fb)
+		fw.Free()
+		err = c.parent.addWrite(c, uint16(newSeq))
+		c.mu.Unlock()
+		return
+	}
+
+	err = fmt.Errorf("store seq failed")
+
+free:
+	fw.Free()
+	bytespool.PutBytes(buf)
+	return
 }

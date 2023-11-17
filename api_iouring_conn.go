@@ -4,6 +4,7 @@
 package bigws
 
 import (
+	"errors"
 	"io"
 
 	"github.com/pawelgaczynski/giouring"
@@ -41,8 +42,31 @@ func (c *Conn) processRead(cqe *giouring.CompletionQueueEvent) error {
 	return nil
 }
 
-func (c *Conn) processWrite(cqe *giouring.CompletionQueueEvent) error {
+func (c *Conn) processWrite(cqe *giouring.CompletionQueueEvent, writeSeq uint32) error {
 	c.getLogger().Debug("write res", "res", cqe.Res)
+
+	if cqe.Res < 0 {
+		go c.closeAndWaitOnMessage(true, io.EOF)
+		c.getLogger().Error("write res < 0", "res", cqe.Res, "fd", c.fd)
+		return nil
+	}
+
+	v, ok := c.m.Load(writeSeq)
+	if !ok {
+		return errors.New("processWrite: fail: writeSeq not found")
+	}
+
+	ioState, ok := v.(*ioUringWrite)
+	if !ok {
+		panic("addWrite: fail: freeBuf not found")
+	}
+
+	if len(ioState.writeBuf) != int(cqe.Res) {
+		panic("processWrite: ioState.writeBuf != res")
+	}
+
+	// 写成功就把free还到池里面
+	ioState.free()
 	return nil
 }
 

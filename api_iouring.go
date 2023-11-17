@@ -77,30 +77,36 @@ func (e *iouringState) addRead(c *Conn) error {
 	return nil
 }
 
-func (e *iouringState) addWrite(c *Conn) error {
+func (e *iouringState) addWrite(c *Conn, writeSeq uint16) error {
 	entry := e.ring.GetSQE()
 	if entry == nil {
 		return errors.New("addRead: fail:GetSQE is nil")
 	}
 
-	// debug
-	// entry.PrepareSend(
-	// 	c.fd,
-	// 	uintptr((*reflect.SliceHeader)(unsafe.Pointer(&debug)).Data),
-	// 	uint32(len(debug)),
-	// 	0)
+	conn := e.getConn(uint32(c.fd))
 
-	// entry.PrepareSend(
-	// 	c.fd,
-	// 	uintptr(c.outboundBuffer.ReadAddress()),
-	// 	uint32(c.outboundBuffer.Buffered()),
-	// 	0)
-	entry.UserData = uint64(uintptr(unsafe.Pointer(c)))
+	v, ok := conn.m.Load(writeSeq)
+	if !ok {
+		return fmt.Errorf("addWrite: fail: writeSeq not found:%d", writeSeq)
+	}
+
+	ioState, ok := v.(*ioUringWrite)
+	if !ok {
+		panic("addWrite: fail: freeBuf not found")
+	}
+
+	entry.PrepareSend(
+		int(c.fd),
+		uintptr((*reflect.SliceHeader)(unsafe.Pointer(&ioState.writeBuf)).Data),
+		uint32(len(ioState.writeBuf)),
+		0)
+	entry.UserData = encodeUserData(uint32(c.fd), opWrite, uint32(writeSeq))
 	return nil
 }
 
 func (e *iouringState) del(c *Conn) error {
 	fd := c.fd
+
 	entry := e.ring.GetSQE()
 	if entry == nil {
 		return errors.New("del: fail: GetSQE is nil")
@@ -123,7 +129,7 @@ func (e *iouringState) getConn(fd uint32) *Conn {
 // io-uring 处理事件的入口函数
 func (e *iouringState) processConn(cqe *giouring.CompletionQueueEvent) error {
 	// c := (*Conn)(unsafe.Pointer(uintptr(cqe.UserData)))
-	fd, op, _ := decodeUserData(cqe.UserData)
+	fd, op, writeSeq := decodeUserData(cqe.UserData)
 
 	c := e.getConn(fd)
 	if op&opRead > 0 {
@@ -132,7 +138,7 @@ func (e *iouringState) processConn(cqe *giouring.CompletionQueueEvent) error {
 		}
 	}
 	if op&opWrite > 0 {
-		if err := c.processWrite(cqe); err != nil {
+		if err := c.processWrite(cqe, writeSeq); err != nil {
 			return err
 		}
 	}

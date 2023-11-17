@@ -65,7 +65,7 @@ func (e *epollState) addRead(c *Conn) error {
 	})
 }
 
-func (e *epollState) addWrite(c *Conn) error {
+func (e *epollState) addWrite(c *Conn, writeSeq uint16) error {
 	fd := int(c.getFd())
 	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
 		Fd:     int32(fd),
