@@ -306,7 +306,6 @@ func (c *Conn) WriteFrameOnlyIoUring(fw *fixedwriter.FixedWriter, payload []byte
 		mask.Mask(fw.Bytes()[wIndex:], maskValue)
 	}
 
-	fw.Bytes()
 	for i := 0; i < 3; i++ {
 
 		c.mu.Lock()
@@ -328,6 +327,7 @@ func (c *Conn) WriteFrameOnlyIoUring(fw *fixedwriter.FixedWriter, payload []byte
 		}
 		c.onlyIoUringState.m.Store(newSeq, fb)
 		fw.Free()
+		c.getLogger().Debug("store seq", slog.Int("seq", int(newSeq)), slog.Int64("fd", c.fd))
 		err = c.parent.addWrite(c, uint16(newSeq))
 		c.mu.Unlock()
 		return

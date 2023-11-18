@@ -63,8 +63,8 @@ func main() {
 	var h handler
 
 	// debug io-uring
-	// h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithIoUring(), bigws.WithLogLevel(slog.LevelError))
-	h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+	// h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithIoUring(), bigws.WithLogLevel(slog.LevelDebug))
+	// h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
 	fmt.Printf("apiname:%s\n", h.m.GetApiName())
 

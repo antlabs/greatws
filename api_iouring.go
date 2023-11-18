@@ -85,7 +85,7 @@ func (e *iouringState) addWrite(c *Conn, writeSeq uint16) error {
 
 	conn := e.getConn(uint32(c.fd))
 
-	v, ok := conn.m.Load(writeSeq)
+	v, ok := conn.m.Load(uint32(writeSeq))
 	if !ok {
 		return fmt.Errorf("addWrite: fail: writeSeq not found:%d", writeSeq)
 	}

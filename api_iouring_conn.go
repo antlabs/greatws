@@ -46,7 +46,7 @@ func (c *Conn) processWrite(cqe *giouring.CompletionQueueEvent, writeSeq uint32)
 	c.getLogger().Debug("write res", "res", cqe.Res)
 
 	if cqe.Res < 0 {
-		go c.closeAndWaitOnMessage(true, io.EOF)
+		c.processClose(cqe)
 		c.getLogger().Error("write res < 0", "res", cqe.Res, "fd", c.fd)
 		return nil
 	}
@@ -65,6 +65,7 @@ func (c *Conn) processWrite(cqe *giouring.CompletionQueueEvent, writeSeq uint32)
 		panic("processWrite: ioState.writeBuf != res")
 	}
 
+	c.m.Delete(writeSeq)
 	// 写成功就把free还到池里面
 	ioState.free()
 	return nil
