@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -15,6 +16,7 @@ import (
 )
 
 type iouringState struct {
+	mu          sync.Mutex
 	ring        *giouring.Ring // ring 对象
 	ringEntries uint32
 	parent      *EventLoop
@@ -63,7 +65,9 @@ func (c *Conn) processWebsocketFrameOnlyIoUring() (n int, err error) {
 }
 
 func (e *iouringState) addRead(c *Conn) error {
+	e.mu.Lock()
 	entry := e.ring.GetSQE()
+	e.mu.Unlock()
 	if entry == nil {
 		return errors.New("addRead: fail:GetSQE is nil")
 	}
@@ -78,7 +82,9 @@ func (e *iouringState) addRead(c *Conn) error {
 }
 
 func (e *iouringState) addWrite(c *Conn, writeSeq uint16) error {
+	e.mu.Lock()
 	entry := e.ring.GetSQE()
+	e.mu.Unlock()
 	if entry == nil {
 		return errors.New("addRead: fail:GetSQE is nil")
 	}
@@ -154,13 +160,16 @@ func (e *iouringState) run(timeout time.Duration) error {
 	var err error
 	cqes := make([]*giouring.CompletionQueueEvent, 256 /*TODO:*/)
 
+	e.mu.Lock()
 	if err = e.submit(); err != nil {
+		e.mu.Unlock()
 		if errors.Is(err, ErrSkippable) {
 			return nil
 		}
 
 		return err
 	}
+	e.mu.Unlock()
 	numberOfCQEs := e.ring.PeekBatchCQE(cqes)
 
 	var i uint32

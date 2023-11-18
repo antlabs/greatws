@@ -31,7 +31,7 @@ func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
 	// 	fmt.Println("write fail:", err)
 	// }
 	if err := c.WriteMessage(op, msg); err != nil {
-		fmt.Println("write fail:", err)
+		slog.Error("write fail:", err)
 	}
 }
 
