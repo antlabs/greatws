@@ -4,7 +4,7 @@
 package bigws
 
 import (
-	"errors"
+	"fmt"
 	"io"
 
 	"github.com/pawelgaczynski/giouring"
@@ -43,6 +43,10 @@ func (c *Conn) processRead(cqe *giouring.CompletionQueueEvent) error {
 }
 
 func (c *Conn) processWrite(cqe *giouring.CompletionQueueEvent, writeSeq uint32) error {
+	if c.isClosed() {
+		return nil
+	}
+
 	c.getLogger().Debug("write res", "res", cqe.Res)
 
 	if cqe.Res < 0 {
@@ -53,12 +57,12 @@ func (c *Conn) processWrite(cqe *giouring.CompletionQueueEvent, writeSeq uint32)
 
 	v, ok := c.m.Load(writeSeq)
 	if !ok {
-		return errors.New("processWrite: fail: writeSeq not found")
+		return fmt.Errorf("processWrite: fail: writeSeq not found:%d", writeSeq)
 	}
 
 	ioState, ok := v.(*ioUringWrite)
 	if !ok {
-		panic("addWrite: fail: freeBuf not found")
+		panic("processWrite: fail: freeBuf not found")
 	}
 
 	if len(ioState.writeBuf) != int(cqe.Res) {

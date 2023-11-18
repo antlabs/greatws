@@ -443,6 +443,10 @@ func (w *wrapBuffer) Close() error {
 	return nil
 }
 
+func (c *Conn) isClosed() bool {
+	return atomic.LoadInt32(&c.closed) == 1
+}
+
 func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 	if atomic.LoadInt32(&c.closed) == 1 {
 		return ErrClosed
