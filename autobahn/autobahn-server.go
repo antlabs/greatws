@@ -36,7 +36,11 @@ func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
 }
 
 func (e *echoHandler) OnClose(c *bigws.Conn, err error) {
-	slog.Error("OnClose:", err.Error())
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
+	slog.Error("OnClose:", errMsg)
 }
 
 type handler struct {
@@ -63,7 +67,7 @@ func main() {
 	var h handler
 
 	// debug io-uring
-	// h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithIoUring(), bigws.WithLogLevel(slog.LevelDebug))
+	h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithIoUring(), bigws.WithLogLevel(slog.LevelDebug))
 	// h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
 	fmt.Printf("apiname:%s\n", h.m.GetApiName())
