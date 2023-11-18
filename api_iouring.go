@@ -139,8 +139,8 @@ func (e *iouringState) processConn(cqe *giouring.CompletionQueueEvent) error {
 
 	c := e.getConn(fd)
 	if c == nil {
-		e.getLogger().Warn("processConn, conn is nil", "fd", fd)
-		return
+		e.getLogger().Warn("processConn, conn is nil", "fd", fd, "userdata", cqe.UserData)
+		return nil
 	}
 	if op&opRead > 0 {
 		if err := c.processRead(cqe); err != nil {

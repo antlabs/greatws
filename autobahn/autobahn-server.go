@@ -36,7 +36,7 @@ func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
 }
 
 func (e *echoHandler) OnClose(c *bigws.Conn, err error) {
-	// fmt.Printf("OnClose:%p, %v\n", c, err)
+	slog.Error("OnClose:", err.Error())
 }
 
 type handler struct {
