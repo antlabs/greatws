@@ -73,6 +73,7 @@ func (c *Conn) processWrite(cqe *giouring.CompletionQueueEvent, writeSeq uint32)
 	c.getLogger().Debug("processWrite.Delete", "writeSeq", writeSeq, "res", cqe.Res, "fd", c.fd)
 	// 写成功就把free还到池里面
 	ioState.free()
+
 	return nil
 }
 
