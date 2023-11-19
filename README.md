@@ -3,6 +3,8 @@
 
 # 特性
 * 支持 epoll/kqueue
+* 低内存占用
+* 高tps
 
 # 暂不支持
 * ssl
