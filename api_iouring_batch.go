@@ -15,7 +15,7 @@
 //go:build linux
 // +build linux
 
-package bigws
+package greatws
 
 import (
 	"errors"

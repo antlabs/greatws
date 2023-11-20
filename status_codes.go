@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bigws
+package greatws
 
 import (
 	"encoding/binary"
@@ -78,7 +78,7 @@ type CloseErrMsg struct {
 func (c CloseErrMsg) Error() string {
 	var out strings.Builder
 
-	out.WriteString("<bigws close: code:")
+	out.WriteString("<greatws close: code:")
 
 	out.WriteString(strconv.Itoa(int(c.Code)))
 

@@ -1,4 +1,4 @@
-package bigws
+package greatws
 
 import "log/slog"
 

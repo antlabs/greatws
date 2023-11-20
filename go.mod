@@ -1,4 +1,4 @@
-module github.com/antlabs/bigws
+module github.com/antlabs/greatws
 
 go 1.21
 

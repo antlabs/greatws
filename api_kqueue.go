@@ -15,7 +15,7 @@
 //go:build darwin
 // +build darwin
 
-package bigws
+package greatws
 
 import (
 	"errors"

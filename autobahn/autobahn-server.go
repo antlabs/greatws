@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/antlabs/bigws"
+	"github.com/antlabs/greatws"
 )
 
 //go:embed public.crt
@@ -21,11 +21,11 @@ var keyPEMBlock []byte
 
 type echoHandler struct{}
 
-func (e *echoHandler) OnOpen(c *bigws.Conn) {
+func (e *echoHandler) OnOpen(c *greatws.Conn) {
 	// fmt.Printf("OnOpen: %p\n", c)
 }
 
-func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
+func (e *echoHandler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
 	// fmt.Printf("OnMessage: %s, len(%d), op:%d\n", msg, len(msg), op)
 	// if err := c.WriteTimeout(op, msg, 3*time.Second); err != nil {
 	// 	fmt.Println("write fail:", err)
@@ -35,7 +35,7 @@ func (e *echoHandler) OnMessage(c *bigws.Conn, op bigws.Opcode, msg []byte) {
 	}
 }
 
-func (e *echoHandler) OnClose(c *bigws.Conn, err error) {
+func (e *echoHandler) OnClose(c *greatws.Conn, err error) {
 	errMsg := ""
 	if err != nil {
 		errMsg = err.Error()
@@ -44,18 +44,18 @@ func (e *echoHandler) OnClose(c *bigws.Conn, err error) {
 }
 
 type handler struct {
-	m *bigws.MultiEventLoop
+	m *greatws.MultiEventLoop
 }
 
 func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
-	c, err := bigws.Upgrade(w, r,
-		bigws.WithServerReplyPing(),
-		bigws.WithServerDecompression(),
-		bigws.WithServerIgnorePong(),
-		bigws.WithServerCallback(&echoHandler{}),
-		bigws.WithServerEnableUTF8Check(),
-		bigws.WithServerReadTimeout(5*time.Second),
-		bigws.WithServerMultiEventLoop(h.m),
+	c, err := greatws.Upgrade(w, r,
+		greatws.WithServerReplyPing(),
+		greatws.WithServerDecompression(),
+		greatws.WithServerIgnorePong(),
+		greatws.WithServerCallback(&echoHandler{}),
+		greatws.WithServerEnableUTF8Check(),
+		greatws.WithServerReadTimeout(5*time.Second),
+		greatws.WithServerMultiEventLoop(h.m),
 	)
 	if err != nil {
 		slog.Error("Upgrade fail:", "err", err.Error())
@@ -67,8 +67,8 @@ func main() {
 	var h handler
 
 	// debug io-uring
-	h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithIoUring(), bigws.WithLogLevel(slog.LevelDebug))
-	// h.m = bigws.NewMultiEventLoopMust(bigws.WithEventLoops(0), bigws.WithMaxEventNum(1000), bigws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+	h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(1000), greatws.WithIoUring(), greatws.WithLogLevel(slog.LevelDebug))
+	// h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(1000), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
 	fmt.Printf("apiname:%s\n", h.m.GetApiName())
 

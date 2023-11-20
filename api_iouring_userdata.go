@@ -1,4 +1,4 @@
-package bigws
+package greatws
 
 // UserData， 低32位存放fd，高32位存放op等控制信息
 // 对于写事件来说，低32位存放fd, 高32位的高16位存放write seq。低16位存放op
