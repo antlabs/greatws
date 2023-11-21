@@ -8,14 +8,13 @@ import (
 )
 
 type MultiEventLoop struct {
-	numLoops         int // 事件循环数量
-	maxEventNum      int
-	minBusinessGoNum int // 起多少个业务goroutine
-	loops            []*EventLoop
-	t                *task
-	curConn          int64
-	flag             evFlag // 是否使用io_uring
-	level            slog.Level
+	numLoops    int // 事件循环数量
+	maxEventNum int
+	loops       []*EventLoop
+	t           task
+	curConn     int64  // 当前tcp连接数
+	flag        evFlag // 是否使用io_uring
+	level       slog.Level
 	*slog.Logger
 }
 
@@ -41,7 +40,9 @@ func (m *MultiEventLoop) initDefaultSettingBefore() {
 	m.level = slog.LevelError // 默认打印error级别的日志
 	m.numLoops = 0
 	m.maxEventNum = 10000
-	m.minBusinessGoNum = 50
+	m.t.min = 50
+	m.t.initCount = 1000
+	m.t.max = 30000
 }
 
 func (m *MultiEventLoop) initDefaultSettingAfter() {
@@ -56,8 +57,16 @@ func (m *MultiEventLoop) initDefaultSettingAfter() {
 		m.maxEventNum = 256
 	}
 
-	if m.minBusinessGoNum == 0 {
-		m.minBusinessGoNum = 50
+	if m.t.min == 0 {
+		m.t.min = 50
+	}
+
+	if m.t.initCount == 0 {
+		m.t.initCount = 1000
+	}
+
+	if m.t.max == 0 {
+		m.t.max = 30000
 	}
 
 	if m.flag == 0 {
@@ -85,7 +94,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	}
 	m.initDefaultSettingAfter()
 
-	m.t = newTask(m.minBusinessGoNum)
+	m.t.init()
 
 	m.loops = make([]*EventLoop, m.numLoops)
 

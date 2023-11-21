@@ -36,7 +36,7 @@ func NewUpgrade(opts ...ServerOption) *UpgradeServer {
 	for _, o := range opts {
 		o(&conf)
 	}
-	conf.Callback = newGoCallback(conf.Callback, conf.multiEventLoop.t)
+	conf.Callback = newGoCallback(conf.Callback, &conf.multiEventLoop.t)
 	return &UpgradeServer{config: conf.Config}
 }
 
@@ -50,7 +50,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...ServerOption) (c *C
 	for _, o := range opts {
 		o(&conf)
 	}
-	conf.Callback = newGoCallback(conf.Callback, conf.Config.multiEventLoop.t)
+	conf.Callback = newGoCallback(conf.Callback, &conf.Config.multiEventLoop.t)
 	return upgradeInner(w, r, &conf.Config)
 }
 

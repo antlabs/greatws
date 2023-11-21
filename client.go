@@ -60,7 +60,7 @@ func DialConf(rawUrl string, conf *DialOption) (*Conn, error) {
 		conf.Header = make(http.Header)
 	}
 
-	conf.Callback = newGoCallback(conf.Callback, conf.multiEventLoop.t)
+	conf.Callback = newGoCallback(conf.Callback, &conf.multiEventLoop.t)
 	return conf.Dial()
 }
 
@@ -83,7 +83,7 @@ func Dial(rawUrl string, opts ...ClientOption) (*Conn, error) {
 	for _, o := range opts {
 		o(&dial)
 	}
-	dial.Callback = newGoCallback(dial.Callback, dial.multiEventLoop.t)
+	dial.Callback = newGoCallback(dial.Callback, &dial.multiEventLoop.t)
 
 	return dial.Dial()
 }

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/antlabs/greatws"
@@ -67,8 +68,12 @@ func main() {
 	var h handler
 
 	// debug io-uring
-	h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(1000), greatws.WithIoUring(), greatws.WithLogLevel(slog.LevelDebug))
-	// h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(1000), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+	// h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(1000), greatws.WithIoUring(), greatws.WithLogLevel(slog.LevelDebug))
+	h.m = greatws.NewMultiEventLoopMust(
+		greatws.WithEventLoops(runtime.NumCPU()/2),
+		greatws.WithBusinessGoNum(50, 10, 10000),
+		greatws.WithMaxEventNum(1000),
+		greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
 	fmt.Printf("apiname:%s\n", h.m.GetApiName())
 
