@@ -80,11 +80,11 @@ func (c *Conn) getParent() *EventLoop {
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
-	rbuf := make([]byte, 1024+15)
+	rbuf := bytespool.GetBytes(conf.initPayloadSize())
 	c := &Conn{
 		conn: conn{
 			fd:   fd,
-			rbuf: &rbuf,
+			rbuf: rbuf,
 		},
 		// 初始化不分配内存，只有在需要的时候才分配
 		// wbuf:   make([]byte, 0, 1024),
