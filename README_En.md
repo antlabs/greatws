@@ -17,13 +17,13 @@ A websocket library that allegedly can support massive connections, async in nat
 * windows
 * io-uring
 
-//# 警告⚠️  
 # Warning  
+//# 警告⚠️  
+Early stages, production use is not recommended!  
 // 早期阶段，暂时不建议生产使用  
-Early stages, production use is not recommended!
 
-//# 例子-服务端  
 # Example Server
+//# 例子-服务端  
 ```go
 
 type echoHandler struct{}
