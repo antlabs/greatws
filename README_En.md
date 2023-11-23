@@ -3,7 +3,7 @@
 A websocket library that allegedly can support massive connections, async in nature, supporting callbacks  
 
 //# 特性  
-Main Features
+# Main Features
 // * 支持 epoll/kqueue  
 * based on epoll/kqueue  
 //* 低内存占用  
