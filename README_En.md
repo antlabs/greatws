@@ -1,5 +1,6 @@
 # greatws
 A websocket library that allegedly can support massive connections, async in nature, supporting callbacks  
+A fork from https://github.com/antlabs/greatws  
 // 支持海量连接的websocket库，callback写法
 
 # Main Features
