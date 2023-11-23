@@ -1,18 +1,18 @@
 # greatws
-// 支持海量连接的websocket库，callback写法  
 A websocket library that allegedly can support massive connections, async in nature, supporting callbacks  
+// 支持海量连接的websocket库，callback写法
 
-//# 特性  
 # Main Features
-//* 支持 epoll/kqueue
-* based on epoll/kqueue  
-//* 低内存占用
-* low memomory usage  
-//* 高tps
-* high transaction (tps transactions per seconds) volume  
+//# 特性  
+* based on epoll/kqueue
+//* 支持 epoll/kqueue  
+* low memomory usage
+//* 低内存占用  
+* high transaction (tps transactions per seconds) volume
+//* 高tps  
 
-//# 暂不支持  
 # Still todo    
+//# 暂不支持  
 * ssl
 * windows
 * io-uring
