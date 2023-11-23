@@ -4,11 +4,11 @@ A websocket library that allegedly can support massive connections, async in nat
 
 //# 特性  
 # Main Features
-// * 支持 epoll/kqueue  
+//* 支持 epoll/kqueue
 * based on epoll/kqueue  
-//* 低内存占用  
+//* 低内存占用
 * low memomory usage  
-//* 高tps  
+//* 高tps
 * high transaction (tps transactions per seconds) volume  
 
 //# 暂不支持  
