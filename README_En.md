@@ -7,7 +7,7 @@ A fork from https://github.com/antlabs/greatws
 //# 特性  
 * based on epoll/kqueue  
 //* 支持 epoll/kqueue  
-* low memomory usage  
+* low memory usage  
 //* 低内存占用  
 * high transaction (tps transactions per seconds) volume  
 //* 高tps  
