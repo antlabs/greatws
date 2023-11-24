@@ -53,7 +53,12 @@ func PutPayloadBytes(bytes *[]byte) {
 	}
 
 	if len(*bytes)%page != 0 {
-		return
+		if cap(*bytes)%page != 0 {
+			PutFragmentBytes(bytes)
+			return
+		}
+
+		*bytes = (*bytes)[:cap(*bytes)]
 	}
 
 	newLen := cap(*bytes) - 1

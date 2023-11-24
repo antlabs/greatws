@@ -57,6 +57,7 @@ const (
 	frameStatePayload
 )
 
+// 内部的conn, 只包含fd, 读缓冲区, 写缓冲区, 状态机, 分段帧缓冲区
 type conn struct {
 	fd             int64      // 文件描述符fd
 	rbuf           *[]byte    // 读缓冲区
@@ -238,6 +239,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 		return
 	}
 
+	// 普通frame
 	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
 	copy(*newBuf, (*c.rbuf)[c.rr:c.rr+int(c.rh.PayloadLen)])
 	newBuf2 := (*newBuf)[:c.rh.PayloadLen]
@@ -245,7 +247,8 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 
 	f.FrameHeader = c.rh
 	c.rr += int(c.rh.PayloadLen)
-	if len(*c.rbuf)-c.rw < 1024 {
+
+	if len(*c.rbuf)-c.rw < enum.MaxFrameHeaderSize {
 		c.leftMove()
 	}
 
@@ -255,6 +258,19 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 
 	return f, true, nil
 }
+
+// 判断是否是分段frame
+// func (c *Conn) isFragment(f frame.FrameHeader) bool {
+// 	// 第一次的frame
+// 	if (c.fragmentFrameHeader == nil && f.Opcode == opcode.Text || f.Opcode == opcode.Binary) && !f.GetFin() {
+// 		return true
+// 	}
+
+// 	if c.fragmentFrameHeader != nil && !f.Opcode.IsControl() && f.Opcode == 0 {
+// 		return true
+// 	}
+// 	return false
+// }
 
 func (c *Conn) processCallback(f frame.Frame) (err error) {
 	op := f.Opcode
@@ -272,7 +288,13 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 	fin := f.GetFin()
 	if c.fragmentFrameHeader != nil && !f.Opcode.IsControl() {
 		if f.Opcode == 0 {
+			if c.fragmentFramePayload == nil {
+				tmpBytes := GetFragmentBytes()
+				c.fragmentFramePayload = *tmpBytes
+			}
+
 			c.fragmentFramePayload = append(c.fragmentFramePayload, f.Payload...)
+			PutPayloadBytes(&f.Payload)
 
 			// 分段的在这返回
 			if fin {
@@ -291,8 +313,9 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 					return ErrTextNotUTF8
 				}
 
-				c.Callback.OnMessage(c, c.fragmentFrameHeader.Opcode, c.fragmentFramePayload)
-				c.fragmentFramePayload = c.fragmentFramePayload[0:0]
+				fragmentFramePayload := c.fragmentFramePayload
+				c.fragmentFramePayload = nil
+				c.Callback.OnMessage(c, c.fragmentFrameHeader.Opcode, fragmentFramePayload)
 				c.fragmentFrameHeader = nil
 			}
 			return nil

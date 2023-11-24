@@ -104,8 +104,14 @@ func (g *goCallback) OnOpen(c *Conn) {
 func (g *goCallback) OnMessage(c *Conn, op Opcode, data []byte) {
 	//	g.c.OnMessage(c, op, data)
 	c.waitOnMessageRun.Add(1)
+	// need := c.rh.Mask
+	// maskKey := c.rh.MaskKey
 	g.t.addTask(func() (exit bool) {
 		defer c.waitOnMessageRun.Done()
+
+		// if need {
+		// 	mask.Mask(data, maskKey)
+		// }
 		g.c.OnMessage(c, op, data)
 		PutPayloadBytes(&data)
 		return false
