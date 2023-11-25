@@ -75,6 +75,10 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
+func (c *Conn) getTask() *task {
+	return &c.multiEventLoop.t
+}
+
 func (c *Conn) getFd() int {
 	return int(c.fd)
 }
@@ -299,24 +303,39 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			// 分段的在这返回
 			if fin {
 				// 解压缩
-				if c.fragmentFrameHeader.GetRsv1() && c.decompression {
-					tempBuf, err := decode(c.fragmentFramePayload)
-					if err != nil {
-						return err
-					}
-					c.fragmentFramePayload = tempBuf
-				}
-				// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
-				// TODO c.utf8Check 修改成流式解析
-				if c.fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(c.fragmentFramePayload) {
-					c.Callback.OnClose(c, ErrTextNotUTF8)
-					return ErrTextNotUTF8
-				}
-
-				fragmentFramePayload := c.fragmentFramePayload
+				fragmentFrameHeader := c.fragmentFrameHeader
 				c.fragmentFramePayload = nil
-				c.Callback.OnMessage(c, c.fragmentFrameHeader.Opcode, fragmentFramePayload)
+				fragmentFramePayload := c.fragmentFramePayload
+				decompression := c.decompression
 				c.fragmentFrameHeader = nil
+
+				// 进行业务协程执行
+				c.getTask().addTask(func() (exit bool) {
+					c.waitOnMessageRun.Add(1)
+					defer c.waitOnMessageRun.Done()
+
+					if fragmentFrameHeader.GetRsv1() && decompression {
+						tempBuf, err := decode(fragmentFramePayload)
+						if err != nil {
+							// return err
+							c.closeAndWaitOnMessage(false, err)
+							return false
+						}
+
+						fragmentFramePayload = tempBuf
+					}
+					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
+					// TODO c.utf8Check 修改成流式解析
+					if fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(fragmentFramePayload) {
+						c.Callback.OnClose(c, ErrTextNotUTF8)
+						// return ErrTextNotUTF8
+						c.closeAndWaitOnMessage(false, nil)
+						return false
+					}
+
+					c.Callback.OnMessage(c, fragmentFrameHeader.Opcode, fragmentFramePayload)
+					return false
+				})
 			}
 			return nil
 		}
@@ -338,24 +357,32 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			c.fragmentFrameHeader = &prevFrame
 			return
 		}
-
-		if rsv1 && c.decompression {
-			// 不分段的解压缩
-			f.Payload, err = decode(f.Payload)
-			if err != nil {
-				return err
+		decompression := c.decompression
+		payload := f.Payload
+		c.getTask().addTask(func() bool {
+			c.waitOnMessageRun.Add(1)
+			defer c.waitOnMessageRun.Done()
+			if rsv1 && decompression {
+				// 不分段的解压缩
+				payload, err = decode(payload)
+				if err != nil {
+					c.closeAndWaitOnMessage(false, err)
+				}
+				return false
 			}
-		}
 
-		if f.Opcode == opcode.Text {
-			if !c.utf8Check(f.Payload) {
-				c.Callback.OnClose(c, ErrTextNotUTF8)
-				go c.closeAndWaitOnMessage(true, nil)
-				return ErrTextNotUTF8
+			if f.Opcode == opcode.Text {
+				if !c.utf8Check(f.Payload) {
+					c.Callback.OnClose(c, ErrTextNotUTF8)
+					go c.closeAndWaitOnMessage(false, nil)
+					return false
+				}
 			}
-		}
 
-		c.Callback.OnMessage(c, f.Opcode, f.Payload)
+			c.Callback.OnMessage(c, f.Opcode, payload)
+			return false
+		})
+
 		return
 	}
 
@@ -406,7 +433,12 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 					c.Callback.OnClose(c, err)
 					return err
 				}
-				c.Callback.OnMessage(c, f.Opcode, f.Payload)
+				c.getTask().addTask(func() bool {
+					c.waitOnMessageRun.Add(1)
+					defer c.waitOnMessageRun.Done()
+					c.Callback.OnMessage(c, f.Opcode, f.Payload)
+					return false
+				})
 				return
 			}
 		}
@@ -415,7 +447,12 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			return
 		}
 
-		c.Callback.OnMessage(c, f.Opcode, nil)
+		c.getTask().addTask(func() bool {
+			c.waitOnMessageRun.Add(1)
+			defer c.waitOnMessageRun.Done()
+			c.Callback.OnMessage(c, f.Opcode, nil)
+			return false
+		})
 		return
 	}
 	// 检查Opcode

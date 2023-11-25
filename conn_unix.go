@@ -245,6 +245,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 				// 说明缓存区已经满了。需要扩容
 				// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
 				// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
+				// for i := 0; len((*c.rbuf)[c.rw:]) == 0 && i < 3; i++ {
 				if _, err := c.readHeader(); err != nil {
 					return 0, fmt.Errorf("read header err: %w", err)
 				}

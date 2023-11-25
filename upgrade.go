@@ -36,7 +36,7 @@ func NewUpgrade(opts ...ServerOption) *UpgradeServer {
 	for _, o := range opts {
 		o(&conf)
 	}
-	conf.Callback = newGoCallback(conf.Callback, &conf.multiEventLoop.t)
+	conf.Callback = newFreeMemCallback(conf.Callback)
 	return &UpgradeServer{config: conf.Config}
 }
 
@@ -50,7 +50,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...ServerOption) (c *C
 	for _, o := range opts {
 		o(&conf)
 	}
-	conf.Callback = newGoCallback(conf.Callback, &conf.Config.multiEventLoop.t)
+	conf.Callback = newFreeMemCallback(conf.Callback)
 	return upgradeInner(w, r, &conf.Config)
 }
 
@@ -137,8 +137,5 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		return nil, err
 	}
 
-	// fmt.Printf("new fd = %d, %p\n", fd, c)
-
-	// return newConn(conn, false, conf, fr, read, bp), nil
 	return c, nil
 }
