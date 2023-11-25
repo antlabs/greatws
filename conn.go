@@ -304,14 +304,14 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			if fin {
 				// 解压缩
 				fragmentFrameHeader := c.fragmentFrameHeader
-				c.fragmentFramePayload = nil
 				fragmentFramePayload := c.fragmentFramePayload
 				decompression := c.decompression
 				c.fragmentFrameHeader = nil
+				c.fragmentFramePayload = nil
 
 				// 进行业务协程执行
+				c.waitOnMessageRun.Add(1)
 				c.getTask().addTask(func() (exit bool) {
-					c.waitOnMessageRun.Add(1)
 					defer c.waitOnMessageRun.Done()
 
 					if fragmentFrameHeader.GetRsv1() && decompression {
@@ -359,8 +359,8 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 		}
 		decompression := c.decompression
 		payload := f.Payload
+		c.waitOnMessageRun.Add(1)
 		c.getTask().addTask(func() bool {
-			c.waitOnMessageRun.Add(1)
 			defer c.waitOnMessageRun.Done()
 			if rsv1 && decompression {
 				// 不分段的解压缩
@@ -433,8 +433,8 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 					c.Callback.OnClose(c, err)
 					return err
 				}
+				c.waitOnMessageRun.Add(1)
 				c.getTask().addTask(func() bool {
-					c.waitOnMessageRun.Add(1)
 					defer c.waitOnMessageRun.Done()
 					c.Callback.OnMessage(c, f.Opcode, f.Payload)
 					return false
@@ -447,8 +447,8 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			return
 		}
 
+		c.waitOnMessageRun.Add(1)
 		c.getTask().addTask(func() bool {
-			c.waitOnMessageRun.Add(1)
 			defer c.waitOnMessageRun.Done()
 			c.Callback.OnMessage(c, f.Opcode, nil)
 			return false
