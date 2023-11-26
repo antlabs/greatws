@@ -209,7 +209,7 @@ func (c *Conn) writeCap() int {
 // 2. 当前的rbuf长度够，但是数据没有读完整
 // 返回分片Paylod逻辑
 // TODO
-func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
+func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 	// 如果缓存区不够, 重新分配
 	multipletimes := c.windowsMultipleTimesPayloadSize
 	// 已读取未处理的数据
@@ -247,7 +247,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
 	copy(*newBuf, (*c.rbuf)[c.rr:c.rr+int(c.rh.PayloadLen)])
 	newBuf2 := (*newBuf)[:c.rh.PayloadLen]
-	f.Payload = newBuf2
+	f.Payload = &newBuf2
 
 	f.FrameHeader = c.rh
 	c.rr += int(c.rh.PayloadLen)
@@ -257,7 +257,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 	}
 
 	if c.rh.Mask {
-		mask.Mask(f.Payload, c.rh.MaskKey)
+		mask.Mask(*f.Payload, c.rh.MaskKey)
 	}
 
 	return f, true, nil
@@ -276,7 +276,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 // 	return false
 // }
 
-func (c *Conn) processCallback(f frame.Frame) (err error) {
+func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	op := f.Opcode
 	if c.fragmentFrameHeader != nil {
 		op = c.fragmentFrameHeader.Opcode
@@ -297,8 +297,8 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 				c.fragmentFramePayload = *tmpBytes
 			}
 
-			c.fragmentFramePayload = append(c.fragmentFramePayload, f.Payload...)
-			PutPayloadBytes(&f.Payload)
+			c.fragmentFramePayload = append(c.fragmentFramePayload, *f.Payload...)
+			PutPayloadBytes(f.Payload)
 
 			// 分段的在这返回
 			if fin {
@@ -349,7 +349,7 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			prevFrame := f.FrameHeader
 			// 第一次分段
 			if len(c.fragmentFramePayload) == 0 {
-				c.fragmentFramePayload = append(c.fragmentFramePayload, f.Payload...)
+				c.fragmentFramePayload = append(c.fragmentFramePayload, *f.Payload...)
 				f.Payload = nil
 			}
 
@@ -357,31 +357,37 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			c.fragmentFrameHeader = &prevFrame
 			return
 		}
+
+		var payloadPtr atomic.Pointer[[]byte]
 		decompression := c.decompression
-		payload := f.Payload
+		payloadPtr.Store(f.Payload)
+		f.Payload = nil
 
 		// 进入业务协程执行
 		c.waitOnMessageRun.Add(1)
 		c.getTask().addTask(func() bool {
 			defer c.waitOnMessageRun.Done()
+			payload := payloadPtr.Load()
+			var newPayload []byte
 			if rsv1 && decompression {
 				// 不分段的解压缩
-				payload, err = decode(payload)
+				newPayload, err = decode(*payload)
 				if err != nil {
 					c.closeAndWaitOnMessage(false, err)
-				}
-				return false
-			}
-
-			if f.Opcode == opcode.Text {
-				if !c.utf8Check(f.Payload) {
-					c.Callback.OnClose(c, ErrTextNotUTF8)
-					go c.closeAndWaitOnMessage(false, nil)
+					PutPayloadBytes(payload)
 					return false
 				}
 			}
 
-			c.Callback.OnMessage(c, f.Opcode, payload)
+			if f.Opcode == opcode.Text {
+				if !c.utf8Check(*payload) {
+					c.closeAndWaitOnMessage(false, nil)
+					c.Callback.OnClose(c, ErrTextNotUTF8)
+					return false
+				}
+			}
+
+			c.Callback.OnMessage(c, f.Opcode, newPayload)
 			return false
 		})
 
@@ -401,29 +407,29 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 		}
 
 		if f.Opcode == Close {
-			if len(f.Payload) == 0 {
+			if len(*f.Payload) == 0 {
 				return c.writeErrAndOnClose(NormalClosure, ErrClosePayloadTooSmall)
 			}
 
-			if len(f.Payload) < 2 {
+			if len(*f.Payload) < 2 {
 				return c.writeErrAndOnClose(ProtocolError, ErrClosePayloadTooSmall)
 			}
 
-			if !c.utf8Check(f.Payload[2:]) {
+			if !c.utf8Check((*f.Payload)[2:]) {
 				return c.writeErrAndOnClose(ProtocolError, ErrTextNotUTF8)
 			}
 
-			code := binary.BigEndian.Uint16(f.Payload)
+			code := binary.BigEndian.Uint16(*f.Payload)
 			if !validCode(code) {
 				return c.writeErrAndOnClose(ProtocolError, ErrCloseValue)
 			}
 
 			// 回敬一个close包
-			if err := c.WriteTimeout(Close, f.Payload, 2*time.Second); err != nil {
+			if err := c.WriteTimeout(Close, *f.Payload, 2*time.Second); err != nil {
 				return err
 			}
 
-			err = bytesToCloseErrMsg(f.Payload)
+			err = bytesToCloseErrMsg(*f.Payload)
 			c.Callback.OnClose(c, err)
 			return err
 		}
@@ -431,15 +437,16 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 		if f.Opcode == Ping {
 			// 回一个pong包
 			if c.replyPing {
-				if err := c.WriteTimeout(Pong, f.Payload, 2*time.Second); err != nil {
+				if err := c.WriteTimeout(Pong, *f.Payload, 2*time.Second); err != nil {
 					c.Callback.OnClose(c, err)
 					return err
 				}
 				// 进入业务协程执行
 				c.waitOnMessageRun.Add(1)
+				payload := *f.Payload
 				c.getTask().addTask(func() bool {
 					defer c.waitOnMessageRun.Done()
-					c.Callback.OnMessage(c, f.Opcode, f.Payload)
+					c.Callback.OnMessage(c, f.Opcode, payload)
 					return false
 				})
 				return

@@ -100,7 +100,7 @@ func duplicateSocket(socketFD int) (int, error) {
 }
 
 func (c *Conn) closeInner(err error) {
-	c.getLogger().Debug("close conn", slog.Int64("fd", c.fd))
+	c.getLogger().Debug("close conn", slog.Int64("fd", atomic.LoadInt64(&c.fd)))
 	c.multiEventLoop.del(c)
 	atomic.StoreInt64(&c.fd, -1)
 	c.closeOnce.Do(func() {
