@@ -485,7 +485,7 @@ func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 		// fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
 		if success {
 			if err := c.processCallback(f); err != nil {
-				go c.closeAndWaitOnMessage(true, err)
+				go c.closeAndWaitOnMessage(false, err)
 				return false, err
 			}
 			c.curState = frameStateHeaderStart
