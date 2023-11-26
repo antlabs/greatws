@@ -359,26 +359,27 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			return
 		}
 
-		var payloadPtr atomic.Pointer[[]byte]
+		// var payloadPtr atomic.Pointer[[]byte]
 		decompression := c.decompression
-		payloadPtr.Store(f.Payload)
+		payload := f.Payload
 		f.Payload = nil
+		// payloadPtr.Store(f.Payload)
 
 		// 进入业务协程执行
 		c.waitOnMessageRun.Add(1)
 		c.getTask().addTask(func() bool {
 			defer c.waitOnMessageRun.Done()
-			payload := payloadPtr.Load()
-			var newPayload []byte
+			// payload := payloadPtr.Load()
+			decodePayload := *payload
 			if rsv1 && decompression {
 				// 不分段的解压缩
-				newPayload, err = decode(*payload)
+				decodePayload, err = decode(*payload)
 				if err != nil {
 					c.closeAndWaitOnMessage(false, err)
 					PutPayloadBytes(payload)
 					return false
 				}
-				defer PutFragmentBytes(&newPayload)
+				defer PutFragmentBytes(&decodePayload)
 			}
 
 			if f.Opcode == opcode.Text {
@@ -389,7 +390,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				}
 			}
 
-			c.Callback.OnMessage(c, f.Opcode, newPayload)
+			c.Callback.OnMessage(c, f.Opcode, decodePayload)
 			return false
 		})
 
