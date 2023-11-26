@@ -60,7 +60,6 @@ func DialConf(rawUrl string, conf *DialOption) (*Conn, error) {
 		conf.Header = make(http.Header)
 	}
 
-	conf.Callback = newFreeMemCallback(conf.Callback)
 	return conf.Dial()
 }
 
@@ -83,7 +82,6 @@ func Dial(rawUrl string, opts ...ClientOption) (*Conn, error) {
 	for _, o := range opts {
 		o(&dial)
 	}
-	dial.Callback = newFreeMemCallback(dial.Callback)
 
 	return dial.Dial()
 }

@@ -87,24 +87,3 @@ func (f *funcToCallback) OnClose(c *Conn, err error) {
 		f.onClose(c, err)
 	}
 }
-
-type freeMemCallback struct {
-	c Callback
-}
-
-func newFreeMemCallback(c Callback) *freeMemCallback {
-	return &freeMemCallback{c: c}
-}
-
-func (g *freeMemCallback) OnOpen(c *Conn) {
-	g.c.OnOpen(c)
-}
-
-func (g *freeMemCallback) OnMessage(c *Conn, op Opcode, data []byte) {
-	g.c.OnMessage(c, op, data)
-	PutPayloadBytes(&data)
-}
-
-func (g *freeMemCallback) OnClose(c *Conn, err error) {
-	g.c.OnClose(c, err)
-}

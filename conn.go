@@ -67,7 +67,7 @@ type conn struct {
 	lenAndMaskSize int        // payload长度和掩码的长度
 	rh             frame.FrameHeader
 
-	fragmentFramePayload []byte // 存放分片帧的缓冲区
+	fragmentFramePayload *[]byte // 存放分片帧的缓冲区
 	fragmentFrameHeader  *frame.FrameHeader
 }
 
@@ -294,10 +294,10 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		if f.Opcode == 0 {
 			if c.fragmentFramePayload == nil {
 				tmpBytes := GetFragmentBytes()
-				c.fragmentFramePayload = *tmpBytes
+				c.fragmentFramePayload = tmpBytes
 			}
 
-			c.fragmentFramePayload = append(c.fragmentFramePayload, *f.Payload...)
+			*c.fragmentFramePayload = append(*c.fragmentFramePayload, *f.Payload...)
 			PutPayloadBytes(f.Payload)
 
 			// 分段的在这返回
@@ -315,25 +315,26 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					defer c.waitOnMessageRun.Done()
 
 					if fragmentFrameHeader.GetRsv1() && decompression {
-						tempBuf, err := decode(fragmentFramePayload)
+						tempBuf, err := decode(*fragmentFramePayload)
 						if err != nil {
 							// return err
 							c.closeAndWaitOnMessage(false, err)
 							return false
 						}
 
-						fragmentFramePayload = tempBuf
+						fragmentFramePayload = &tempBuf
 					}
 					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
 					// TODO c.utf8Check 修改成流式解析
-					if fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(fragmentFramePayload) {
+					if fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(*fragmentFramePayload) {
 						c.Callback.OnClose(c, ErrTextNotUTF8)
 						// return ErrTextNotUTF8
 						c.closeAndWaitOnMessage(false, nil)
 						return false
 					}
 
-					c.Callback.OnMessage(c, fragmentFrameHeader.Opcode, fragmentFramePayload)
+					c.Callback.OnMessage(c, fragmentFrameHeader.Opcode, *fragmentFramePayload)
+					PutFragmentBytes(fragmentFramePayload)
 					return false
 				})
 			}
@@ -348,8 +349,8 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		if !fin {
 			prevFrame := f.FrameHeader
 			// 第一次分段
-			if len(c.fragmentFramePayload) == 0 {
-				c.fragmentFramePayload = append(c.fragmentFramePayload, *f.Payload...)
+			if c.fragmentFramePayload == nil {
+				c.fragmentFramePayload = f.Payload
 				f.Payload = nil
 			}
 
@@ -377,6 +378,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					PutPayloadBytes(payload)
 					return false
 				}
+				defer PutFragmentBytes(&newPayload)
 			}
 
 			if f.Opcode == opcode.Text {
@@ -443,10 +445,11 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				}
 				// 进入业务协程执行
 				c.waitOnMessageRun.Add(1)
-				payload := *f.Payload
+				payload := f.Payload
 				c.getTask().addTask(func() bool {
 					defer c.waitOnMessageRun.Done()
-					c.Callback.OnMessage(c, f.Opcode, payload)
+					c.Callback.OnMessage(c, f.Opcode, *payload)
+					PutPayloadBytes(payload)
 					return false
 				})
 				return
