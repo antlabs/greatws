@@ -309,7 +309,7 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 				c.fragmentFrameHeader = nil
 				c.fragmentFramePayload = nil
 
-				// 进行业务协程执行
+				// 进入业务协程执行
 				c.waitOnMessageRun.Add(1)
 				c.getTask().addTask(func() (exit bool) {
 					defer c.waitOnMessageRun.Done()
@@ -359,6 +359,8 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 		}
 		decompression := c.decompression
 		payload := f.Payload
+
+		// 进入业务协程执行
 		c.waitOnMessageRun.Add(1)
 		c.getTask().addTask(func() bool {
 			defer c.waitOnMessageRun.Done()
@@ -433,6 +435,7 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 					c.Callback.OnClose(c, err)
 					return err
 				}
+				// 进入业务协程执行
 				c.waitOnMessageRun.Add(1)
 				c.getTask().addTask(func() bool {
 					defer c.waitOnMessageRun.Done()
@@ -447,6 +450,7 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			return
 		}
 
+		// 进入业务协程执行
 		c.waitOnMessageRun.Add(1)
 		c.getTask().addTask(func() bool {
 			defer c.waitOnMessageRun.Done()
