@@ -123,8 +123,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				conn.flushOrClose()
 			}
 			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
-				// TODO 完善下细节
-				go conn.closeAndWaitOnMessage(true, io.EOF)
+				go conn.closeAndWaitOnMessage(false, io.EOF)
 			}
 		}
 
