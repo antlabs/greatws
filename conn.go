@@ -293,12 +293,13 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	if c.fragmentFrameHeader != nil && !f.Opcode.IsControl() {
 		if f.Opcode == 0 {
 			if c.fragmentFramePayload == nil {
-				tmpBytes := GetFragmentBytes()
-				c.fragmentFramePayload = tmpBytes
+				c.fragmentFramePayload = f.Payload
+			} else {
+				*c.fragmentFramePayload = append(*c.fragmentFramePayload, *f.Payload...)
+				PutPayloadBytes(f.Payload)
 			}
 
-			*c.fragmentFramePayload = append(*c.fragmentFramePayload, *f.Payload...)
-			PutPayloadBytes(f.Payload)
+			f.Payload = nil
 
 			// 分段的在这返回
 			if fin {
@@ -322,6 +323,8 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 							return false
 						}
 
+						// 回收这块内存到pool里面
+						PutFragmentBytes(fragmentFramePayload)
 						fragmentFramePayload = &tempBuf
 					}
 					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
@@ -383,7 +386,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			}
 
 			if f.Opcode == opcode.Text {
-				if !c.utf8Check(*payload) {
+				if !c.utf8Check(decodePayload) {
 					c.closeAndWaitOnMessage(false, nil)
 					c.Callback.OnClose(c, ErrTextNotUTF8)
 					return false
@@ -391,6 +394,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			}
 
 			c.Callback.OnMessage(c, f.Opcode, decodePayload)
+			PutPayloadBytes(payload)
 			return false
 		})
 
