@@ -256,25 +256,8 @@ func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 		c.leftMove()
 	}
 
-	if c.rh.Mask {
-		mask.Mask(*f.Payload, c.rh.MaskKey)
-	}
-
 	return f, true, nil
 }
-
-// 判断是否是分段frame
-// func (c *Conn) isFragment(f frame.FrameHeader) bool {
-// 	// 第一次的frame
-// 	if (c.fragmentFrameHeader == nil && f.Opcode == opcode.Text || f.Opcode == opcode.Binary) && !f.GetFin() {
-// 		return true
-// 	}
-
-// 	if c.fragmentFrameHeader != nil && !f.Opcode.IsControl() && f.Opcode == 0 {
-// 		return true
-// 	}
-// 	return false
-// }
 
 func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	op := f.Opcode
@@ -289,9 +272,17 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		return c.writeErrAndOnClose(ProtocolError, err)
 	}
 
+	maskKey := c.rh.MaskKey
+	needMask := c.rh.Mask
+
 	fin := f.GetFin()
 	if c.fragmentFrameHeader != nil && !f.Opcode.IsControl() {
 		if f.Opcode == 0 {
+			// TODO 优化, 需要放到单独的业务go程, 目前为了保证时序性，先放到io go程里面
+			if needMask {
+				mask.Mask(*f.Payload, maskKey)
+			}
+
 			if c.fragmentFramePayload == nil {
 				c.fragmentFramePayload = f.Payload
 			} else {
@@ -352,6 +343,11 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		if !fin {
 			prevFrame := f.FrameHeader
 			// 第一次分段
+
+			// TODO 放到单独的业务go程, 目前为了保证时序性，先放到io go程里面
+			if needMask {
+				mask.Mask(*f.Payload, maskKey)
+			}
 			if c.fragmentFramePayload == nil {
 				c.fragmentFramePayload = f.Payload
 				f.Payload = nil
@@ -373,6 +369,10 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		c.getTask().addTask(func() bool {
 			defer c.waitOnMessageRun.Done()
 			// payload := payloadPtr.Load()
+
+			if needMask {
+				mask.Mask(*payload, maskKey)
+			}
 			decodePayload := *payload
 			if rsv1 && decompression {
 				// 不分段的解压缩
@@ -402,6 +402,11 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	}
 
 	if f.Opcode == Close || f.Opcode == Ping || f.Opcode == Pong {
+
+		// 消息体的内容比较小，直接在io go程里面处理
+		if needMask {
+			mask.Mask(*f.Payload, maskKey)
+		}
 		//  对方发的控制消息太大
 		if f.PayloadLen > maxControlFrameSize {
 			c.writeErrAndOnClose(ProtocolError, ErrMaxControlFrameSize)
