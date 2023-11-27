@@ -99,12 +99,8 @@ func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
 }
 
-func (c *Conn) closeInner(wait bool, err error) {
-	c.getLogger().Debug("close conn", slog.Int64("fd", c.fd))
-	if true {
-		c.waitOnMessageRun.Wait()
-	}
-
+func (c *Conn) closeInner(err error) {
+	c.getLogger().Debug("close conn", slog.Int64("fd", atomic.LoadInt64(&c.fd)))
 	c.multiEventLoop.del(c)
 	atomic.StoreInt64(&c.fd, -1)
 	c.closeOnce.Do(func() {
@@ -123,7 +119,7 @@ func (c *Conn) closeAndWaitOnMessage(wait bool, err error) {
 	}
 
 	c.mu.Lock()
-	c.closeInner(false, err)
+	c.closeInner(err)
 	c.mu.Unlock()
 }
 
@@ -176,7 +172,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 				return total, nil
 			}
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
-			go c.closeInner(true, err)
+			go c.closeInner(err)
 			return
 		}
 		if n > 0 {
@@ -245,6 +241,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 				// 说明缓存区已经满了。需要扩容
 				// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
 				// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
+				// for i := 0; len((*c.rbuf)[c.rw:]) == 0 && i < 3; i++ {
 				if _, err := c.readHeader(); err != nil {
 					return 0, fmt.Errorf("read header err: %w", err)
 				}

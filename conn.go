@@ -67,12 +67,16 @@ type conn struct {
 	lenAndMaskSize int        // payload长度和掩码的长度
 	rh             frame.FrameHeader
 
-	fragmentFramePayload []byte // 存放分片帧的缓冲区
+	fragmentFramePayload *[]byte // 存放分片帧的缓冲区
 	fragmentFrameHeader  *frame.FrameHeader
 }
 
 func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
+}
+
+func (c *Conn) getTask() *task {
+	return &c.multiEventLoop.t
 }
 
 func (c *Conn) getFd() int {
@@ -205,7 +209,7 @@ func (c *Conn) writeCap() int {
 // 2. 当前的rbuf长度够，但是数据没有读完整
 // 返回分片Paylod逻辑
 // TODO
-func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
+func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 	// 如果缓存区不够, 重新分配
 	multipletimes := c.windowsMultipleTimesPayloadSize
 	// 已读取未处理的数据
@@ -243,7 +247,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
 	copy(*newBuf, (*c.rbuf)[c.rr:c.rr+int(c.rh.PayloadLen)])
 	newBuf2 := (*newBuf)[:c.rh.PayloadLen]
-	f.Payload = newBuf2
+	f.Payload = &newBuf2
 
 	f.FrameHeader = c.rh
 	c.rr += int(c.rh.PayloadLen)
@@ -253,7 +257,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 	}
 
 	if c.rh.Mask {
-		mask.Mask(f.Payload, c.rh.MaskKey)
+		mask.Mask(*f.Payload, c.rh.MaskKey)
 	}
 
 	return f, true, nil
@@ -272,7 +276,7 @@ func (c *Conn) readPayload() (f frame.Frame, success bool, err error) {
 // 	return false
 // }
 
-func (c *Conn) processCallback(f frame.Frame) (err error) {
+func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	op := f.Opcode
 	if c.fragmentFrameHeader != nil {
 		op = c.fragmentFrameHeader.Opcode
@@ -289,34 +293,53 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 	if c.fragmentFrameHeader != nil && !f.Opcode.IsControl() {
 		if f.Opcode == 0 {
 			if c.fragmentFramePayload == nil {
-				tmpBytes := GetFragmentBytes()
-				c.fragmentFramePayload = *tmpBytes
+				c.fragmentFramePayload = f.Payload
+			} else {
+				*c.fragmentFramePayload = append(*c.fragmentFramePayload, *f.Payload...)
+				PutPayloadBytes(f.Payload)
 			}
 
-			c.fragmentFramePayload = append(c.fragmentFramePayload, f.Payload...)
-			PutPayloadBytes(&f.Payload)
+			f.Payload = nil
 
 			// 分段的在这返回
 			if fin {
 				// 解压缩
-				if c.fragmentFrameHeader.GetRsv1() && c.decompression {
-					tempBuf, err := decode(c.fragmentFramePayload)
-					if err != nil {
-						return err
-					}
-					c.fragmentFramePayload = tempBuf
-				}
-				// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
-				// TODO c.utf8Check 修改成流式解析
-				if c.fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(c.fragmentFramePayload) {
-					c.Callback.OnClose(c, ErrTextNotUTF8)
-					return ErrTextNotUTF8
-				}
-
+				fragmentFrameHeader := c.fragmentFrameHeader
 				fragmentFramePayload := c.fragmentFramePayload
-				c.fragmentFramePayload = nil
-				c.Callback.OnMessage(c, c.fragmentFrameHeader.Opcode, fragmentFramePayload)
+				decompression := c.decompression
 				c.fragmentFrameHeader = nil
+				c.fragmentFramePayload = nil
+
+				// 进入业务协程执行
+				c.waitOnMessageRun.Add(1)
+				c.getTask().addTask(func() (exit bool) {
+					defer c.waitOnMessageRun.Done()
+
+					if fragmentFrameHeader.GetRsv1() && decompression {
+						tempBuf, err := decode(*fragmentFramePayload)
+						if err != nil {
+							// return err
+							c.closeAndWaitOnMessage(false, err)
+							return false
+						}
+
+						// 回收这块内存到pool里面
+						PutFragmentBytes(fragmentFramePayload)
+						fragmentFramePayload = &tempBuf
+					}
+					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
+					// TODO c.utf8Check 修改成流式解析
+					if fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(*fragmentFramePayload) {
+						c.Callback.OnClose(c, ErrTextNotUTF8)
+						// return ErrTextNotUTF8
+						c.closeAndWaitOnMessage(false, nil)
+						return false
+					}
+
+					c.Callback.OnMessage(c, fragmentFrameHeader.Opcode, *fragmentFramePayload)
+					PutFragmentBytes(fragmentFramePayload)
+					return false
+				})
 			}
 			return nil
 		}
@@ -329,8 +352,8 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 		if !fin {
 			prevFrame := f.FrameHeader
 			// 第一次分段
-			if len(c.fragmentFramePayload) == 0 {
-				c.fragmentFramePayload = append(c.fragmentFramePayload, f.Payload...)
+			if c.fragmentFramePayload == nil {
+				c.fragmentFramePayload = f.Payload
 				f.Payload = nil
 			}
 
@@ -339,23 +362,42 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			return
 		}
 
-		if rsv1 && c.decompression {
-			// 不分段的解压缩
-			f.Payload, err = decode(f.Payload)
-			if err != nil {
-				return err
-			}
-		}
+		// var payloadPtr atomic.Pointer[[]byte]
+		decompression := c.decompression
+		payload := f.Payload
+		f.Payload = nil
+		// payloadPtr.Store(f.Payload)
 
-		if f.Opcode == opcode.Text {
-			if !c.utf8Check(f.Payload) {
-				c.Callback.OnClose(c, ErrTextNotUTF8)
-				go c.closeAndWaitOnMessage(true, nil)
-				return ErrTextNotUTF8
+		// 进入业务协程执行
+		c.waitOnMessageRun.Add(1)
+		c.getTask().addTask(func() bool {
+			defer c.waitOnMessageRun.Done()
+			// payload := payloadPtr.Load()
+			decodePayload := *payload
+			if rsv1 && decompression {
+				// 不分段的解压缩
+				decodePayload, err = decode(*payload)
+				if err != nil {
+					c.closeAndWaitOnMessage(false, err)
+					PutPayloadBytes(payload)
+					return false
+				}
+				defer PutFragmentBytes(&decodePayload)
 			}
-		}
 
-		c.Callback.OnMessage(c, f.Opcode, f.Payload)
+			if f.Opcode == opcode.Text {
+				if !c.utf8Check(decodePayload) {
+					c.closeAndWaitOnMessage(false, nil)
+					c.Callback.OnClose(c, ErrTextNotUTF8)
+					return false
+				}
+			}
+
+			c.Callback.OnMessage(c, f.Opcode, decodePayload)
+			PutPayloadBytes(payload)
+			return false
+		})
+
 		return
 	}
 
@@ -372,29 +414,29 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 		}
 
 		if f.Opcode == Close {
-			if len(f.Payload) == 0 {
+			if len(*f.Payload) == 0 {
 				return c.writeErrAndOnClose(NormalClosure, ErrClosePayloadTooSmall)
 			}
 
-			if len(f.Payload) < 2 {
+			if len(*f.Payload) < 2 {
 				return c.writeErrAndOnClose(ProtocolError, ErrClosePayloadTooSmall)
 			}
 
-			if !c.utf8Check(f.Payload[2:]) {
+			if !c.utf8Check((*f.Payload)[2:]) {
 				return c.writeErrAndOnClose(ProtocolError, ErrTextNotUTF8)
 			}
 
-			code := binary.BigEndian.Uint16(f.Payload)
+			code := binary.BigEndian.Uint16(*f.Payload)
 			if !validCode(code) {
 				return c.writeErrAndOnClose(ProtocolError, ErrCloseValue)
 			}
 
 			// 回敬一个close包
-			if err := c.WriteTimeout(Close, f.Payload, 2*time.Second); err != nil {
+			if err := c.WriteTimeout(Close, *f.Payload, 2*time.Second); err != nil {
 				return err
 			}
 
-			err = bytesToCloseErrMsg(f.Payload)
+			err = bytesToCloseErrMsg(*f.Payload)
 			c.Callback.OnClose(c, err)
 			return err
 		}
@@ -402,11 +444,19 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 		if f.Opcode == Ping {
 			// 回一个pong包
 			if c.replyPing {
-				if err := c.WriteTimeout(Pong, f.Payload, 2*time.Second); err != nil {
+				if err := c.WriteTimeout(Pong, *f.Payload, 2*time.Second); err != nil {
 					c.Callback.OnClose(c, err)
 					return err
 				}
-				c.Callback.OnMessage(c, f.Opcode, f.Payload)
+				// 进入业务协程执行
+				c.waitOnMessageRun.Add(1)
+				payload := f.Payload
+				c.getTask().addTask(func() bool {
+					defer c.waitOnMessageRun.Done()
+					c.Callback.OnMessage(c, f.Opcode, *payload)
+					PutPayloadBytes(payload)
+					return false
+				})
 				return
 			}
 		}
@@ -415,7 +465,13 @@ func (c *Conn) processCallback(f frame.Frame) (err error) {
 			return
 		}
 
-		c.Callback.OnMessage(c, f.Opcode, nil)
+		// 进入业务协程执行
+		c.waitOnMessageRun.Add(1)
+		c.getTask().addTask(func() bool {
+			defer c.waitOnMessageRun.Done()
+			c.Callback.OnMessage(c, f.Opcode, nil)
+			return false
+		})
 		return
 	}
 	// 检查Opcode
@@ -448,7 +504,7 @@ func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 		// fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
 		if success {
 			if err := c.processCallback(f); err != nil {
-				go c.closeAndWaitOnMessage(true, err)
+				go c.closeAndWaitOnMessage(false, err)
 				return false, err
 			}
 			c.curState = frameStateHeaderStart

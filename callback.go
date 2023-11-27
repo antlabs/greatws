@@ -87,37 +87,3 @@ func (f *funcToCallback) OnClose(c *Conn, err error) {
 		f.onClose(c, err)
 	}
 }
-
-type goCallback struct {
-	c Callback
-	t *task
-}
-
-func newGoCallback(c Callback, t *task) *goCallback {
-	return &goCallback{c: c, t: t}
-}
-
-func (g *goCallback) OnOpen(c *Conn) {
-	g.c.OnOpen(c)
-}
-
-func (g *goCallback) OnMessage(c *Conn, op Opcode, data []byte) {
-	//	g.c.OnMessage(c, op, data)
-	c.waitOnMessageRun.Add(1)
-	// need := c.rh.Mask
-	// maskKey := c.rh.MaskKey
-	g.t.addTask(func() (exit bool) {
-		defer c.waitOnMessageRun.Done()
-
-		// if need {
-		// 	mask.Mask(data, maskKey)
-		// }
-		g.c.OnMessage(c, op, data)
-		PutPayloadBytes(&data)
-		return false
-	})
-}
-
-func (g *goCallback) OnClose(c *Conn, err error) {
-	g.c.OnClose(c, err)
-}
