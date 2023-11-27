@@ -1,6 +1,10 @@
 package greatws
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+	"unsafe"
+)
 
 func Test_Pool(t *testing.T) {
 	// TODO
@@ -25,6 +29,10 @@ func Test_Pool(t *testing.T) {
 	}
 }
 
+func getData(s []byte) uintptr {
+	return (*reflect.SliceHeader)(unsafe.Pointer(&s)).Data
+}
+
 func Test_PutGet(t *testing.T) {
 	buf := GetPayloadBytes(1024)
 	if len(*buf) != 1024 {
@@ -32,4 +40,8 @@ func Test_PutGet(t *testing.T) {
 	}
 
 	PutPayloadBytes(buf)
+	buf2 := GetPayloadBytes(1024)
+	if getData(*buf) != getData(*buf2) {
+		t.Fatalf("PutPayloadBytes error:%p:%p\n", buf, buf2)
+	}
 }
