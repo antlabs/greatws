@@ -49,6 +49,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...ServerOption) (c *C
 	for _, o := range opts {
 		o(&conf)
 	}
+
 	return upgradeInner(w, r, &conf.Config)
 }
 
@@ -75,6 +76,10 @@ func getFdFromConn(c net.Conn) (newFd int, err error) {
 }
 
 func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn, err error) {
+	if conf.multiEventLoop == nil {
+		return nil, ErrEventLoopEmpty
+	}
+
 	if ecode, err := checkRequest(r); err != nil {
 		http.Error(w, err.Error(), ecode)
 		return nil, err

@@ -41,7 +41,7 @@ func (e *echoHandler) OnClose(c *greatws.Conn, err error) {
 	if err != nil {
 		errMsg = err.Error()
 	}
-	slog.Error("OnClose:", errMsg)
+	slog.Error("OnClose:", "err", errMsg)
 }
 
 type handler struct {
@@ -100,13 +100,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("tls.X509KeyPair failed: %v", err)
 	}
+
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
 	}
+
 	lnTLS, err := tls.Listen("tcp", "localhost:9002", tlsConfig)
 	if err != nil {
 		panic(err)
 	}
+
 	log.Println("tls server exit:", http.Serve(lnTLS, mux))
 }

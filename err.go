@@ -43,3 +43,6 @@ var (
 	ErrEmptyClose           = errors.New("error:close value is empty") // close的值是空的
 	ErrWriteClosed          = errors.New("write close")
 )
+
+// 事件循环为空
+var ErrEventLoopEmpty = errors.New("event loop is empty")
