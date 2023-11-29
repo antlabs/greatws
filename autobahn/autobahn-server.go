@@ -100,7 +100,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("tls.X509KeyPair failed: %v", err)
 	}
-
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,

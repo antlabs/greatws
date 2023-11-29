@@ -150,6 +150,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 
 		// 直接写入数据
 		n, err = unix.Write(int(c.fd), b)
+		c.multiEventLoop.addWriteSyscall()
 		// fmt.Printf("1.write %d:%v: %d\n", n, err, len(b))
 
 		if err != nil {
@@ -211,6 +212,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 		for i := 0; ; i++ {
 			fd := atomic.LoadInt64(&c.fd)
 			n, err = unix.Read(int(fd), (*c.rbuf)[c.rw:])
+			c.multiEventLoop.addReadSyscall()
 			// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n", i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
 			if err != nil {
 				// 信号中断，继续读
@@ -228,8 +230,10 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 
 			// 读到eof，直接关闭
 			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
-				go c.closeAndWaitOnMessage(true, io.EOF)
-				c.OnClose(c, io.EOF)
+				go func() {
+					c.closeAndWaitOnMessage(true, io.EOF)
+					c.OnClose(c, io.EOF)
+				}()
 				return
 			}
 
@@ -241,7 +245,6 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 				// 说明缓存区已经满了。需要扩容
 				// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
 				// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
-				// for i := 0; len((*c.rbuf)[c.rw:]) == 0 && i < 3; i++ {
 				if _, err := c.readHeader(); err != nil {
 					return 0, fmt.Errorf("read header err: %w", err)
 				}
@@ -252,7 +255,7 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 				// TODO
 				if len((*c.rbuf)[c.rw:]) == 0 {
 					//
-					//panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
+					// panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
 				}
 				continue
 			}

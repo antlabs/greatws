@@ -194,9 +194,10 @@ func (c *Conn) leftMove() {
 	}
 	// b.CountMove++
 	// b.MoveBytes += b.W - b.R
-	copy(*c.rbuf, (*c.rbuf)[c.rr:c.rw])
+	n := copy(*c.rbuf, (*c.rbuf)[c.rr:c.rw])
 	c.rw -= c.rr
 	c.rr = 0
+	c.multiEventLoop.addMoveBytes(uint64(n))
 }
 
 func (c *Conn) writeCap() int {
@@ -229,6 +230,7 @@ func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 		c.rbuf = newBuf
 		// 4.将旧的buf放回池子里
 		bytespool.PutBytes(oldBuf)
+		c.multiEventLoop.addRealloc()
 
 		// 情况 2。 空间是够的，需要挪一挪, 把已经读过的覆盖掉
 	} else if c.rh.PayloadLen-readUnhandle > int64(c.writeCap()) {

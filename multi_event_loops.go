@@ -12,28 +12,10 @@ type MultiEventLoop struct {
 	maxEventNum int
 	loops       []*EventLoop
 	t           task
-	curConn     int64  // 当前tcp连接数
 	flag        evFlag // 是否使用io_uring
 	level       slog.Level
+	stat        // 统计信息
 	*slog.Logger
-}
-
-// 获取当前连接数
-func (m *MultiEventLoop) GetCurConnNum() int64 {
-	return atomic.LoadInt64(&m.curConn)
-}
-
-// 获取当前运行的任务数
-func (m *MultiEventLoop) GetCurTaskNum() int64 {
-	return m.t.getCurTask()
-}
-
-func (m *MultiEventLoop) GetApiName() string {
-	if len(m.loops) == 0 {
-		return ""
-	}
-
-	return m.loops[0].GetApiName()
 }
 
 func (m *MultiEventLoop) initDefaultSettingBefore() {
