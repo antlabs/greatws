@@ -80,7 +80,7 @@ func (c *Conn) getTask() *task {
 }
 
 func (c *Conn) getFd() int {
-	return int(c.fd)
+	return int(atomic.LoadInt64(&c.fd))
 }
 
 // 基于状态机解析frame
