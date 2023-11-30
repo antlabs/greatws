@@ -9,6 +9,9 @@ type stat struct {
 	curConn      int64  // 当前tcp连接数
 	realloc      int64  // 重新分配内存次数
 	moveBytes    uint64 // 移动字节数
+	readEv       int64  // 读事件次数
+	writeEv      int64  // 写事件次数
+	pollEv       int64  // poll事件次数, 包含读,写, 错误事件
 }
 
 // 对外接口，查询移动字节数
@@ -42,6 +45,20 @@ func (m *MultiEventLoop) GetCurTaskNum() int64 {
 }
 
 // 对外接口，查询当前任务数
+func (m *MultiEventLoop) GetReadEvNum() int64 {
+	return atomic.LoadInt64(&m.readEv)
+}
+
+// 对外接口，查询当前任务数
+func (m *MultiEventLoop) GetWriteEvNum() int64 {
+	return atomic.LoadInt64(&m.writeEv)
+}
+
+func (m *MultiEventLoop) GetPollEvNum() int64 {
+	return atomic.LoadInt64(&m.pollEv)
+}
+
+// 对外接口，查询当前任务数
 func (m *MultiEventLoop) GetApiName() string {
 	if len(m.loops) == 0 {
 		return ""
@@ -64,4 +81,16 @@ func (m *MultiEventLoop) addWriteSyscall() {
 
 func (m *MultiEventLoop) addMoveBytes(n uint64) {
 	atomic.AddUint64(&m.moveBytes, n)
+}
+
+func (m *MultiEventLoop) addReadEv() {
+	atomic.AddInt64(&m.readEv, 1)
+}
+
+func (m *MultiEventLoop) addWriteEv() {
+	atomic.AddInt64(&m.writeEv, 1)
+}
+
+func (m *MultiEventLoop) addPollEv() {
+	atomic.AddInt64(&m.pollEv, 1)
 }

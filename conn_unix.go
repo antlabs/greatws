@@ -135,7 +135,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		c.wbuf = append(c.wbuf, b...)
 		b = c.wbuf
 	}
-	_, err = c.writeOrAddPoll(b)
+	_, err = c.writeOrAddPoll(b, false)
 	if err != nil {
 		return 0, err
 	}
@@ -143,7 +143,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	return curN, err
 }
 
-func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
+func (c *Conn) writeOrAddPoll(b []byte, fromPoll bool) (n int, err error) {
 	total := 0
 	// i 的目的是debug的时候使用
 	for i := 0; len(b) > 0; i++ {
@@ -173,7 +173,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 				return total, nil
 			}
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
-			go c.closeInner(err)
+			c.closeInner(err)
 			return
 		}
 		if n > 0 {
@@ -184,6 +184,11 @@ func (c *Conn) writeOrAddPoll(b []byte) (n int, err error) {
 
 	if len(c.wbuf) == total {
 		c.wbuf = nil
+		if fromPoll {
+			if err := c.multiEventLoop.delWrite(c); err != nil {
+				return 0, err
+			}
+		}
 	}
 	return total, nil
 }
@@ -196,7 +201,7 @@ func (c *Conn) flushOrClose() (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	_, err = c.writeOrAddPoll(c.wbuf)
+	_, err = c.writeOrAddPoll(c.wbuf, true)
 	return err
 }
 

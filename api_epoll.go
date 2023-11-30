@@ -94,6 +94,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 	}
 
 	retVal, err = unix.EpollWait(e.epfd, e.events, msec)
+	e.parent.parent.addPollEv()
 	if err != nil {
 		if errors.Is(err, unix.EINTR) {
 			return 0, nil
@@ -112,6 +113,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 			}
 
 			if ev.Events&(unix.EPOLLIN|unix.EPOLLRDHUP|unix.EPOLLHUP|unix.EPOLLERR) > 0 {
+				e.parent.parent.addReadEv()
 				// 读取数据，这里要发行下websocket的解析变成流式解析
 				_, err = conn.processWebsocketFrame()
 				if err != nil {
@@ -119,6 +121,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				}
 			}
 			if ev.Events&unix.EPOLLOUT > 0 {
+				e.parent.parent.addWriteEv()
 				// 刷新下直接写入失败的数据
 				conn.flushOrClose()
 			}
