@@ -317,7 +317,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 						}
 
 						// 回收这块内存到pool里面
-						PutFragmentBytes(fragmentFramePayload)
+						PutPayloadBytes(fragmentFramePayload)
 						fragmentFramePayload = &tempBuf
 					}
 					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
@@ -330,7 +330,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					}
 
 					c.Callback.OnMessage(c, fragmentFrameHeader.Opcode, *fragmentFramePayload)
-					PutFragmentBytes(fragmentFramePayload)
+					PutPayloadBytes(fragmentFramePayload)
 					return false
 				})
 			}
@@ -384,7 +384,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					PutPayloadBytes(payload)
 					return false
 				}
-				defer PutFragmentBytes(&decodePayload)
+				defer PutPayloadBytes(&decodePayload)
 			}
 
 			if f.Opcode == opcode.Text {

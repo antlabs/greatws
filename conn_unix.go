@@ -61,7 +61,7 @@ type Conn struct {
 	// 存在io-uring相关的控制信息
 	onlyIoUringState
 
-	wbuf             []byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	wbuf             *[]byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
 	mu               sync.Mutex
 	client           bool  // 客户端为true，服务端为false
 	*Config                // 配置
@@ -87,7 +87,6 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 			rbuf: rbuf,
 		},
 		// 初始化不分配内存，只有在需要的时候才分配
-		// wbuf:   make([]byte, 0, 1024),
 		Config: conf,
 		client: client,
 	}
@@ -131,63 +130,83 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	// 如果缓冲区有数据，合并数据
 	curN := len(b)
 
-	if len(c.wbuf) > 0 {
-		c.wbuf = append(c.wbuf, b...)
-		b = c.wbuf
+	needAppend := false
+	if c.wbuf != nil && len(*c.wbuf) > 0 {
+		needAppend = true
+		old := c.wbuf
+		*c.wbuf = append(*c.wbuf, b...)
+		c.getLogger().Debug("write message", "wbuf.size", len(*c.wbuf), "newbuf.size", len(b))
+		if old != c.wbuf {
+			PutPayloadBytes(old)
+		}
+		b = *c.wbuf
 	}
-	_, err = c.writeOrAddPoll(b, false)
+
+	var total int
+	total, err = c.writeOrAddPoll(b)
 	if err != nil {
 		return 0, err
+	}
+
+	if needAppend {
+		c.getLogger().Debug("write sucess", "total", total, "err-is-nil", err == nil, "need-write", len(b))
 	}
 	// 出错
 	return curN, err
 }
 
-func (c *Conn) writeOrAddPoll(b []byte, fromPoll bool) (n int, err error) {
-	total := 0
+func (c *Conn) writeOrAddPoll(b []byte) (total int, err error) {
 	// i 的目的是debug的时候使用
+	var n int
 	for i := 0; len(b) > 0; i++ {
 
 		// 直接写入数据
 		n, err = unix.Write(int(c.fd), b)
+		// 统计调用	unix.Write的次数
 		c.multiEventLoop.addWriteSyscall()
-		// fmt.Printf("1.write %d:%v: %d\n", n, err, len(b))
 
 		if err != nil {
 			// 如果是EAGAIN或EINTR错误，说明是写缓冲区满了，或者被信号中断，将数据写入缓冲区
-			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+
+			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
 				if n < 0 {
 					n = 0
 				}
-				if len(b) > 0 {
-					// TODO sync.Pool
-					newBuf := make([]byte, len(b)-n)
-					copy(newBuf, b[n:])
-
+				if total+n > 0 {
+					newBuf := GetPayloadBytes(len(b) - n)
+					copy(*newBuf, b[n:])
+					if c.wbuf != nil {
+						PutPayloadBytes(c.wbuf)
+					}
 					c.wbuf = newBuf
 				}
 
 				if err = c.multiEventLoop.addWrite(c, 0); err != nil {
-					return 0, err
+					return total, err
 				}
 				return total, nil
 			}
+
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
 			c.closeInner(err)
-			return
+			return total, err
 		}
+
 		if n > 0 {
 			b = b[n:]
 			total += n
 		}
 	}
 
-	if len(c.wbuf) == total {
+	// 如果写缓存区有数据，b 参数就是c.wbuf
+	if c.wbuf != nil && len(*c.wbuf) > 0 && len(*c.wbuf) == total {
+		PutPayloadBytes(c.wbuf)
 		c.wbuf = nil
-		if fromPoll {
-			if err := c.multiEventLoop.delWrite(c); err != nil {
-				return 0, err
-			}
+		if err := c.multiEventLoop.delWrite(c); err != nil {
+			return total, err
 		}
 	}
 	return total, nil
@@ -201,7 +220,14 @@ func (c *Conn) flushOrClose() (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	_, err = c.writeOrAddPoll(c.wbuf, true)
+	if c.wbuf != nil {
+		_, err = c.writeOrAddPoll(*c.wbuf)
+	} else {
+		c.getLogger().Debug("wbuf is nil", "fd", c.getFd())
+		if err := c.multiEventLoop.delWrite(c); err != nil {
+			return err
+		}
+	}
 	return err
 }
 

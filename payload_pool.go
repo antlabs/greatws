@@ -4,12 +4,23 @@ import (
 	"sync"
 )
 
+// 多级缓存池，只有当缓存池的大小不够时，才会使用大缓存池
+
+// 多级缓存池，主要是为了减少内存占用
+// greatws 主要有三部分内存占用:
+//  1. read buffer(没有使用本缓存池)
+//     1.1 直接调用unix.Read时使用(没有使用本缓存池)
+//     1.2 websocket payload数据包(使用)
+//  2. write buffer
+//     2.1  直接调用unix.Write时使用(没有使用本缓存池)
+//     2.2  unix.Write失败调用，缓存未成功写入数据, c.wbuf(使用)
+//  3. fragment buffer websocket协议里面的分段数据包(使用)
 func init() {
 	for i := 1; i <= maxIndex; i++ {
 		j := i
 		pools = append(pools, sync.Pool{
 			New: func() interface{} {
-				buf := make([]byte, j*page)
+				buf := make([]byte, j*pageSize)
 				return &buf
 			},
 		})
@@ -17,8 +28,8 @@ func init() {
 }
 
 const (
-	page     = 1024
-	maxIndex = 64
+	pageSize = 1024
+	maxIndex = 128
 )
 
 var (
@@ -26,9 +37,18 @@ var (
 	emptyBytes = make([]byte, 0)
 )
 
-func selectIndex(n int) int {
-	index := n / page
+func getSelectIndex(n int) int {
+	n--
+	if n < pageSize {
+		return 0
+	}
+
+	index := n / pageSize
 	return index
+}
+
+func putSelectIndex(n int) int {
+	return getSelectIndex(n)
 }
 
 func GetPayloadBytes(n int) (rv *[]byte) {
@@ -36,14 +56,22 @@ func GetPayloadBytes(n int) (rv *[]byte) {
 		return &emptyBytes
 	}
 
-	index := selectIndex(n - 1)
+	index := getSelectIndex(n)
 	if index >= len(pools) {
-		rv := make([]byte, n)
-		return &rv
+		return getBigPayload(n)
 	}
 
-	rv2 := *pools[index].Get().(*[]byte)
-	rv2 = rv2[:cap(rv2)]
+	for i := 0; i < 3; i++ {
+
+		rv2 := pools[index].Get().(*[]byte)
+		if cap(*rv2) < n {
+			continue
+		}
+		*rv2 = (*rv2)[:n]
+		return rv2
+	}
+
+	rv2 := make([]byte, (index+1)*pageSize)
 	return &rv2
 }
 
@@ -52,18 +80,12 @@ func PutPayloadBytes(bytes *[]byte) {
 		return
 	}
 
-	if len(*bytes)%page != 0 {
-		if cap(*bytes)%page != 0 {
-			PutFragmentBytes(bytes)
-			return
-		}
+	*bytes = (*bytes)[:cap(*bytes)]
 
-		*bytes = (*bytes)[:cap(*bytes)]
-	}
-
-	newLen := cap(*bytes) - 1
-	index := selectIndex(newLen)
+	newLen := cap(*bytes)
+	index := putSelectIndex(newLen)
 	if index >= len(pools) {
+		putBigPayload(bytes)
 		return
 	}
 	pools[index].Put(bytes)
