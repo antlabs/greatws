@@ -534,7 +534,7 @@ func (c *Conn) isClosed() bool {
 }
 
 func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
-	if atomic.LoadInt32(&c.closed) == 1 {
+	if c.isClosed() {
 		return ErrClosed
 	}
 

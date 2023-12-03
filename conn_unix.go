@@ -55,6 +55,25 @@ type onlyIoUringState struct {
 	m    sync.Map
 }
 
+type writeState int32
+
+const (
+	writeDefault writeState = 1 << iota
+	writeEagain
+	writeSuccess
+)
+
+func (s writeState) String() string {
+	switch s {
+	case writeDefault:
+		return "default"
+	case writeEagain:
+		return "eagain"
+	default:
+		return "invalid"
+	}
+}
+
 type Conn struct {
 	conn
 
@@ -99,7 +118,8 @@ func duplicateSocket(socketFD int) (int, error) {
 }
 
 func (c *Conn) closeInner(err error) {
-	c.getLogger().Debug("close conn", slog.Int64("fd", atomic.LoadInt64(&c.fd)))
+	fd := c.getFd()
+	c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
 	c.multiEventLoop.del(c)
 	atomic.StoreInt64(&c.fd, -1)
 	c.closeOnce.Do(func() {
@@ -110,7 +130,7 @@ func (c *Conn) closeInner(err error) {
 }
 
 func (c *Conn) closeAndWaitOnMessage(wait bool, err error) {
-	if atomic.LoadInt32(&c.closed) == 1 {
+	if c.isClosed() {
 		return
 	}
 	if wait {
@@ -126,7 +146,14 @@ func (c *Conn) Close() {
 	c.closeAndWaitOnMessage(false, nil)
 }
 
+func (c *Conn) getPtr() int {
+	return int(uintptr(unsafe.Pointer(c)))
+}
+
 func (c *Conn) Write(b []byte) (n int, err error) {
+	if c.isClosed() {
+		return 0, ErrClosed
+	}
 	// 如果缓冲区有数据，合并数据
 	curN := len(b)
 
@@ -135,33 +162,40 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		needAppend = true
 		old := c.wbuf
 		*c.wbuf = append(*c.wbuf, b...)
-		c.getLogger().Debug("write message", "wbuf.size", len(*c.wbuf), "newbuf.size", len(b))
+		c.getLogger().Debug("write message", "wbuf_size", len(*c.wbuf), "newbuf.size", len(b))
 		if old != c.wbuf {
 			PutPayloadBytes(old)
 		}
 		b = *c.wbuf
 	}
 
-	var total int
-	total, err = c.writeOrAddPoll(b)
+	total, ws, err := c.writeOrAddPoll(b)
 	if err != nil {
 		return 0, err
 	}
 
 	if needAppend {
-		c.getLogger().Debug("write sucess", "total", total, "err-is-nil", err == nil, "need-write", len(b))
+		c.getLogger().Debug("write after",
+			"total", total,
+			"err-is-nil", err == nil,
+			"need-write", len(b),
+			"addr", c.getPtr(),
+			"closed", c.isClosed(),
+			"fd", c.getFd(),
+			"write_state", ws.String())
 	}
 	// 出错
 	return curN, err
 }
 
-func (c *Conn) writeOrAddPoll(b []byte) (total int, err error) {
+func (c *Conn) writeOrAddPoll(b []byte) (total int, ws writeState, err error) {
 	// i 的目的是debug的时候使用
 	var n int
+	fd := c.getFd()
 	for i := 0; len(b) > 0; i++ {
 
 		// 直接写入数据
-		n, err = unix.Write(int(c.fd), b)
+		n, err = unix.Write(int(fd), b)
 		// 统计调用	unix.Write的次数
 		c.multiEventLoop.addWriteSyscall()
 
@@ -175,6 +209,8 @@ func (c *Conn) writeOrAddPoll(b []byte) (total int, err error) {
 				if n < 0 {
 					n = 0
 				}
+
+				// 记录写入的数据，如果有写入，分配一个新的缓冲区
 				if total+n > 0 {
 					newBuf := GetPayloadBytes(len(b) - n)
 					copy(*newBuf, b[n:])
@@ -185,14 +221,14 @@ func (c *Conn) writeOrAddPoll(b []byte) (total int, err error) {
 				}
 
 				if err = c.multiEventLoop.addWrite(c, 0); err != nil {
-					return total, err
+					return total, writeDefault, err
 				}
-				return total, nil
+				return total, writeEagain, nil
 			}
 
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
 			c.closeInner(err)
-			return total, err
+			return total, writeDefault, err
 		}
 
 		if n > 0 {
@@ -206,10 +242,10 @@ func (c *Conn) writeOrAddPoll(b []byte) (total int, err error) {
 		PutPayloadBytes(c.wbuf)
 		c.wbuf = nil
 		if err := c.multiEventLoop.delWrite(c); err != nil {
-			return total, err
+			return total, writeDefault, err
 		}
 	}
-	return total, nil
+	return total, writeSuccess, nil
 }
 
 // 该函数有3个动作
@@ -220,8 +256,22 @@ func (c *Conn) flushOrClose() (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.isClosed() {
+		return ErrClosed
+	}
+
 	if c.wbuf != nil {
-		_, err = c.writeOrAddPoll(*c.wbuf)
+		b := *c.wbuf
+		total, ws, err := c.writeOrAddPoll(b)
+
+		c.getLogger().Debug("flush or close after",
+			"total", total,
+			"err-is-nil", err == nil,
+			"need-write", len(b),
+			"addr", c.getPtr(),
+			"closed", c.isClosed(),
+			"fd", c.getFd(),
+			"write_state", ws.String())
 	} else {
 		c.getLogger().Debug("wbuf is nil", "fd", c.getFd())
 		if err := c.multiEventLoop.delWrite(c); err != nil {

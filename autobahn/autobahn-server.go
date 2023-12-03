@@ -37,6 +37,7 @@ func (e *echoHandler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) 
 }
 
 func (e *echoHandler) OnClose(c *greatws.Conn, err error) {
+	defer c.Close()
 	errMsg := ""
 	if err != nil {
 		errMsg = err.Error()
