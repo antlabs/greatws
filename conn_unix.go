@@ -156,33 +156,25 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	// 如果缓冲区有数据，合并数据
 	curN := len(b)
 
-	needAppend := false
 	if c.wbuf != nil && len(*c.wbuf) > 0 {
-		needAppend = true
-		old := c.wbuf
-		*c.wbuf = append(*c.wbuf, b...)
-		c.getLogger().Debug("write message", "wbuf_size", len(*c.wbuf), "newbuf.size", len(b))
-		if old != c.wbuf {
-			PutPayloadBytes(old)
+		c.flushOrCloseInner(false)
+		if c.wbuf != nil && len(*c.wbuf) > 0 {
+			old := c.wbuf
+			*c.wbuf = append(*c.wbuf, b...)
+			c.getLogger().Debug("write message", "wbuf_size", len(*c.wbuf), "newbuf.size", len(b))
+			if old != c.wbuf {
+				PutPayloadBytes(old)
+			}
+			b = *c.wbuf
+			return curN, nil
 		}
-		b = *c.wbuf
 	}
 
-	total, ws, err := c.writeOrAddPoll(b)
+	_, _, err = c.writeOrAddPoll(b)
 	if err != nil {
 		return 0, err
 	}
 
-	if needAppend {
-		c.getLogger().Debug("write after",
-			"total", total,
-			"err-is-nil", err == nil,
-			"need-write", len(b),
-			"addr", c.getPtr(),
-			"closed", c.isClosed(),
-			"fd", c.getFd(),
-			"write_state", ws.String())
-	}
 	// 出错
 	return curN, err
 }
