@@ -251,9 +251,11 @@ func (c *Conn) writeOrAddPoll(b []byte) (total int, ws writeState, err error) {
 // 写成功
 // EAGAIN，等待可写再写
 // 报错，直接关闭这个fd
-func (c *Conn) flushOrClose() (err error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
+	if needLock {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+	}
 
 	if c.isClosed() {
 		return ErrClosed
@@ -278,6 +280,10 @@ func (c *Conn) flushOrClose() (err error) {
 		}
 	}
 	return err
+}
+
+func (c *Conn) flushOrClose() (err error) {
+	return c.flushOrCloseInner(true)
 }
 
 // kqueu/epoll模式下，读取数据
