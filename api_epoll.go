@@ -73,7 +73,7 @@ func (e *epollState) addRead(c *Conn) error {
 }
 
 // 新加写事件
-func (e *epollState) addWrite(c *Conn, writeSeq uint16) error {
+func (e *epollState) addWrite(c *Conn) error {
 	if e.et {
 		return nil
 	}

@@ -32,7 +32,7 @@ type linuxApi interface {
 	apiPoll(tv time.Duration) (retVal int, err error)
 	apiName() string
 	addRead(c *Conn) error
-	addWrite(c *Conn, writeSeq uint16) error
+	addWrite(c *Conn) error
 	delWrite(c *Conn) error
 }
 
