@@ -153,9 +153,12 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		}
 	}
 
-	_, _, err = c.writeOrAddPoll(b)
+	total, _, err := c.writeOrAddPoll(b)
 	if err != nil {
 		return 0, err
+	}
+	if total != len(b) {
+		// TODO
 	}
 
 	// 出错
@@ -211,14 +214,6 @@ func (c *Conn) writeOrAddPoll(b []byte) (total int, ws writeState, err error) {
 		}
 	}
 
-	// 如果写缓存区有数据，b 参数就是c.wbuf
-	if c.wbuf != nil && len(*c.wbuf) > 0 && len(*c.wbuf) == total {
-		PutPayloadBytes(c.wbuf)
-		c.wbuf = nil
-		if err := c.multiEventLoop.delWrite(c); err != nil {
-			return total, writeDefault, err
-		}
-	}
 	return total, writeSuccess, nil
 }
 
@@ -237,13 +232,21 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 	}
 
 	if c.wbuf != nil {
-		b := *c.wbuf
-		total, ws, err := c.writeOrAddPoll(b)
+		old := c.wbuf
+		total, ws, err := c.writeOrAddPoll(*old)
 
+		if total == len(*old) {
+
+			PutPayloadBytes(old)
+			c.wbuf = nil
+			if err := c.multiEventLoop.delWrite(c); err != nil {
+				return err
+			}
+		}
 		c.getLogger().Debug("flush or close after",
 			"total", total,
 			"err-is-nil", err == nil,
-			"need-write", len(b),
+			"need-write", len(*old),
 			"addr", c.getPtr(),
 			"closed", c.isClosed(),
 			"fd", c.getFd(),
