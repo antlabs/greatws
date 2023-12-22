@@ -140,7 +140,10 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	curN := len(b)
 
 	if c.wbuf != nil && len(*c.wbuf) > 0 {
-		c.flushOrCloseInner(false)
+		if err = c.flushOrCloseInner(false); err != nil {
+			return 0, err
+		}
+
 		if c.wbuf != nil && len(*c.wbuf) > 0 {
 			old := c.wbuf
 			*c.wbuf = append(*c.wbuf, b...)
@@ -153,19 +156,32 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		}
 	}
 
-	total, _, err := c.writeOrAddPoll(b)
+	total, ws, err := c.maybeWriteAll(b)
 	if err != nil {
 		return 0, err
 	}
+	old := b
 	if total != len(b) {
-		// TODO
+		// 记录写入的数据，如果有写入，分配一个新的缓冲区
+		if total > 0 && ws == writeEagain {
+			newBuf := GetPayloadBytes(len(old) - total)
+			copy(*newBuf, (old)[total:])
+			if c.wbuf != nil {
+				PutPayloadBytes(c.wbuf)
+			}
+			c.wbuf = newBuf
+		}
+
+		if err = c.multiEventLoop.addWrite(c); err != nil {
+			return total, err
+		}
 	}
 
 	// 出错
 	return curN, err
 }
 
-func (c *Conn) writeOrAddPoll(b []byte) (total int, ws writeState, err error) {
+func (c *Conn) maybeWriteAll(b []byte) (total int, ws writeState, err error) {
 	// i 的目的是debug的时候使用
 	var n int
 	fd := c.getFd()
@@ -187,20 +203,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (total int, ws writeState, err error) {
 					n = 0
 				}
 
-				// 记录写入的数据，如果有写入，分配一个新的缓冲区
-				if total+n > 0 {
-					newBuf := GetPayloadBytes(len(b) - n)
-					copy(*newBuf, b[n:])
-					if c.wbuf != nil {
-						PutPayloadBytes(c.wbuf)
-					}
-					c.wbuf = newBuf
-				}
-
-				if err = c.multiEventLoop.addWrite(c); err != nil {
-					return total, writeDefault, err
-				}
-				return total, writeEagain, nil
+				return total + n, writeEagain, nil
 			}
 
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
@@ -233,13 +236,28 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 
 	if c.wbuf != nil {
 		old := c.wbuf
-		total, ws, err := c.writeOrAddPoll(*old)
+		total, ws, err := c.maybeWriteAll(*old)
 
 		if total == len(*old) {
 
 			PutPayloadBytes(old)
 			c.wbuf = nil
 			if err := c.multiEventLoop.delWrite(c); err != nil {
+				return err
+			}
+		} else {
+
+			// 记录写入的数据，如果有写入，分配一个新的缓冲区
+			if total > 0 && ws == writeEagain {
+				newBuf := GetPayloadBytes(len(*old) - total)
+				copy(*newBuf, (*old)[total:])
+				if c.wbuf != nil {
+					PutPayloadBytes(c.wbuf)
+				}
+				c.wbuf = newBuf
+			}
+
+			if err = c.multiEventLoop.addWrite(c); err != nil {
 				return err
 			}
 		}
