@@ -81,7 +81,7 @@ func (e *iouringState) addRead(c *Conn) error {
 	return nil
 }
 
-func (e *iouringState) addWrite(c *Conn, writeSeq uint16) error {
+func (e *iouringState) addWrite(c *Conn) error {
 	return nil
 }
 

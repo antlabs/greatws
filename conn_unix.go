@@ -197,7 +197,7 @@ func (c *Conn) writeOrAddPoll(b []byte) (total int, ws writeState, err error) {
 					c.wbuf = newBuf
 				}
 
-				if err = c.multiEventLoop.addWrite(c, 0); err != nil {
+				if err = c.multiEventLoop.addWrite(c); err != nil {
 					return total, writeDefault, err
 				}
 				return total, writeEagain, nil

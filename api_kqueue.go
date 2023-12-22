@@ -79,7 +79,7 @@ func (e *EventLoop) delWrite(c *Conn) (err error) {
 }
 
 // 新加写事件
-func (e *EventLoop) addWrite(c *Conn, writeSeq uint16) error {
+func (e *EventLoop) addWrite(c *Conn) error {
 	e.mu.Lock()
 	fd := c.getFd()
 	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_ADD | unix.EV_CLEAR})
