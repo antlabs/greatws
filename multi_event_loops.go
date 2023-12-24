@@ -12,6 +12,7 @@ type MultiEventLoop struct {
 	maxEventNum int
 	loops       []*EventLoop
 	t           task
+	t2          taskIo
 	flag        evFlag // 是否使用io_uring
 	level       slog.Level
 	stat        // 统计信息

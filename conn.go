@@ -75,7 +75,11 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
-func (c *Conn) getTask() *task {
+func (c *Conn) getTask() Tasker {
+	if c.callbackInEventLoop {
+		return &c.multiEventLoop.t2
+	}
+
 	return &c.multiEventLoop.t
 }
 
@@ -304,15 +308,12 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				c.fragmentFramePayload = nil
 
 				// 进入业务协程执行
-				c.waitOnMessageRun.Add(1)
 				c.getTask().addTask(func() (exit bool) {
-					defer c.waitOnMessageRun.Done()
-
 					if fragmentFrameHeader.GetRsv1() && decompression {
 						tempBuf, err := decode(*fragmentFramePayload)
 						if err != nil {
 							// return err
-							c.closeAndWaitOnMessage(false, err)
+							c.closeWithLock(err)
 							return false
 						}
 
@@ -325,7 +326,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					if fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(*fragmentFramePayload) {
 						c.Callback.OnClose(c, ErrTextNotUTF8)
 						// return ErrTextNotUTF8
-						c.closeAndWaitOnMessage(false, nil)
+						c.closeWithLock(nil)
 						return false
 					}
 
@@ -367,9 +368,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		// payloadPtr.Store(f.Payload)
 
 		// 进入业务协程执行
-		c.waitOnMessageRun.Add(1)
 		c.getTask().addTask(func() bool {
-			defer c.waitOnMessageRun.Done()
 			// payload := payloadPtr.Load()
 
 			if needMask {
@@ -380,7 +379,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				// 不分段的解压缩
 				decodePayload, err = decode(*payload)
 				if err != nil {
-					c.closeAndWaitOnMessage(false, err)
+					c.closeWithLock(err)
 					PutPayloadBytes(payload)
 					return false
 				}
@@ -389,7 +388,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 
 			if f.Opcode == opcode.Text {
 				if !c.utf8Check(decodePayload) {
-					c.closeAndWaitOnMessage(false, nil)
+					c.closeWithLock(nil)
 					c.Callback.OnClose(c, ErrTextNotUTF8)
 					return false
 				}
@@ -456,10 +455,8 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					return err
 				}
 				// 进入业务协程执行
-				c.waitOnMessageRun.Add(1)
 				payload := f.Payload
 				c.getTask().addTask(func() bool {
-					defer c.waitOnMessageRun.Done()
 					c.Callback.OnMessage(c, f.Opcode, *payload)
 					PutPayloadBytes(payload)
 					return false
@@ -473,9 +470,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		}
 
 		// 进入业务协程执行
-		c.waitOnMessageRun.Add(1)
 		c.getTask().addTask(func() bool {
-			defer c.waitOnMessageRun.Done()
 			c.Callback.OnMessage(c, f.Opcode, nil)
 			return false
 		})
@@ -511,7 +506,7 @@ func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 		// fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
 		if success {
 			if err := c.processCallback(f); err != nil {
-				go c.closeAndWaitOnMessage(false, err)
+				c.closeWithLock(err)
 				return false, err
 			}
 			c.curState = frameStateHeaderStart

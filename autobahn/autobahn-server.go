@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	_ "embed"
+	"flag"
 	"fmt"
 	"log"
 	"log/slog"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/antlabs/greatws"
 )
+
+var runInEventLoop = flag.Bool("run-in-event-loop", false, "run in event loop")
 
 //go:embed public.crt
 var certPEMBlock []byte
@@ -50,15 +53,21 @@ type handler struct {
 }
 
 func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
-	c, err := greatws.Upgrade(w, r,
+	opts := []greatws.ServerOption{
 		greatws.WithServerReplyPing(),
 		greatws.WithServerDecompression(),
 		greatws.WithServerIgnorePong(),
 		greatws.WithServerCallback(&echoHandler{}),
 		greatws.WithServerEnableUTF8Check(),
-		greatws.WithServerReadTimeout(5*time.Second),
+		greatws.WithServerReadTimeout(5 * time.Second),
 		greatws.WithServerMultiEventLoop(h.m),
-	)
+	}
+
+	if *runInEventLoop {
+		opts = append(opts, greatws.WithServerCallbackInEventLoop())
+	}
+
+	c, err := greatws.Upgrade(w, r, opts...)
 	if err != nil {
 		slog.Error("Upgrade fail:", "err", err.Error())
 	}
@@ -66,6 +75,8 @@ func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	flag.Parse()
+
 	var h handler
 
 	// debug io-uring
