@@ -280,6 +280,20 @@ func WithClientOnCloseFunc(onClose func(c *Conn, err error)) ClientOption {
 	}
 }
 
+// 18.1 配置服务端Callback相关方法在io event loop中执行
+func WithServerCallbackInEventLoop() ServerOption {
+	return func(o *ConnOption) {
+		o.callbackInEventLoop = true
+	}
+}
+
+// 18.2 配置服务端Callback相关方法在io event loop中执行
+func WithClientCallbackInEventLoop() ClientOption {
+	return func(o *DialOption) {
+		o.callbackInEventLoop = true
+	}
+}
+
 // last 配置event
 func WithServerMultiEventLoop(m *MultiEventLoop) ServerOption {
 	return func(o *ConnOption) {

@@ -37,6 +37,7 @@ type Config struct {
 	maxDelayWriteDuration    time.Duration // 最大延迟时间, 默认值是10ms
 	subProtocols             []string      // 设置支持的子协议
 	multiEventLoop           *MultiEventLoop
+	callbackInEventLoop      bool // 在event loop中运行websocket OnOpen, OnMessage, OnClose 回调函数
 }
 
 func (c *Config) useIoUring() bool {

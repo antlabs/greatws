@@ -75,7 +75,11 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
-func (c *Conn) getTask() *task {
+func (c *Conn) getTask() Tasker {
+	if c.callbackInEventLoop {
+		return &c.multiEventLoop.t2
+	}
+
 	return &c.multiEventLoop.t
 }
 
