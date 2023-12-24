@@ -131,7 +131,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 
 			// 如果是关闭事件，直接关闭
 			if ev.Events&unix.EPOLLRDHUP > 0 {
-				go conn.closeAndWaitOnMessage(true, io.EOF)
+				conn.closeWithLock(io.EOF)
 				continue
 			}
 
@@ -141,7 +141,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				// 读取数据，这里要发行下websocket的解析变成流式解析
 				_, err = conn.processWebsocketFrame()
 				if err != nil {
-					go conn.closeAndWaitOnMessage(true, err)
+					conn.closeWithLock(err)
 				}
 			}
 			if ev.Events&unix.EPOLLOUT > 0 {
@@ -150,7 +150,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				conn.flushOrClose()
 			}
 			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
-				go conn.closeAndWaitOnMessage(false, io.EOF)
+				conn.closeWithLock(io.EOF)
 			}
 		}
 

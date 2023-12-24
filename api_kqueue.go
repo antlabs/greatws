@@ -132,13 +132,13 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 
 			if ev.Filter == unix.EVFILT_READ {
 				if ev.Flags&unix.EV_EOF != 0 {
-					go conn.closeAndWaitOnMessage(false, io.EOF)
+					conn.closeWithLock(io.EOF)
 					continue
 				}
 				// 读取数据，这里要发行下websocket的解析变成流式解析
 				_, err = conn.processWebsocketFrame()
 				if err != nil {
-					go conn.closeAndWaitOnMessage(true, err)
+					conn.closeWithLock(err)
 					continue
 				}
 

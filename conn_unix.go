@@ -63,14 +63,13 @@ type Conn struct {
 	// 存在io-uring相关的控制信息
 	// onlyIoUringState
 
-	wbuf             *[]byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	mu               sync.Mutex
-	client           bool  // 客户端为true，服务端为false
-	*Config                // 配置
-	closed           int32 // 是否关闭
-	waitOnMessageRun sync.WaitGroup
-	closeOnce        sync.Once
-	parent           *EventLoop
+	wbuf      *[]byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	mu        sync.Mutex
+	client    bool  // 客户端为true，服务端为false
+	*Config         // 配置
+	closed    int32 // 是否关闭
+	closeOnce sync.Once
+	parent    *EventLoop
 }
 
 func (c *Conn) setParent(el *EventLoop) {
@@ -111,12 +110,9 @@ func (c *Conn) closeInner(err error) {
 	atomic.StoreInt32(&c.closed, 1)
 }
 
-func (c *Conn) closeAndWaitOnMessage(wait bool, err error) {
+func (c *Conn) closeWithLock(err error) {
 	if c.isClosed() {
 		return
-	}
-	if wait {
-		c.waitOnMessageRun.Wait()
 	}
 
 	c.mu.Lock()
@@ -125,7 +121,7 @@ func (c *Conn) closeAndWaitOnMessage(wait bool, err error) {
 }
 
 func (c *Conn) Close() {
-	c.closeAndWaitOnMessage(false, nil)
+	c.closeWithLock(nil)
 }
 
 func (c *Conn) getPtr() int {
@@ -312,10 +308,8 @@ func (c *Conn) processWebsocketFrame() (n int, err error) {
 
 			// 读到eof，直接关闭
 			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
-				go func() {
-					c.closeAndWaitOnMessage(true, io.EOF)
-					c.OnClose(c, io.EOF)
-				}()
+				c.closeWithLock(io.EOF)
+				c.OnClose(c, io.EOF)
 				return
 			}
 
