@@ -1,4 +1,4 @@
-// Copyright 2021-2023 antlabs. All rights reserved.
+// Copyright 2021-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,8 +14,21 @@
 package greatws
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
+)
+
+// 运行task的策略
+// 1. 随机
+// 2. 取余映射
+type taskStrategy int
+
+const (
+	// 随机
+	taskStrategyRandom taskStrategy = iota
+	// 取余映射
+	taskStrategyMod
 )
 
 var exitFunc = func() bool { return true }
@@ -28,6 +41,9 @@ type task struct {
 	max       int   // 最大协程数
 	curGo     int64 // 当前运行协程数
 	curTask   int64 // 当前运行任务数
+
+	allMu         sync.Mutex
+	allBusinessGo []*businessGo
 }
 
 func (t *task) init() {
@@ -47,7 +63,17 @@ func (t *task) getCurTask() int64 {
 // 消费者循环
 func (t *task) consumer() {
 	defer atomic.AddInt64(&t.curGo, -1)
-	for f := range t.c {
+	currBusinessGo := newBusinessGo()
+	t.allMu.Lock()
+	t.allBusinessGo = append(t.allBusinessGo, currBusinessGo)
+	t.allMu.Unlock()
+
+	var f func() bool
+	for {
+		select {
+		case f = <-t.c:
+		case f = <-currBusinessGo.taskChan:
+		}
 		atomic.AddInt64(&t.curTask, 1)
 		if b := f(); b {
 			atomic.AddInt64(&t.curTask, -1)
@@ -87,7 +113,20 @@ func (t *task) highLoad() bool {
 
 // 新增任务, 如果任务队列满了, 新增go程， 这可能会导致协程数超过最大值, 为了防止死锁，还是需要新增业务go程
 // 在io线程里面会判断go程池是否高负载，如果是高负载，会取消read的任务, 放到wbuf里面, 延后再处理
-func (t *task) addTask(f func() bool) {
+func (t *task) addTask(fd int, ts taskStrategy, f func() bool) {
+	if fd == -1 {
+		return
+	}
+
+	if ts == taskStrategyMod {
+		t.allMu.Lock()
+		size := len(t.allBusinessGo)
+		currChan := t.allBusinessGo[fd%size]
+		t.allMu.Unlock()
+		currChan.taskChan <- f
+		return
+	}
+
 	t.c <- f
 }
 

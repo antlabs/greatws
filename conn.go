@@ -1,4 +1,4 @@
-// Copyright 2021-2023 antlabs. All rights reserved.
+// Copyright 2023-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -308,7 +308,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				c.fragmentFramePayload = nil
 
 				// 进入业务协程执行
-				c.getTask().addTask(func() (exit bool) {
+				c.getTask().addTask(c.getFd(), taskStrategyMod, func() (exit bool) {
 					if fragmentFrameHeader.GetRsv1() && decompression {
 						tempBuf, err := decode(*fragmentFramePayload)
 						if err != nil {
@@ -368,7 +368,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		// payloadPtr.Store(f.Payload)
 
 		// 进入业务协程执行
-		c.getTask().addTask(func() bool {
+		c.getTask().addTask(c.getFd(), taskStrategyMod, func() bool {
 			// payload := payloadPtr.Load()
 
 			if needMask {
@@ -456,7 +456,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				}
 				// 进入业务协程执行
 				payload := f.Payload
-				c.getTask().addTask(func() bool {
+				c.getTask().addTask(c.getFd(), taskStrategyMod, func() bool {
 					c.Callback.OnMessage(c, f.Opcode, *payload)
 					PutPayloadBytes(payload)
 					return false
@@ -470,7 +470,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		}
 
 		// 进入业务协程执行
-		c.getTask().addTask(func() bool {
+		c.getTask().addTask(c.getFd(), taskStrategyMod, func() bool {
 			c.Callback.OnMessage(c, f.Opcode, nil)
 			return false
 		})
