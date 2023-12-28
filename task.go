@@ -122,9 +122,13 @@ func (t *task) addTask(fd int, ts taskStrategy, f func() bool) {
 		t.allMu.Lock()
 		size := len(t.allBusinessGo)
 		currChan := t.allBusinessGo[fd%size]
+		// 如果任务未满，直接放入任务队列
+		if len(currChan.taskChan) < cap(currChan.taskChan) {
+			t.allMu.Unlock()
+			currChan.taskChan <- f
+			return
+		}
 		t.allMu.Unlock()
-		currChan.taskChan <- f
-		return
 	}
 
 	t.c <- f

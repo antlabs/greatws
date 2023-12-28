@@ -38,6 +38,7 @@ type Config struct {
 	subProtocols             []string      // 设置支持的子协议
 	multiEventLoop           *MultiEventLoop
 	callbackInEventLoop      bool // 在event loop中运行websocket OnOpen, OnMessage, OnClose 回调函数
+	runInGoStrategy          taskStrategy
 }
 
 func (c *Config) useIoUring() bool {
@@ -55,6 +56,7 @@ func (c *Config) defaultSetting() {
 	c.windowsMultipleTimesPayloadSize = 1.0
 	c.delayWriteInitBufferSize = 8 * 1024
 	c.maxDelayWriteDuration = 10 * time.Millisecond
+	c.runInGoStrategy = taskStrategyMod
 	c.tcpNoDelay = true
 	// c.parseMode = ParseModeWindows
 	// 对于text消息，默认不检查text是utf8字符
