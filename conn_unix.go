@@ -86,14 +86,6 @@ type Conn struct {
 	parent    *EventLoop
 }
 
-func (c *Conn) setParent(el *EventLoop) {
-	atomic.StorePointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent)), unsafe.Pointer(el))
-}
-
-func (c *Conn) getParent() *EventLoop {
-	return (*EventLoop)(atomic.LoadPointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent))))
-}
-
 func newConn(fd int64, client bool, conf *Config) *Conn {
 	rbuf := bytespool.GetBytes(conf.initPayloadSize())
 	c := &Conn{
@@ -104,6 +96,7 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 		// 初始化不分配内存，只有在需要的时候才分配
 		Config: conf,
 		client: client,
+		parent: conf.multiEventLoop.getEventLoop(int(fd)),
 	}
 
 	return c

@@ -14,6 +14,7 @@
 package greatws
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,27 +30,53 @@ const (
 	taskStrategyRandom taskStrategy = iota
 	// 取余映射
 	taskStrategyMod
+	// 流式映射
+	taskStrategyStream
 )
+
+var ErrTaskQueueFull = errors.New("task queue full")
 
 var exitFunc = func() bool { return true }
 
+type taskConfig struct {
+	initCount int // 初始化的协程数
+	min       int // 最小协程数
+	max       int // 最大协程数
+}
+
 type task struct {
-	c chan func() bool
+	c       chan func() bool
+	windows windows // 滑动窗口计数，用于判断是否需要新增go程
+	taskConfig
+	curGo   int64 // 当前运行协程数
+	curTask int64 // 当前运行任务数
 
-	initCount int   // 初始化的协程数
-	min       int   // 最小协程数
-	max       int   // 最大协程数
-	curGo     int64 // 当前运行协程数
-	curTask   int64 // 当前运行任务数
-
-	allMu         sync.Mutex
+	allMu         sync.Locker
 	allBusinessGo []*businessGo
 }
 
-func (t *task) init() {
+// 无锁
+type noMutex struct{}
+
+func (noMutex) Lock()   {}
+func (noMutex) Unlock() {}
+
+// 初始化
+func (t *task) initInner() {
 	t.c = make(chan func() bool)
+	t.windows.init()
 	go t.manageGo()
 	go t.runConsumerLoop()
+}
+
+func (t *task) init() {
+	t.initInner()
+	t.allMu = &sync.Mutex{}
+}
+
+func (t *task) initWithNoMutex() {
+	t.initInner()
+	t.allMu = noMutex{}
 }
 
 func (t *task) getCurGo() int64 {
@@ -93,12 +120,12 @@ func (t *task) highLoad() bool {
 			return true
 		}
 
-		// 这里的判断条件不准确，因为curGO是表示go程多少，不能表示任务多少, 比如1w上go程，一个任务也不跑
+		// 这里的判断条件不准确，因为curGo是表示go程多少，不能表示任务多少, 比如1w上go程，一个任务也不跑
 		// if curGo := atomic.LoadInt64(&t.curGo); curGo > int64(t.max) {
 		// 	return true
 		// }
 
-		if !t.needResize() {
+		if need, _ := t.needResize(); !need {
 			return false
 		}
 
@@ -113,9 +140,9 @@ func (t *task) highLoad() bool {
 
 // 新增任务, 如果任务队列满了, 新增go程， 这可能会导致协程数超过最大值, 为了防止死锁，还是需要新增业务go程
 // 在io线程里面会判断go程池是否高负载，如果是高负载，会取消read的任务, 放到wbuf里面, 延后再处理
-func (t *task) addTask(fd int, ts taskStrategy, f func() bool) {
+func (t *task) addTask(fd int, ts taskStrategy, f func() bool) error {
 	if fd == -1 {
-		return
+		return nil
 	}
 
 	if ts == taskStrategyMod {
@@ -126,24 +153,17 @@ func (t *task) addTask(fd int, ts taskStrategy, f func() bool) {
 		if len(currChan.taskChan) < cap(currChan.taskChan) {
 			t.allMu.Unlock()
 			currChan.taskChan <- f
-			return
+			return nil
 		}
 		t.allMu.Unlock()
 	}
 
+	if len(t.c) >= cap(t.c) {
+		return ErrTaskQueueFull
+	}
 	t.c <- f
+	return nil
 }
-
-// func (t *task) addTask(f func() bool) {
-// 	for {
-// 		select {
-// 		case t.c <- f:
-// 			return
-// 		case <-time.After(time.Millisecond * 250):
-// 			t.addGo()
-// 		}
-// 	}
-// }
 
 // 新增go程
 func (t *task) addGo() {
@@ -167,30 +187,46 @@ func (t *task) cancelGo() {
 	}
 }
 
-func (t *task) needResize() bool {
+func (t *task) needResize() (bool, int) {
 	if int(t.curGo) > t.max {
-		return false
+		return false, 0
 	}
 
 	curTask := atomic.LoadInt64(&t.curTask)
 	curGo := atomic.LoadInt64(&t.curGo)
-	return (float64(curTask) / float64(curGo)) > 0.8
+	need := (float64(curTask)/float64(curGo)) > 0.8 && curGo > int64(t.windows.avg())
+
+	if need {
+		avg := t.windows.avg()
+		if avg*2 < 8 {
+			return true, 16
+		}
+
+		if avg*2 < 1024 {
+			return true, int(t.windows.avg() * 2)
+		}
+
+		return true, int(float64(t.curGo) * 1.25)
+	}
+
+	return false, 0
 }
 
 // 管理go程
 func (t *task) manageGo() {
-	for {
 
-		time.Sleep(time.Second * 5)
+	for {
+		time.Sleep(time.Second * 1)
 		curTask := atomic.LoadInt64(&t.curTask)
 		curGo := atomic.LoadInt64(&t.curGo)
-
+		t.windows.add(curGo)
 		if curTask < int64(t.min) && curGo > int64(t.min) {
 			t.cancelGo()
-		} else if t.needResize() {
-			t.addGo()
+		} else if need, newSize := t.needResize(); need {
+			t.addGoNum(newSize - int(curGo))
 		}
 	}
+
 }
 
 // 运行任务

@@ -75,12 +75,17 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
-func (c *Conn) getTask() Tasker {
+func (c *Conn) addTask(fd int, ts taskStrategy, f func() bool) {
 	if c.callbackInEventLoop {
-		return &c.multiEventLoop.t2
+		c.multiEventLoop.t2.addTask(fd, ts, f)
+		return
 	}
 
-	return &c.multiEventLoop.t
+	if err := c.parent.localTask.addTask(fd, ts, f); err == ErrTaskQueueFull {
+		if err = c.multiEventLoop.t.addTask(fd, ts, f); err == ErrTaskQueueFull {
+			// TODO
+		}
+	}
 }
 
 func (c *Conn) getFd() int {
@@ -308,7 +313,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				c.fragmentFramePayload = nil
 
 				// 进入业务协程执行
-				c.getTask().addTask(c.getFd(), c.runInGoStrategy, func() (exit bool) {
+				c.addTask(c.getFd(), c.runInGoStrategy, func() (exit bool) {
 					if fragmentFrameHeader.GetRsv1() && decompression {
 						tempBuf, err := decode(*fragmentFramePayload)
 						if err != nil {
@@ -368,7 +373,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		// payloadPtr.Store(f.Payload)
 
 		// 进入业务协程执行
-		c.getTask().addTask(c.getFd(), c.runInGoStrategy, func() bool {
+		c.addTask(c.getFd(), c.runInGoStrategy, func() bool {
 			// payload := payloadPtr.Load()
 
 			if needMask {
@@ -456,7 +461,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				}
 				// 进入业务协程执行
 				payload := f.Payload
-				c.getTask().addTask(c.getFd(), c.runInGoStrategy, func() bool {
+				c.addTask(c.getFd(), c.runInGoStrategy, func() bool {
 					c.Callback.OnMessage(c, f.Opcode, *payload)
 					PutPayloadBytes(payload)
 					return false
@@ -470,7 +475,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		}
 
 		// 进入业务协程执行
-		c.getTask().addTask(c.getFd(), c.runInGoStrategy, func() bool {
+		c.addTask(c.getFd(), c.runInGoStrategy, func() bool {
 			c.Callback.OnMessage(c, f.Opcode, nil)
 			return false
 		})

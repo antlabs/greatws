@@ -7,7 +7,8 @@ import (
 
 func Test_Windows(t *testing.T) {
 	t.Run("test_windows.0", func(t *testing.T) {
-		w := newWindows(3)
+		var w windows
+		w.init()
 		w.add(1)
 		if !slices.Equal(w.historyGo, []int64{1, 0, 0}) {
 			// 报错

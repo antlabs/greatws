@@ -8,10 +8,8 @@ type windows struct {
 	w         int64
 }
 
-func newWindows(size int) *windows {
-	return &windows{
-		historyGo: make([]int64, size, size),
-	}
+func (w *windows) init() {
+	w.historyGo = make([]int64, 10)
 }
 
 func (w *windows) add(goNum int64) {

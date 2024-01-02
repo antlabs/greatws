@@ -34,14 +34,18 @@ type EventLoop struct {
 	*apiState     // 每个平台对应的异步io接口/epoll/kqueue/iouring
 	shutdown  bool
 	parent    *MultiEventLoop
+	localTask task
 }
 
 // 初始化函数
-func CreateEventLoop(setSize int, flag evFlag) (e *EventLoop, err error) {
+func CreateEventLoop(setSize int, flag evFlag, parent *MultiEventLoop) (e *EventLoop, err error) {
 	e = &EventLoop{
 		setSize: setSize,
 		maxFd:   -1,
+		parent:  parent,
 	}
+	e.localTask.taskConfig = e.parent.t.taskConfig
+	e.localTask.initWithNoMutex()
 	err = e.apiCreate(flag)
 	return e, err
 }

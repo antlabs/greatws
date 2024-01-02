@@ -32,37 +32,40 @@ type MultiEventLoop struct {
 	*slog.Logger
 }
 
-func (m *MultiEventLoop) initDefaultSettingBefore() {
-	m.level = slog.LevelError // 默认打印error级别的日志
-	m.numLoops = 0
-	m.maxEventNum = 10000
-	m.t.min = 50
-	m.t.initCount = 1000
-	m.t.max = 30000
-}
+var (
+	defMaxEventNum   = 256
+	defTaskMin       = 50
+	defTaskMax       = 30000
+	defTaskInitCount = 1000
+	defNumLoops      = runtime.NumCPU() / 4
+)
 
-func (m *MultiEventLoop) initDefaultSettingAfter() {
+func (m *MultiEventLoop) initDefaultSetting() {
+	m.level = slog.LevelError // 默认打印error级别的日志
 	if m.numLoops == 0 {
-		m.numLoops = runtime.NumCPU() / 4
-		if m.numLoops == 0 {
-			m.numLoops = 1
-		}
+		m.numLoops = max(defNumLoops, 1)
 	}
 
 	if m.maxEventNum == 0 {
-		m.maxEventNum = 256
+		m.maxEventNum = defMaxEventNum
 	}
 
 	if m.t.min == 0 {
-		m.t.min = 50
-	}
-
-	if m.t.initCount == 0 {
-		m.t.initCount = 1000
+		m.t.min = max(defTaskMin/(m.numLoops+1), 1)
+	} else {
+		m.t.min = max(m.t.min/(m.numLoops+1), 1)
 	}
 
 	if m.t.max == 0 {
-		m.t.max = 30000
+		m.t.max = max(defTaskMax/(m.numLoops+1), 1)
+	} else {
+		m.t.max = max(m.t.max/(m.numLoops+1), 1)
+	}
+
+	if m.t.initCount == 0 {
+		m.t.initCount = max(defTaskInitCount/(m.numLoops+1), 1)
+	} else {
+		m.t.initCount = max(m.t.initCount/(m.numLoops+1), 1)
 	}
 
 	if m.flag == 0 {
@@ -84,22 +87,20 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m := &MultiEventLoop{}
 
-	m.initDefaultSettingBefore()
+	m.initDefaultSetting()
 	for _, o := range opts {
 		o(m)
 	}
-	m.initDefaultSettingAfter()
-
+	m.initDefaultSetting()
 	m.t.init()
 
 	m.loops = make([]*EventLoop, m.numLoops)
 
 	for i := 0; i < m.numLoops; i++ {
-		m.loops[i], err = CreateEventLoop(m.maxEventNum, m.flag)
+		m.loops[i], err = CreateEventLoop(m.maxEventNum, m.flag, m)
 		if err != nil {
 			return nil, err
 		}
-		m.loops[i].parent = m
 	}
 	return m, nil
 }
@@ -111,6 +112,10 @@ func (m *MultiEventLoop) Start() {
 	}
 }
 
+func (m *MultiEventLoop) getEventLoop(fd int) *EventLoop {
+	return m.loops[fd%len(m.loops)]
+}
+
 // 添加一个连接到多路事件循环
 func (m *MultiEventLoop) add(c *Conn) error {
 	fd := c.getFd()
@@ -120,7 +125,6 @@ func (m *MultiEventLoop) add(c *Conn) error {
 		m.del(c)
 		return err
 	}
-	c.setParent(m.loops[index])
 	atomic.AddInt64(&m.curConn, 1)
 	return nil
 }
