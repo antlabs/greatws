@@ -16,6 +16,7 @@ package greatws
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -69,6 +70,22 @@ func (el *EventLoop) Loop() {
 	}
 }
 
+// 获取一个连接
+func (m *EventLoop) getConn(fd int) *Conn {
+
+	v, ok := m.conns.Load(fd)
+	if !ok {
+		return nil
+	}
+	return v.(*Conn)
+}
+
+func (el *EventLoop) del(c *Conn) {
+	fd := c.getFd()
+	atomic.AddInt64(&el.parent.curConn, -1)
+	el.conns.Delete(fd)
+	closeFd(fd)
+}
 func (el *EventLoop) GetApiName() string {
 	return el.apiName()
 }

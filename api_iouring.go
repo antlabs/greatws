@@ -104,7 +104,7 @@ func (e *iouringState) getLogger() *slog.Logger {
 }
 
 func (e *iouringState) getConn(fd uint32) *Conn {
-	return e.parent.parent.getConn(int(fd))
+	return e.parent.getConn(int(fd))
 }
 
 // io-uring 处理事件的入口函数

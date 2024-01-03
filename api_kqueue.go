@@ -20,7 +20,6 @@ package greatws
 import (
 	"errors"
 	"io"
-	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -87,13 +86,6 @@ func (e *EventLoop) addWrite(c *Conn) error {
 	return e.trigger()
 }
 
-func (e *EventLoop) del(fd int) error {
-	e.mu.Lock()
-	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Flags: syscall.EV_DELETE, Filter: syscall.EVFILT_READ})
-	e.mu.Unlock()
-	return e.trigger()
-}
-
 func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 	state := e.apiState
 
@@ -124,7 +116,7 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 			ev := &state.events[j]
 			fd := int(ev.Ident)
 			// fmt.Printf("fd :%d, filter :%x, flags :%x\n", fd, ev.Filter, ev.Flags)
-			conn := e.parent.getConn(fd)
+			conn := e.getConn(fd)
 			if conn == nil {
 				unix.Close(fd)
 				continue

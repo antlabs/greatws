@@ -122,61 +122,9 @@ func (m *MultiEventLoop) add(c *Conn) error {
 	index := fd % len(m.loops)
 	m.loops[index].conns.Store(fd, c)
 	if err := m.loops[index].addRead(c); err != nil {
-		m.del(c)
+		m.loops[index].del(c)
 		return err
 	}
 	atomic.AddInt64(&m.curConn, 1)
 	return nil
-}
-
-// 添加一个可写事件到多路事件循环
-func (m *MultiEventLoop) addWrite(c *Conn) error {
-	fd := c.getFd()
-	if fd == -1 {
-		return nil
-	}
-	index := fd % len(m.loops)
-	if err := m.loops[index].addWrite(c); err != nil {
-		return err
-	}
-	m.loops[index].conns.LoadOrStore(fd, c)
-	return nil
-}
-
-// 添加一个可写事件到多路事件循环
-func (m *MultiEventLoop) delWrite(c *Conn) error {
-	fd := c.getFd()
-	if fd == -1 {
-		return nil
-	}
-
-	index := fd % len(m.loops)
-	if err := m.loops[index].delWrite(c); err != nil {
-		return err
-	}
-	m.loops[index].conns.LoadOrStore(fd, c)
-	return nil
-}
-
-// 从多路事件循环中删除一个连接
-func (m *MultiEventLoop) del(c *Conn) {
-	fd := c.getFd()
-
-	if fd == -1 {
-		return
-	}
-	atomic.AddInt64(&m.curConn, -1)
-	index := fd % len(m.loops)
-	m.loops[index].conns.Delete(fd)
-	closeFd(fd)
-}
-
-// 获取一个连接
-func (m *MultiEventLoop) getConn(fd int) *Conn {
-	index := fd % len(m.loops)
-	v, ok := m.loops[index].conns.Load(fd)
-	if !ok {
-		return nil
-	}
-	return v.(*Conn)
 }

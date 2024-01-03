@@ -109,7 +109,7 @@ func duplicateSocket(socketFD int) (int, error) {
 func (c *Conn) closeInner(err error) {
 	fd := c.getFd()
 	c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
-	c.multiEventLoop.del(c)
+	c.parent.del(c)
 	atomic.StoreInt64(&c.fd, -1)
 	c.closeOnce.Do(func() {
 		atomic.StorePointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent)), nil)
@@ -154,7 +154,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 			if old != c.wbuf {
 				PutPayloadBytes(old)
 			}
-			b = *c.wbuf
+
 			return curN, nil
 		}
 	}
@@ -175,7 +175,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 			c.wbuf = newBuf
 		}
 
-		if err = c.multiEventLoop.addWrite(c); err != nil {
+		if err = c.parent.addWrite(c); err != nil {
 			return total, err
 		}
 	}
@@ -245,7 +245,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 
 			PutPayloadBytes(old)
 			c.wbuf = nil
-			if err := c.multiEventLoop.delWrite(c); err != nil {
+			if err := c.parent.delWrite(c); err != nil {
 				return err
 			}
 		} else {
@@ -263,7 +263,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 				c.wbuf = newBuf
 			}
 
-			if err = c.multiEventLoop.addWrite(c); err != nil {
+			if err = c.parent.addWrite(c); err != nil {
 				return err
 			}
 		}
@@ -277,7 +277,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 			"write_state", ws.String())
 	} else {
 		c.getLogger().Debug("wbuf is nil", "fd", c.getFd())
-		if err := c.multiEventLoop.delWrite(c); err != nil {
+		if err := c.parent.delWrite(c); err != nil {
 			return err
 		}
 	}

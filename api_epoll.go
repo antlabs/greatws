@@ -173,7 +173,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 		numEvents = retVal
 		for i := 0; i < numEvents; i++ {
 			ev := &e.events[i]
-			conn := e.parent.parent.getConn(int(ev.Fd))
+			conn := e.parent.getConn(int(ev.Fd))
 			if conn == nil {
 				unix.Close(int(ev.Fd))
 				continue
