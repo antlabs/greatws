@@ -28,12 +28,12 @@ type stat struct {
 }
 
 func (m *MultiEventLoop) HighLoad() bool {
-	return m.t.highLoad()
+	return m.globalTask.highLoad()
 }
 
 // 对外接口，查询当前业务协程池个数
 func (m *MultiEventLoop) GetCurGoNum() int {
-	return int(m.t.getCurGo())
+	return int(m.globalTask.getCurGo())
 }
 
 // 对外接口，查询移动字节数
@@ -63,7 +63,7 @@ func (m *MultiEventLoop) GetCurConnNum() int64 {
 
 // 对外接口，查询业务协程池运行的当前业务数
 func (m *MultiEventLoop) GetCurTaskNum() int64 {
-	return m.t.getCurTask()
+	return m.globalTask.getCurTask()
 }
 
 // 对外接口，查询poll read事件次数

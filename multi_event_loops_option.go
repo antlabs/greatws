@@ -30,9 +30,9 @@ func WithEventLoops(num int) EvOption {
 // max: 最大协程数
 func WithBusinessGoNum(initCount, min, max int) EvOption {
 	return func(e *MultiEventLoop) {
-		e.t.initCount = initCount
-		e.t.min = min
-		e.t.max = max
+		e.globalTask.initCount = initCount
+		e.globalTask.min = min
+		e.globalTask.max = max
 	}
 }
 

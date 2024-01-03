@@ -24,8 +24,8 @@ type MultiEventLoop struct {
 	numLoops    int // 事件循环数量
 	maxEventNum int
 	loops       []*EventLoop
-	t           task
-	t2          taskIo
+	globalTask  task
+	runInIo     taskIo
 	flag        evFlag // 是否使用io_uring
 	level       slog.Level
 	stat        // 统计信息
@@ -50,22 +50,22 @@ func (m *MultiEventLoop) initDefaultSetting() {
 		m.maxEventNum = defMaxEventNum
 	}
 
-	if m.t.min == 0 {
-		m.t.min = max(defTaskMin/(m.numLoops+1), 1)
+	if m.globalTask.min == 0 {
+		m.globalTask.min = max(defTaskMin/(m.numLoops+1), 1)
 	} else {
-		m.t.min = max(m.t.min/(m.numLoops+1), 1)
+		m.globalTask.min = max(m.globalTask.min/(m.numLoops+1), 1)
 	}
 
-	if m.t.max == 0 {
-		m.t.max = max(defTaskMax/(m.numLoops+1), 1)
+	if m.globalTask.max == 0 {
+		m.globalTask.max = max(defTaskMax/(m.numLoops+1), 1)
 	} else {
-		m.t.max = max(m.t.max/(m.numLoops+1), 1)
+		m.globalTask.max = max(m.globalTask.max/(m.numLoops+1), 1)
 	}
 
-	if m.t.initCount == 0 {
-		m.t.initCount = max(defTaskInitCount/(m.numLoops+1), 1)
+	if m.globalTask.initCount == 0 {
+		m.globalTask.initCount = max(defTaskInitCount/(m.numLoops+1), 1)
 	} else {
-		m.t.initCount = max(m.t.initCount/(m.numLoops+1), 1)
+		m.globalTask.initCount = max(m.globalTask.initCount/(m.numLoops+1), 1)
 	}
 
 	if m.flag == 0 {
@@ -92,7 +92,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 		o(m)
 	}
 	m.initDefaultSetting()
-	m.t.init()
+	m.globalTask.init()
 
 	m.loops = make([]*EventLoop, m.numLoops)
 

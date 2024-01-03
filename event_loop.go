@@ -45,7 +45,7 @@ func CreateEventLoop(setSize int, flag evFlag, parent *MultiEventLoop) (e *Event
 		maxFd:   -1,
 		parent:  parent,
 	}
-	e.localTask.taskConfig = e.parent.t.taskConfig
+	e.localTask.taskConfig = e.parent.globalTask.taskConfig
 	e.localTask.initWithNoMutex()
 	err = e.apiCreate(flag)
 	return e, err

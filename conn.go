@@ -77,12 +77,12 @@ func (c *Conn) getLogger() *slog.Logger {
 
 func (c *Conn) addTask(fd int, ts taskStrategy, f func() bool) {
 	if c.callbackInEventLoop {
-		c.multiEventLoop.t2.addTask(fd, ts, f)
+		c.multiEventLoop.runInIo.addTask(fd, ts, f)
 		return
 	}
 
 	if err := c.parent.localTask.addTask(fd, ts, f); err == ErrTaskQueueFull {
-		if err = c.multiEventLoop.t.addTask(fd, ts, f); err == ErrTaskQueueFull {
+		if err = c.multiEventLoop.globalTask.addTask(fd, ts, f); err == ErrTaskQueueFull {
 			// TODO
 		}
 	}
