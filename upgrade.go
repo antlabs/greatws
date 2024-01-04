@@ -136,6 +136,7 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 	}
 
 	c = newConn(int64(fd), false, conf)
+	conf.Callback.OnOpen(c)
 	if err = conf.multiEventLoop.add(c); err != nil {
 		return nil, err
 	}
