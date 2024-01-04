@@ -32,8 +32,22 @@ func (m *MultiEventLoop) HighLoad() bool {
 }
 
 // 对外接口，查询当前业务协程池个数
-func (m *MultiEventLoop) GetCurGoNum() int {
-	return int(m.globalTask.getCurGo())
+func (m *MultiEventLoop) GetCurGoNum() (total int) {
+	total += int(m.globalTask.getCurGo())
+	for _, v := range m.loops {
+		total += int(v.localTask.getCurGo())
+	}
+	return
+}
+
+// 对外接口，查询业务协程池运行的当前业务数
+func (m *MultiEventLoop) GetCurTaskNum() (total int64) {
+
+	total += m.globalTask.getCurTask()
+	for _, v := range m.loops {
+		total += v.localTask.getCurTask()
+	}
+	return
 }
 
 // 对外接口，查询移动字节数
@@ -59,11 +73,6 @@ func (m *MultiEventLoop) GetWriteSyscallNum() int64 {
 // 对外接口，查询当前websocket连接数
 func (m *MultiEventLoop) GetCurConnNum() int64 {
 	return atomic.LoadInt64(&m.curConn)
-}
-
-// 对外接口，查询业务协程池运行的当前业务数
-func (m *MultiEventLoop) GetCurTaskNum() int64 {
-	return m.globalTask.getCurTask()
 }
 
 // 对外接口，查询poll read事件次数

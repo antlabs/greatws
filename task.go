@@ -167,16 +167,14 @@ func (t *task) addTask(fd int, ts taskStrategy, f func() bool) error {
 
 // 新增go程
 func (t *task) addGo() {
-	go func() {
-		atomic.AddInt64(&t.curGo, 1)
-		defer atomic.AddInt64(&t.curGo, -1)
-		t.consumer()
-	}()
+	atomic.AddInt64(&t.curGo, 1)
+	defer atomic.AddInt64(&t.curGo, -1)
+	t.consumer()
 }
 
 func (t *task) addGoNum(n int) {
 	for i := 0; i < n; i++ {
-		t.addGo()
+		go t.addGo()
 	}
 }
 
