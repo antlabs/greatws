@@ -75,14 +75,18 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
-func (c *Conn) addTask(fd int, ts taskStrategy, f func() bool) {
+func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 	if c.callbackInEventLoop {
-		c.multiEventLoop.runInIo.addTask(fd, ts, f)
+		c.multiEventLoop.runInIo.addTask(ts, f)
+		return
+	}
+	if ts == taskStrategyStream {
+		c.taskStream.addTask(ts, f)
 		return
 	}
 
-	if err := c.parent.localTask.addTask(fd, ts, f); err == ErrTaskQueueFull {
-		if err = c.multiEventLoop.globalTask.addTask(fd, ts, f); err == ErrTaskQueueFull {
+	if err := c.parent.localTask.addTask(c, ts, f); err == ErrTaskQueueFull {
+		if err = c.multiEventLoop.globalTask.addTask(c, ts, f); err == ErrTaskQueueFull {
 			// TODO
 		}
 	}
@@ -313,7 +317,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				c.fragmentFramePayload = nil
 
 				// 进入业务协程执行
-				c.addTask(c.getFd(), c.runInGoStrategy, func() (exit bool) {
+				c.addTask(c.runInGoStrategy, func() (exit bool) {
 					if fragmentFrameHeader.GetRsv1() && decompression {
 						tempBuf, err := decode(*fragmentFramePayload)
 						if err != nil {
@@ -373,7 +377,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		// payloadPtr.Store(f.Payload)
 
 		// 进入业务协程执行
-		c.addTask(c.getFd(), c.runInGoStrategy, func() bool {
+		c.addTask(c.runInGoStrategy, func() bool {
 			// payload := payloadPtr.Load()
 
 			if needMask {
@@ -461,7 +465,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				}
 				// 进入业务协程执行
 				payload := f.Payload
-				c.addTask(c.getFd(), c.runInGoStrategy, func() bool {
+				c.addTask(c.runInGoStrategy, func() bool {
 					c.Callback.OnMessage(c, f.Opcode, *payload)
 					PutPayloadBytes(payload)
 					return false
@@ -475,7 +479,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		}
 
 		// 进入业务协程执行
-		c.addTask(c.getFd(), c.runInGoStrategy, func() bool {
+		c.addTask(c.runInGoStrategy, func() bool {
 			c.Callback.OnMessage(c, f.Opcode, nil)
 			return false
 		})
@@ -574,4 +578,8 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 		// TODO
 	}
 	return err
+}
+
+func (c *Conn) Close() {
+	c.closeWithLock(nil)
 }

@@ -11,10 +11,41 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package greatws
 
-type taskIo struct{}
+import (
+	"sync"
+)
 
-func (t *taskIo) addTask(ts taskStrategy, f func() bool) {
-	f()
+type taskStream struct {
+	streamChan chan func() bool
+	sync.Once
+}
+
+func (t *taskStream) loop() {
+	for cb := range t.streamChan {
+		cb()
+	}
+}
+func (t *taskStream) init() {
+	t.streamChan = make(chan func() bool, 3)
+	go t.loop()
+}
+
+func (t *taskStream) addTask(ts taskStrategy, f func() bool) {
+	defer func() {
+		if err := recover(); err != nil {
+
+		}
+	}()
+	t.streamChan <- f
+	// TODO阻塞的情况如何处理?
+	// 默认启动oneshot模式
+}
+
+func (t *taskStream) close() {
+	t.Do(func() {
+		close(t.streamChan)
+	})
 }

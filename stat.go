@@ -27,9 +27,9 @@ type stat struct {
 	pollEv       int64  // poll事件次数, 包含读,写, 错误事件
 }
 
-func (m *MultiEventLoop) HighLoad() bool {
-	return m.globalTask.highLoad()
-}
+// func (m *MultiEventLoop) HighLoad() bool {
+// 	return m.globalTask.highLoad()
+// }
 
 // 对外接口，查询当前业务协程池个数
 func (m *MultiEventLoop) GetCurGoNum() (total int) {

@@ -77,13 +77,15 @@ type Conn struct {
 	// 存在io-uring相关的控制信息
 	// onlyIoUringState
 
-	wbuf      *[]byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	mu        sync.Mutex
-	client    bool  // 客户端为true，服务端为false
-	*Config         // 配置
-	closed    int32 // 是否关闭
-	closeOnce sync.Once
-	parent    *EventLoop
+	wbuf       *[]byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	mu         sync.Mutex
+	client     bool  // 客户端为true，服务端为false
+	*Config          // 配置
+	closed     int32 // 是否关闭
+	closeOnce  sync.Once
+	parent     *EventLoop
+	currBindGo *businessGo
+	taskStream taskStream
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
@@ -99,6 +101,9 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 		parent: conf.multiEventLoop.getEventLoop(int(fd)),
 	}
 
+	if conf.runInGoStrategy == taskStrategyStream {
+		c.taskStream.init()
+	}
 	return c
 }
 
@@ -123,12 +128,17 @@ func (c *Conn) closeWithLock(err error) {
 	}
 
 	c.mu.Lock()
-	c.closeInner(err)
-	c.mu.Unlock()
-}
+	if c.isClosed() {
+		c.mu.Unlock()
+		return
+	}
 
-func (c *Conn) Close() {
-	c.closeWithLock(nil)
+	if c.Config.runInGoStrategy == taskStrategyStream {
+		c.taskStream.close()
+	}
+	c.closeInner(err)
+
+	c.mu.Unlock()
 }
 
 func (c *Conn) getPtr() int {

@@ -98,6 +98,31 @@ func (h *handler) echoRunInIo(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = c
 }
+
+// 使用stream模式运行， 一个websocket一个go程
+func (h *handler) echoRunStream(w http.ResponseWriter, r *http.Request) {
+	opts := []greatws.ServerOption{
+		greatws.WithServerReplyPing(),
+		greatws.WithServerDecompression(),
+		greatws.WithServerIgnorePong(),
+		greatws.WithServerCallback(&echoHandler{}),
+		greatws.WithServerEnableUTF8Check(),
+		greatws.WithServerReadTimeout(5 * time.Second),
+		greatws.WithServerMultiEventLoop(h.m),
+		greatws.WithServerStreamMode(),
+		greatws.WithServerCallbackInEventLoop(),
+	}
+
+	if *runInEventLoop {
+		opts = append(opts, greatws.WithServerCallbackInEventLoop())
+	}
+
+	c, err := greatws.Upgrade(w, r, opts...)
+	if err != nil {
+		slog.Error("Upgrade fail:", "err", err.Error())
+	}
+	_ = c
+}
 func main() {
 	flag.Parse()
 
@@ -122,6 +147,7 @@ func main() {
 	mux := &http.ServeMux{}
 	mux.HandleFunc("/autobahn", h.echo)
 	mux.HandleFunc("/autobahn-io", h.echoRunInIo)
+	mux.HandleFunc("/autobahn-io", h.echoRunStream)
 
 	rawTCP, err := net.Listen("tcp", ":9001")
 	if err != nil {

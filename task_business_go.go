@@ -13,8 +13,31 @@
 // limitations under the License.
 package greatws
 
+import "sync/atomic"
+
 type businessGo struct {
 	taskChan chan func() bool
+	// 被多少conn绑定
+	bindConnCount int64
+}
+
+// 新增绑定的conn数
+func (b *businessGo) addBinConnCount(f func() bool) {
+	atomic.AddInt64(&b.bindConnCount, 1)
+}
+
+// 减少绑定的conn数
+func (b *businessGo) subBinConnCount(f func() bool) {
+	atomic.AddInt64(&b.bindConnCount, -1)
+}
+
+// 是否可以杀死这个go程
+func (b *businessGo) canKill() bool {
+	curConn := atomic.LoadInt64(&b.bindConnCount)
+	if curConn < 0 {
+		panic("current conn  < 0")
+	}
+	return curConn == 0
 }
 
 func newBusinessGo() *businessGo {

@@ -56,7 +56,7 @@ func (c *Config) defaultSetting() {
 	c.windowsMultipleTimesPayloadSize = 1.0
 	c.delayWriteInitBufferSize = 8 * 1024
 	c.maxDelayWriteDuration = 10 * time.Millisecond
-	c.runInGoStrategy = taskStrategyMod
+	c.runInGoStrategy = taskStrategyBind
 	c.tcpNoDelay = true
 	// c.parseMode = ParseModeWindows
 	// 对于text消息，默认不检查text是utf8字符
