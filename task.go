@@ -51,7 +51,7 @@ type task struct {
 	curGo   int64 // 当前运行协程数
 	curTask int64 // 当前运行任务数
 
-	allBusinessGo sync.Map // key是*businessGo, value是struct{}
+	allBusinessGo sync.Map // key是[*businessGo, struct{}]， 目前先这样。后面再优化下
 }
 
 // 初始化

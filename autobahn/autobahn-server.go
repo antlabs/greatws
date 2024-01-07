@@ -147,7 +147,7 @@ func main() {
 	mux := &http.ServeMux{}
 	mux.HandleFunc("/autobahn", h.echo)
 	mux.HandleFunc("/autobahn-io", h.echoRunInIo)
-	mux.HandleFunc("/autobahn-io", h.echoRunStream)
+	mux.HandleFunc("/autobahn-stream", h.echoRunStream)
 
 	rawTCP, err := net.Listen("tcp", ":9001")
 	if err != nil {
