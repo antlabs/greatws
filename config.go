@@ -1,4 +1,4 @@
-// Copyright 2021-2023 antlabs. All rights reserved.
+// Copyright 2023-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ type Config struct {
 	subProtocols             []string      // 设置支持的子协议
 	multiEventLoop           *MultiEventLoop
 	callbackInEventLoop      bool // 在event loop中运行websocket OnOpen, OnMessage, OnClose 回调函数
+	runInGoStrategy          taskStrategy
 }
 
 func (c *Config) useIoUring() bool {
@@ -55,6 +56,7 @@ func (c *Config) defaultSetting() {
 	c.windowsMultipleTimesPayloadSize = 1.0
 	c.delayWriteInitBufferSize = 8 * 1024
 	c.maxDelayWriteDuration = 10 * time.Millisecond
+	c.runInGoStrategy = taskStrategyBind
 	c.tcpNoDelay = true
 	// c.parseMode = ParseModeWindows
 	// 对于text消息，默认不检查text是utf8字符

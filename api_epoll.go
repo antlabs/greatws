@@ -1,4 +1,4 @@
-// Copyright 2021-2023 antlabs. All rights reserved.
+// Copyright 2023-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,12 +31,51 @@ const (
 	EPOLLET = 0x80000000
 )
 
+const (
+	// 垂直触发
+	// 来自man 手册
+	// When  used as an edge-triggered interface, for performance reasons,
+	// it is possible to add the file descriptor inside the epoll interface (EPOLL_CTL_ADD) once by specifying (EPOLLIN|EPOLLOUT).
+	// This allows you to avoid con‐
+	// tinuously switching between EPOLLIN and EPOLLOUT calling epoll_ctl(2) with EPOLL_CTL_MOD.
+	etRead      = uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | EPOLLET)
+	etWrite     = uint32(0)
+	etDelWrite  = uint32(0)
+	etResetRead = uint32(0)
+
+	// 一次性触发
+	etReadOneShot      = uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | EPOLLET | unix.EPOLLONESHOT)
+	etWriteOneShot     = uint32(etReadOneShot)
+	etDelWriteOneShot  = uint32(0)
+	etResetReadOneShot = uint32(etReadOneShot)
+)
+
 type epollState struct {
 	epfd   int
 	events []unix.EpollEvent
 
-	et     bool
-	parent *EventLoop
+	et      bool
+	parent  *EventLoop
+	rev     uint32
+	wev     uint32
+	dwEv    uint32 // delete write event
+	resetEv uint32
+}
+
+func getReadWriteDeleteReset(oneShot bool, et bool) (uint32, uint32, uint32, uint32) {
+	if oneShot {
+		return etReadOneShot, etWriteOneShot, etDelWriteOneShot, etResetReadOneShot
+	}
+
+	if et {
+		return etRead, etWrite, etDelWrite, etResetRead
+	}
+
+	// if lt {
+	// 	return ltRead, ltWrite, ltDelWrite, ltResetRead
+	// }
+
+	return 0, 0, 0, 0
 }
 
 // 创建epoll handler
@@ -49,7 +88,7 @@ func apiEpollCreate(parent *EventLoop) (la linuxApi, err error) {
 
 	e.events = make([]unix.EpollEvent, 128)
 	e.parent = parent
-	e.et = true
+	e.rev, e.wev, e.dwEv, e.resetEv = getReadWriteDeleteReset(false, true)
 	return &e, nil
 }
 
@@ -60,42 +99,53 @@ func (e *epollState) apiFree() {
 
 // 新加读事件
 func (e *epollState) addRead(c *Conn) error {
-	fd := int(c.getFd())
-	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_ADD, fd, &unix.EpollEvent{
-		Fd: int32(fd),
-		// 来自man 手册
-		// When  used as an edge-triggered interface, for performance reasons,
-		// it is possible to add the file descriptor inside the epoll interface (EPOLL_CTL_ADD) once by specifying (EPOLLIN|EPOLLOUT).
-		// This allows you to avoid con‐
-		// tinuously switching between EPOLLIN and EPOLLOUT calling epoll_ctl(2) with EPOLL_CTL_MOD.
-		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | EPOLLET,
-	})
+	if e.rev > 0 {
+		fd := int(c.getFd())
+		return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_ADD, fd, &unix.EpollEvent{
+			Fd:     int32(fd),
+			Events: e.rev,
+		})
+	}
+	return nil
 }
 
 // 新加写事件
 func (e *epollState) addWrite(c *Conn) error {
-	if e.et {
-		return nil
+	if e.wev > 0 {
+
+		fd := int(c.getFd())
+		return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
+			Fd:     int32(fd),
+			Events: e.wev,
+		})
 	}
 
-	fd := int(c.getFd())
-	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
-		Fd:     int32(fd),
-		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT,
-	})
+	return nil
 }
 
 // 删除写事件
 func (e *epollState) delWrite(c *Conn) error {
-	if e.et {
-		return nil
-	}
+	if e.dwEv > 0 {
 
-	fd := int(c.getFd())
-	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
-		Fd:     int32(fd),
-		Events: unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | EPOLLET,
-	})
+		fd := int(c.getFd())
+		return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &unix.EpollEvent{
+			Fd:     int32(fd),
+			Events: e.dwEv,
+		})
+	}
+	return nil
+}
+
+// 重装添加读事件
+func (e *epollState) resetRead(c *Conn) error {
+	fd := c.getFd()
+	if e.resetEv > 0 {
+		return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, int(fd), &unix.EpollEvent{
+			Fd:     int32(fd),
+			Events: e.resetEv,
+		})
+	}
+	return nil
 }
 
 // 删除事件
@@ -123,7 +173,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 		numEvents = retVal
 		for i := 0; i < numEvents; i++ {
 			ev := &e.events[i]
-			conn := e.parent.parent.getConn(int(ev.Fd))
+			conn := e.parent.getConn(int(ev.Fd))
 			if conn == nil {
 				unix.Close(int(ev.Fd))
 				continue

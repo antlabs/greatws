@@ -2,8 +2,22 @@
 	"outdir": "./report/",
 	"servers": [
 		{
-			"agent": "non-tls",
+			"agent": "non-tls-taskbind",
 			"url": "ws://127.0.0.1:9001/autobahn",
+			"options": {
+				"version": 18
+			}
+		},
+		{
+			"agent": "non-tls-io",
+			"url": "ws://127.0.0.1:9001/autobahn-io",
+			"options": {
+				"version": 18
+			}
+		},
+		{
+			"agent": "non-tls-stream",
+			"url": "ws://127.0.0.1:9001/autobahn-stream",
 			"options": {
 				"version": 18
 			}

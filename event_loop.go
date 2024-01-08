@@ -1,4 +1,4 @@
-// Copyright 2021-2023 antlabs. All rights reserved.
+// Copyright 2023-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@ package greatws
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,14 +35,19 @@ type EventLoop struct {
 	*apiState     // 每个平台对应的异步io接口/epoll/kqueue/iouring
 	shutdown  bool
 	parent    *MultiEventLoop
+	localTask task
 }
 
 // 初始化函数
-func CreateEventLoop(setSize int, flag evFlag) (e *EventLoop, err error) {
+func CreateEventLoop(setSize int, flag evFlag, parent *MultiEventLoop) (e *EventLoop, err error) {
 	e = &EventLoop{
 		setSize: setSize,
 		maxFd:   -1,
+		parent:  parent,
 	}
+	e.localTask.taskConfig = e.parent.globalTask.taskConfig
+	// e.localTask.initWithNoMutex()
+	e.localTask.init()
 	err = e.apiCreate(flag)
 	return e, err
 }
@@ -65,6 +71,22 @@ func (el *EventLoop) Loop() {
 	}
 }
 
+// 获取一个连接
+func (m *EventLoop) getConn(fd int) *Conn {
+
+	v, ok := m.conns.Load(fd)
+	if !ok {
+		return nil
+	}
+	return v.(*Conn)
+}
+
+func (el *EventLoop) del(c *Conn) {
+	fd := c.getFd()
+	atomic.AddInt64(&el.parent.curConn, -1)
+	el.conns.Delete(fd)
+	closeFd(fd)
+}
 func (el *EventLoop) GetApiName() string {
 	return el.apiName()
 }

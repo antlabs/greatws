@@ -1,4 +1,4 @@
-// Copyright 2021-2023 antlabs. All rights reserved.
+// Copyright 2023-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,5 +15,5 @@
 package greatws
 
 type Tasker interface {
-	addTask(f func() bool)
+	addTask(fd int, ts taskStrategy, f func() bool)
 }

@@ -1,3 +1,16 @@
+// Copyright 2023-2024 antlabs. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package greatws
 
 import "sync/atomic"
@@ -14,13 +27,27 @@ type stat struct {
 	pollEv       int64  // poll事件次数, 包含读,写, 错误事件
 }
 
-func (m *MultiEventLoop) HighLoad() bool {
-	return m.t.highLoad()
-}
+// func (m *MultiEventLoop) HighLoad() bool {
+// 	return m.globalTask.highLoad()
+// }
 
 // 对外接口，查询当前业务协程池个数
-func (m *MultiEventLoop) GetCurGoNum() int {
-	return int(m.t.getCurGo())
+func (m *MultiEventLoop) GetCurGoNum() (total int) {
+	total += int(m.globalTask.getCurGo())
+	for _, v := range m.loops {
+		total += int(v.localTask.getCurGo())
+	}
+	return
+}
+
+// 对外接口，查询业务协程池运行的当前业务数
+func (m *MultiEventLoop) GetCurTaskNum() (total int64) {
+
+	total += m.globalTask.getCurTask()
+	for _, v := range m.loops {
+		total += v.localTask.getCurTask()
+	}
+	return
 }
 
 // 对外接口，查询移动字节数
@@ -46,11 +73,6 @@ func (m *MultiEventLoop) GetWriteSyscallNum() int64 {
 // 对外接口，查询当前websocket连接数
 func (m *MultiEventLoop) GetCurConnNum() int64 {
 	return atomic.LoadInt64(&m.curConn)
-}
-
-// 对外接口，查询业务协程池运行的当前业务数
-func (m *MultiEventLoop) GetCurTaskNum() int64 {
-	return m.t.getCurTask()
 }
 
 // 对外接口，查询poll read事件次数

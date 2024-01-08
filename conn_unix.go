@@ -1,3 +1,17 @@
+// Copyright 2023-2024 antlabs. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 //go:build linux || darwin || netbsd || freebsd || openbsd || dragonfly
 // +build linux darwin netbsd freebsd openbsd dragonfly
 
@@ -63,21 +77,15 @@ type Conn struct {
 	// 存在io-uring相关的控制信息
 	// onlyIoUringState
 
-	wbuf      *[]byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	mu        sync.Mutex
-	client    bool  // 客户端为true，服务端为false
-	*Config         // 配置
-	closed    int32 // 是否关闭
-	closeOnce sync.Once
-	parent    *EventLoop
-}
-
-func (c *Conn) setParent(el *EventLoop) {
-	atomic.StorePointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent)), unsafe.Pointer(el))
-}
-
-func (c *Conn) getParent() *EventLoop {
-	return (*EventLoop)(atomic.LoadPointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent))))
+	wbuf       *[]byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	mu         sync.Mutex
+	client     bool  // 客户端为true，服务端为false
+	*Config          // 配置
+	closed     int32 // 是否关闭
+	closeOnce  sync.Once
+	parent     *EventLoop
+	currBindGo *businessGo
+	taskStream taskStream
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
@@ -90,8 +98,12 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 		// 初始化不分配内存，只有在需要的时候才分配
 		Config: conf,
 		client: client,
+		parent: conf.multiEventLoop.getEventLoop(int(fd)),
 	}
 
+	if conf.runInGoStrategy == taskStrategyStream {
+		c.taskStream.init()
+	}
 	return c
 }
 
@@ -102,11 +114,8 @@ func duplicateSocket(socketFD int) (int, error) {
 func (c *Conn) closeInner(err error) {
 	fd := c.getFd()
 	c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
-	c.multiEventLoop.del(c)
+	c.parent.del(c)
 	atomic.StoreInt64(&c.fd, -1)
-	c.closeOnce.Do(func() {
-		atomic.StorePointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent)), nil)
-	})
 	atomic.StoreInt32(&c.closed, 1)
 }
 
@@ -116,12 +125,17 @@ func (c *Conn) closeWithLock(err error) {
 	}
 
 	c.mu.Lock()
-	c.closeInner(err)
-	c.mu.Unlock()
-}
+	if c.isClosed() {
+		c.mu.Unlock()
+		return
+	}
 
-func (c *Conn) Close() {
-	c.closeWithLock(nil)
+	if c.Config.runInGoStrategy == taskStrategyStream {
+		c.taskStream.close()
+	}
+	c.closeInner(err)
+
+	c.mu.Unlock()
 }
 
 func (c *Conn) getPtr() int {
@@ -147,7 +161,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 			if old != c.wbuf {
 				PutPayloadBytes(old)
 			}
-			b = *c.wbuf
+
 			return curN, nil
 		}
 	}
@@ -168,7 +182,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 			c.wbuf = newBuf
 		}
 
-		if err = c.multiEventLoop.addWrite(c); err != nil {
+		if err = c.parent.addWrite(c); err != nil {
 			return total, err
 		}
 	}
@@ -238,7 +252,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 
 			PutPayloadBytes(old)
 			c.wbuf = nil
-			if err := c.multiEventLoop.delWrite(c); err != nil {
+			if err := c.parent.delWrite(c); err != nil {
 				return err
 			}
 		} else {
@@ -246,6 +260,9 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 			// 记录写入的数据，如果有写入，分配一个新的缓冲区
 			if total > 0 && ws == writeEagain {
 				newBuf := GetPayloadBytes(len(*old) - total)
+				if len(*newBuf) < len(*old)-total {
+					panic("newBuf is too small")
+				}
 				copy(*newBuf, (*old)[total:])
 				if c.wbuf != nil {
 					PutPayloadBytes(c.wbuf)
@@ -253,7 +270,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 				c.wbuf = newBuf
 			}
 
-			if err = c.multiEventLoop.addWrite(c); err != nil {
+			if err = c.parent.addWrite(c); err != nil {
 				return err
 			}
 		}
@@ -267,7 +284,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 			"write_state", ws.String())
 	} else {
 		c.getLogger().Debug("wbuf is nil", "fd", c.getFd())
-		if err := c.multiEventLoop.delWrite(c); err != nil {
+		if err := c.parent.delWrite(c); err != nil {
 			return err
 		}
 	}

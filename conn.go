@@ -1,4 +1,4 @@
-// Copyright 2021-2023 antlabs. All rights reserved.
+// Copyright 2023-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -75,12 +75,25 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
-func (c *Conn) getTask() Tasker {
-	if c.callbackInEventLoop {
-		return &c.multiEventLoop.t2
+func (c *Conn) addTask(ts taskStrategy, f func() bool) {
+	if c.isClosed() {
+		return
 	}
 
-	return &c.multiEventLoop.t
+	if c.callbackInEventLoop {
+		c.multiEventLoop.runInIo.addTask(ts, f)
+		return
+	}
+	if ts == taskStrategyStream {
+		c.taskStream.addTask(ts, f)
+		return
+	}
+
+	if err := c.parent.localTask.addTask(c, ts, f); err == ErrTaskQueueFull {
+		if err = c.multiEventLoop.globalTask.addTask(c, ts, f); err == ErrTaskQueueFull {
+			// TODO
+		}
+	}
 }
 
 func (c *Conn) getFd() int {
@@ -308,7 +321,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				c.fragmentFramePayload = nil
 
 				// 进入业务协程执行
-				c.getTask().addTask(func() (exit bool) {
+				c.addTask(c.runInGoStrategy, func() (exit bool) {
 					if fragmentFrameHeader.GetRsv1() && decompression {
 						tempBuf, err := decode(*fragmentFramePayload)
 						if err != nil {
@@ -368,7 +381,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		// payloadPtr.Store(f.Payload)
 
 		// 进入业务协程执行
-		c.getTask().addTask(func() bool {
+		c.addTask(c.runInGoStrategy, func() bool {
 			// payload := payloadPtr.Load()
 
 			if needMask {
@@ -456,7 +469,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				}
 				// 进入业务协程执行
 				payload := f.Payload
-				c.getTask().addTask(func() bool {
+				c.addTask(c.runInGoStrategy, func() bool {
 					c.Callback.OnMessage(c, f.Opcode, *payload)
 					PutPayloadBytes(payload)
 					return false
@@ -470,7 +483,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		}
 
 		// 进入业务协程执行
-		c.getTask().addTask(func() bool {
+		c.addTask(c.runInGoStrategy, func() bool {
 			c.Callback.OnMessage(c, f.Opcode, nil)
 			return false
 		})
@@ -569,4 +582,8 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 		// TODO
 	}
 	return err
+}
+
+func (c *Conn) Close() {
+	c.closeWithLock(nil)
 }

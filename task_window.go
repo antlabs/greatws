@@ -1,4 +1,4 @@
-// Copyright 2023-2024 antlabs. All rights reserved.
+// Copyright 2021-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,8 +13,28 @@
 // limitations under the License.
 package greatws
 
-type taskIo struct{}
+// 滑动窗口记录历史go程数
+type windows struct {
+	// 历史go程数
+	historyGo []int64
+	sum       int64
+	w         int64
+}
 
-func (t *taskIo) addTask(ts taskStrategy, f func() bool) {
-	f()
+func (w *windows) init() {
+	w.historyGo = make([]int64, 10)
+}
+
+func (w *windows) add(goNum int64) {
+	if len(w.historyGo) == 0 {
+		return
+	}
+
+	w.sum += goNum - w.historyGo[w.w]
+	w.historyGo[w.w] = goNum
+	w.w = (w.w + 1) % int64(len(w.historyGo))
+}
+
+func (w *windows) avg() float64 {
+	return float64(w.sum) / float64(len(w.historyGo))
 }
