@@ -16,11 +16,13 @@ package greatws
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 type taskStream struct {
 	streamChan chan func() bool
 	sync.Once
+	closed uint32
 }
 
 func (t *taskStream) loop() {
@@ -34,6 +36,10 @@ func (t *taskStream) init() {
 }
 
 func (t *taskStream) addTask(ts taskStrategy, f func() bool) {
+	if atomic.LoadUint32(&t.closed) == 1 {
+		return
+	}
+
 	defer func() {
 		if err := recover(); err != nil {
 
@@ -47,5 +53,6 @@ func (t *taskStream) addTask(ts taskStrategy, f func() bool) {
 func (t *taskStream) close() {
 	t.Do(func() {
 		close(t.streamChan)
+		atomic.StoreUint32(&t.closed, 1)
 	})
 }

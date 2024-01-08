@@ -116,9 +116,6 @@ func (c *Conn) closeInner(err error) {
 	c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
 	c.parent.del(c)
 	atomic.StoreInt64(&c.fd, -1)
-	c.closeOnce.Do(func() {
-		atomic.StorePointer((*unsafe.Pointer)((unsafe.Pointer)(&c.parent)), nil)
-	})
 	atomic.StoreInt32(&c.closed, 1)
 }
 

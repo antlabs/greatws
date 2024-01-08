@@ -76,6 +76,10 @@ func (c *Conn) getLogger() *slog.Logger {
 }
 
 func (c *Conn) addTask(ts taskStrategy, f func() bool) {
+	if c.isClosed() {
+		return
+	}
+
 	if c.callbackInEventLoop {
 		c.multiEventLoop.runInIo.addTask(ts, f)
 		return
