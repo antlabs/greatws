@@ -37,9 +37,10 @@ var (
 	defTaskMin       = 50
 	defTaskMax       = 30000
 	defTaskInitCount = 1000
-	defNumLoops      = runtime.NumCPU() / 4
+	defNumLoops      = runtime.NumCPU()
 )
 
+// 这个函数会被调用两次
 func (m *MultiEventLoop) initDefaultSetting() {
 	m.level = slog.LevelError // 默认打印error级别的日志
 	if m.numLoops == 0 {
@@ -51,19 +52,19 @@ func (m *MultiEventLoop) initDefaultSetting() {
 	}
 
 	if m.globalTask.min == 0 {
-		m.globalTask.min = max(defTaskMin/(m.numLoops+1), 1)
+		m.globalTask.min = defTaskMin
 	} else {
 		m.globalTask.min = max(m.globalTask.min/(m.numLoops+1), 1)
 	}
 
 	if m.globalTask.max == 0 {
-		m.globalTask.max = max(defTaskMax/(m.numLoops+1), 1)
+		m.globalTask.max = defTaskMax
 	} else {
 		m.globalTask.max = max(m.globalTask.max/(m.numLoops+1), 1)
 	}
 
 	if m.globalTask.initCount == 0 {
-		m.globalTask.initCount = max(defTaskInitCount/(m.numLoops+1), 1)
+		m.globalTask.initCount = defTaskInitCount
 	} else {
 		m.globalTask.initCount = max(m.globalTask.initCount/(m.numLoops+1), 1)
 	}

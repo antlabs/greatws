@@ -22,12 +22,12 @@ type businessGo struct {
 }
 
 // 新增绑定的conn数
-func (b *businessGo) addBinConnCount(f func() bool) {
+func (b *businessGo) addBinConnCount() {
 	atomic.AddInt64(&b.bindConnCount, 1)
 }
 
 // 减少绑定的conn数
-func (b *businessGo) subBinConnCount(f func() bool) {
+func (b *businessGo) subBinConnCount() {
 	atomic.AddInt64(&b.bindConnCount, -1)
 }
 

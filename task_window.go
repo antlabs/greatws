@@ -13,6 +13,8 @@
 // limitations under the License.
 package greatws
 
+import "sync/atomic"
+
 // 滑动窗口记录历史go程数
 type windows struct {
 	// 历史go程数
@@ -30,11 +32,13 @@ func (w *windows) add(goNum int64) {
 		return
 	}
 
-	w.sum += goNum - w.historyGo[w.w]
+	needAdd := goNum - w.historyGo[w.w]
+
+	atomic.AddInt64(&w.sum, needAdd)
 	w.historyGo[w.w] = goNum
 	w.w = (w.w + 1) % int64(len(w.historyGo))
 }
 
 func (w *windows) avg() float64 {
-	return float64(w.sum) / float64(len(w.historyGo))
+	return float64(atomic.LoadInt64(&w.sum)) / float64(len(w.historyGo))
 }

@@ -130,9 +130,13 @@ func (c *Conn) closeWithLock(err error) {
 		return
 	}
 
-	if c.Config.runInGoStrategy == taskStrategyStream {
+	switch c.Config.runInGoStrategy {
+	case taskStrategyBind:
+		c.currBindGo.subBinConnCount()
+	case taskStrategyStream:
 		c.taskStream.close()
 	}
+
 	c.closeInner(err)
 
 	c.mu.Unlock()

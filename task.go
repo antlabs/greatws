@@ -99,34 +99,6 @@ func (t *task) consumer() {
 	}
 }
 
-// func (t *task) highLoad() bool {
-// 	// curGo := atomic.LoadInt64(&t.curGo)
-// 	for i := 1; ; i++ {
-
-// 		curTask := atomic.LoadInt64(&t.curTask)
-
-// 		if curTask >= int64(t.curGo) {
-// 			return true
-// 		}
-
-// 		// 这里的判断条件不准确，因为curGo是表示go程多少，不能表示任务多少, 比如1w上go程，一个任务也不跑
-// 		// if curGo := atomic.LoadInt64(&t.curGo); curGo > int64(t.max) {
-// 		// 	return true
-// 		// }
-
-// 		if need, _ := t.needGrow(); !need {
-// 			return false
-// 		}
-
-// 		curGo := atomic.LoadInt64(&t.curGo)
-// 		maxGo := int64(t.max)
-// 		need := min(2*i, max(0, int(maxGo-curGo)))
-// 		if need > 0 {
-// 			t.addGoNum(need)
-// 		}
-// 	}
-// }
-
 // 随机获取一个go程
 func (t *task) randomGo() *businessGo {
 	var currBusinessGo *businessGo
@@ -137,13 +109,12 @@ func (t *task) randomGo() *businessGo {
 	return currBusinessGo
 }
 
-// 新增任务, 如果任务队列满了, 新增go程， 这可能会导致协程数超过最大值, 为了防止死锁，还是需要新增业务go程
-// 在io线程里面会判断go程池是否高负载，如果是高负载，会取消read的任务, 放到wbuf里面, 延后再处理
 func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
 
 	if ts == taskStrategyBind {
 		if c.currBindGo == nil {
 			c.currBindGo = t.randomGo()
+			c.currBindGo.addBinConnCount()
 		}
 		currChan := c.currBindGo.taskChan
 		// 如果任务未满，直接放入任务队列
