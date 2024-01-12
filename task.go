@@ -18,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/antlabs/gstl/cmp"
 )
 
 // 运行task的策略
@@ -26,11 +28,11 @@ import (
 type taskStrategy int
 
 const (
-	// 随机。默认
+	// 送入全局队列，存在的意义主要是用于测试
 	taskStrategyRandom taskStrategy = iota
-	// 绑定映射
+	// 绑定映射, 从一个go程中取一个conn绑定，后面的请求都会在这个go程中处理
 	taskStrategyBind
-	// 流式映射
+	// 流式映射，一个conntion绑定一个go程(独占)
 	taskStrategyStream
 )
 
@@ -51,12 +53,19 @@ type task struct {
 	curGo   int64 // 当前运行协程数
 	curTask int64 // 当前运行任务数
 
-	allBusinessGo sync.Map // key是[*businessGo, struct{}]， 目前先这样。后面再优化下
+	mu            sync.Mutex
+	allBusinessGo []*businessGo
+	id            uint32
+}
+
+func (t *task) nextID() uint32 {
+	return (atomic.AddUint32(&t.id, 1) - 1) % uint32(len(t.allBusinessGo))
 }
 
 // 初始化
 func (t *task) initInner() {
 	t.c = make(chan func() bool)
+	t.allBusinessGo = make([]*businessGo, t.initCount)
 	t.windows.init()
 	go t.manageGo()
 	go t.runConsumerLoop()
@@ -66,19 +75,29 @@ func (t *task) init() {
 	t.initInner()
 }
 
-func (t *task) getCurGo() int64 {
-	return atomic.LoadInt64(&t.curGo)
-}
+// 收缩go程的slice，直接迁移完。TODO：分摊优化
+func (t *task) sharkAllBusinessGo() {
+	if len(t.allBusinessGo)/2 > int(t.curGo) {
+		needSize := cmp.Max(len(t.allBusinessGo)/2, t.min)
+		newAllBusinessGo := make([]*businessGo, 0, needSize)
+		for _, v := range t.allBusinessGo {
+			if v == nil || v.isClose() {
+				continue
+			}
 
-func (t *task) getCurTask() int64 {
-	return atomic.LoadInt64(&t.curTask)
+			newAllBusinessGo = append(newAllBusinessGo, v)
+		}
+		t.allBusinessGo = newAllBusinessGo
+	}
 }
 
 // 消费者循环
 func (t *task) consumer() {
 	defer atomic.AddInt64(&t.curGo, -1)
 	currBusinessGo := newBusinessGo()
-	t.allBusinessGo.Store(currBusinessGo, struct{}{})
+	t.mu.Lock()
+	t.allBusinessGo = append(t.allBusinessGo, currBusinessGo)
+	t.mu.Unlock()
 
 	var f func() bool
 	for {
@@ -86,8 +105,13 @@ func (t *task) consumer() {
 		case f = <-t.c:
 		case f = <-currBusinessGo.taskChan:
 		}
+
 		atomic.AddInt64(&t.curTask, 1)
 		if b := f(); b {
+			t.mu.Lock()
+			t.sharkAllBusinessGo()
+			t.mu.Unlock()
+
 			atomic.AddInt64(&t.curTask, -1)
 			if !currBusinessGo.canKill() {
 				continue
@@ -99,22 +123,34 @@ func (t *task) consumer() {
 	}
 }
 
-// 随机获取一个go程
-func (t *task) randomGo() *businessGo {
-	var currBusinessGo *businessGo
-	t.allBusinessGo.Range(func(key, value interface{}) bool {
-		currBusinessGo = key.(*businessGo)
-		return false
-	})
-	return currBusinessGo
+// 获取一个go程，如果是slice的话，轮询获取
+func (t *task) getGo() *businessGo {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := 0; i < len(t.allBusinessGo); i++ {
+		k := t.nextID()
+		v := t.allBusinessGo[k]
+		if v == nil {
+			continue
+		}
+
+		if v.isClose() {
+			t.allBusinessGo[k] = nil
+			continue
+		}
+		v.addBinConnCount()
+		return v
+	}
+
+	panic("businessgo is nil ")
+	return nil
 }
 
 func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
 
 	if ts == taskStrategyBind {
 		if c.currBindGo == nil {
-			c.currBindGo = t.randomGo()
-			c.currBindGo.addBinConnCount()
+			c.currBindGo = t.getGo()
 		}
 		currChan := c.currBindGo.taskChan
 		// 如果任务未满，直接放入任务队列
@@ -226,4 +262,12 @@ func (t *task) runConsumerLoop() {
 	for i := 0; i < t.initCount; i++ {
 		go t.consumer()
 	}
+}
+
+func (t *task) getCurGo() int64 {
+	return atomic.LoadInt64(&t.curGo)
+}
+
+func (t *task) getCurTask() int64 {
+	return atomic.LoadInt64(&t.curTask)
 }

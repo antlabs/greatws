@@ -19,6 +19,11 @@ type businessGo struct {
 	taskChan chan func() bool
 	// 被多少conn绑定
 	bindConnCount int64
+	closed        uint32
+}
+
+func (b *businessGo) isClose() bool {
+	return atomic.LoadUint32(&b.closed) == 1
 }
 
 // 新增绑定的conn数

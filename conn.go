@@ -85,7 +85,7 @@ func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 		return
 	}
 	if ts == taskStrategyStream {
-		c.taskStream.addTask(ts, f)
+		c.streamGo.addTask(ts, f)
 		return
 	}
 
