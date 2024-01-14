@@ -30,6 +30,7 @@ type MultiEventLoop struct {
 	level       slog.Level
 	stat        // 统计信息
 	*slog.Logger
+	taskMode taskMode
 }
 
 var (
@@ -93,6 +94,10 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 		o(m)
 	}
 	m.initDefaultSetting()
+
+	// 设置任务池模式(tps, 或者流量模式)
+	m.globalTask.taskMode = m.taskMode
+
 	m.globalTask.init()
 
 	m.loops = make([]*EventLoop, m.numLoops)

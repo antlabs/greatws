@@ -47,6 +47,13 @@ func WithBusinessGoNum(initCount, min, max int) EvOption {
 	}
 }
 
+// 设置business go程池 对流量压测友好的模式
+func WithBusinessGoTrafficMode() EvOption {
+	return func(e *MultiEventLoop) {
+		e.taskMode = trafficMode
+	}
+}
+
 // 设置日志级别
 func WithLogLevel(level slog.Level) EvOption {
 	return func(e *MultiEventLoop) {

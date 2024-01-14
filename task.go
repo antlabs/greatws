@@ -15,6 +15,7 @@ package greatws
 
 import (
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +47,16 @@ type taskConfig struct {
 	max       int // 最大协程数
 }
 
+// task 模式
+// 1. tps模式
+// 2. 流量模式
+type taskMode int
+
+const (
+	tpsMode taskMode = iota
+	trafficMode
+)
+
 type task struct {
 	c       chan func() bool
 	windows windows // 滑动窗口计数，用于判断是否需要新增go程
@@ -53,9 +64,11 @@ type task struct {
 	curGo   int64 // 当前运行协程数
 	curTask int64 // 当前运行任务数
 
-	mu            sync.Mutex
-	allBusinessGo []*businessGo
-	id            uint32
+	mu              sync.Mutex
+	allBusinessGo   []*businessGo
+	id              uint32
+	taskMode        taskMode
+	businessChanNum int
 }
 
 func (t *task) nextID() uint32 {
@@ -72,6 +85,10 @@ func (t *task) initInner() {
 }
 
 func (t *task) init() {
+	t.businessChanNum = runtime.NumCPU()
+	if t.taskMode == trafficMode {
+		t.businessChanNum = 1024
+	}
 	t.initInner()
 }
 
@@ -94,7 +111,7 @@ func (t *task) sharkAllBusinessGo() {
 // 消费者循环
 func (t *task) consumer() {
 	defer atomic.AddInt64(&t.curGo, -1)
-	currBusinessGo := newBusinessGo()
+	currBusinessGo := newBusinessGo(t.businessChanNum)
 	t.mu.Lock()
 	t.allBusinessGo = append(t.allBusinessGo, currBusinessGo)
 	t.mu.Unlock()
@@ -143,7 +160,6 @@ func (t *task) getGo() *businessGo {
 	}
 
 	panic("businessgo is nil ")
-	return nil
 }
 
 func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {

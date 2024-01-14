@@ -45,8 +45,8 @@ func (b *businessGo) canKill() bool {
 	return curConn == 0
 }
 
-func newBusinessGo() *businessGo {
+func newBusinessGo(num int) *businessGo {
 	return &businessGo{
-		taskChan: make(chan func() bool, 3),
+		taskChan: make(chan func() bool, num),
 	}
 }
