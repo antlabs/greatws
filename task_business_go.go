@@ -19,15 +19,20 @@ type businessGo struct {
 	taskChan chan func() bool
 	// 被多少conn绑定
 	bindConnCount int64
+	closed        uint32
+}
+
+func (b *businessGo) isClose() bool {
+	return atomic.LoadUint32(&b.closed) == 1
 }
 
 // 新增绑定的conn数
-func (b *businessGo) addBinConnCount(f func() bool) {
+func (b *businessGo) addBinConnCount() {
 	atomic.AddInt64(&b.bindConnCount, 1)
 }
 
 // 减少绑定的conn数
-func (b *businessGo) subBinConnCount(f func() bool) {
+func (b *businessGo) subBinConnCount() {
 	atomic.AddInt64(&b.bindConnCount, -1)
 }
 
@@ -40,8 +45,8 @@ func (b *businessGo) canKill() bool {
 	return curConn == 0
 }
 
-func newBusinessGo() *businessGo {
+func newBusinessGo(num int) *businessGo {
 	return &businessGo{
-		taskChan: make(chan func() bool, 3),
+		taskChan: make(chan func() bool, num),
 	}
 }

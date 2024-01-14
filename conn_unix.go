@@ -84,8 +84,8 @@ type Conn struct {
 	closed     int32 // 是否关闭
 	closeOnce  sync.Once
 	parent     *EventLoop
-	currBindGo *businessGo
-	taskStream taskStream
+	currBindGo *businessGo // 绑定模式下，当前绑定的go程
+	streamGo   taskStream  // stream模式下，当前绑定的go程
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
@@ -102,7 +102,7 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 	}
 
 	if conf.runInGoStrategy == taskStrategyStream {
-		c.taskStream.init()
+		c.streamGo.init()
 	}
 	return c
 }
@@ -130,9 +130,16 @@ func (c *Conn) closeWithLock(err error) {
 		return
 	}
 
-	if c.Config.runInGoStrategy == taskStrategyStream {
-		c.taskStream.close()
+	switch c.Config.runInGoStrategy {
+	case taskStrategyBind:
+		if c.currBindGo != nil {
+			c.currBindGo.subBinConnCount()
+		}
+	case taskStrategyStream:
+		c.streamGo.close()
+
 	}
+
 	c.closeInner(err)
 
 	c.mu.Unlock()

@@ -30,15 +30,14 @@ type Config struct {
 	disableBufioClearHack           bool              // 关闭bufio的clear hack优化
 	utf8Check                       func([]byte) bool // utf8检查
 	readTimeout                     time.Duration
-	windowsMultipleTimesPayloadSize float32 // 设置几倍(1024+14)的payload大小
-	// parseMode                       parseMode     // 解析模式, TODO
-	maxDelayWriteNum         int32         // 最大延迟包的个数, 默认值为10
-	delayWriteInitBufferSize int32         // 延迟写入的初始缓冲区大小, 默认值是8k
-	maxDelayWriteDuration    time.Duration // 最大延迟时间, 默认值是10ms
-	subProtocols             []string      // 设置支持的子协议
-	multiEventLoop           *MultiEventLoop
-	callbackInEventLoop      bool // 在event loop中运行websocket OnOpen, OnMessage, OnClose 回调函数
-	runInGoStrategy          taskStrategy
+	windowsMultipleTimesPayloadSize float32       // 设置几倍(1024+14)的payload大小
+	maxDelayWriteNum                int32         // 最大延迟包的个数, 默认值为10
+	delayWriteInitBufferSize        int32         // 延迟写入的初始缓冲区大小, 默认值是8k
+	maxDelayWriteDuration           time.Duration // 最大延迟时间, 默认值是10ms
+	subProtocols                    []string      // 设置支持的子协议
+	multiEventLoop                  *MultiEventLoop
+	callbackInEventLoop             bool // 在event loop中运行websocket OnOpen, OnMessage, OnClose 回调函数
+	runInGoStrategy                 taskStrategy
 }
 
 func (c *Config) useIoUring() bool {
@@ -58,7 +57,6 @@ func (c *Config) defaultSetting() {
 	c.maxDelayWriteDuration = 10 * time.Millisecond
 	c.runInGoStrategy = taskStrategyBind
 	c.tcpNoDelay = true
-	// c.parseMode = ParseModeWindows
 	// 对于text消息，默认不检查text是utf8字符
 	c.utf8Check = func(b []byte) bool { return true }
 }

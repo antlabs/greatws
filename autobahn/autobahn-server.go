@@ -123,6 +123,7 @@ func (h *handler) echoRunStream(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = c
 }
+
 func main() {
 	flag.Parse()
 

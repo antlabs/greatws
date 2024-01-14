@@ -30,9 +30,27 @@ func WithEventLoops(num int) EvOption {
 // max: 最大协程数
 func WithBusinessGoNum(initCount, min, max int) EvOption {
 	return func(e *MultiEventLoop) {
+		if initCount <= 0 {
+			initCount = defTaskInitCount
+		}
+
+		if min <= 0 {
+			min = defTaskMin
+		}
+
+		if max <= 0 {
+			max = defTaskMax
+		}
 		e.globalTask.initCount = initCount
 		e.globalTask.min = min
 		e.globalTask.max = max
+	}
+}
+
+// 设置business go程池 对流量压测友好的模式
+func WithBusinessGoTrafficMode() EvOption {
+	return func(e *MultiEventLoop) {
+		e.taskMode = trafficMode
 	}
 }
 
