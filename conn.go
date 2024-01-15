@@ -89,11 +89,31 @@ func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 		return
 	}
 
-	if err := c.parent.localTask.addTask(c, ts, f); err == ErrTaskQueueFull {
-		if err = c.multiEventLoop.globalTask.addTask(c, ts, f); err == ErrTaskQueueFull {
-			// TODO
+	var err error
+	for i := 0; i < 2; i++ {
+		err = c.parent.localTask.addTask(c, ts, f)
+		if err == nil {
+			break
 		}
+		if err == ErrTaskQueueFull {
+			c.parent.localTask.addGo()
+			err = c.multiEventLoop.globalTask.addTask(c, ts, f)
+			if err == nil {
+				break
+			}
+
+			if err == ErrTaskQueueFull {
+				c.multiEventLoop.globalTask.addGo()
+				c.getLogger().Debug("greatws. 负载较高")
+			}
+		}
+		// time.Sleep(time.Duration(i+1) * time.Millisecond)
 	}
+
+	if err == ErrTaskQueueFull {
+		c.currBindGo.taskChan <- f
+	}
+
 }
 
 func (c *Conn) getFd() int {

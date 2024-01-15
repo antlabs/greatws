@@ -58,17 +58,23 @@ const (
 )
 
 type task struct {
-	c       chan func() bool
+	public  chan func() bool
 	windows windows // 滑动窗口计数，用于判断是否需要新增go程
 	taskConfig
 	curGo   int64 // 当前运行协程数
 	curTask int64 // 当前运行任务数
 
-	mu              sync.Mutex
-	allBusinessGo   []*businessGo
-	id              uint32
+	mu            sync.Mutex
+	allBusinessGo []*businessGo
+	id            uint32
+	// 窃取id
+	stealID         uint32
 	taskMode        taskMode
 	businessChanNum int
+}
+
+func (t *task) nextStealID() uint32 {
+	return (atomic.AddUint32(&t.stealID, 1) - 1) % uint32(len(t.allBusinessGo))
 }
 
 func (t *task) nextID() uint32 {
@@ -77,8 +83,8 @@ func (t *task) nextID() uint32 {
 
 // 初始化
 func (t *task) initInner() {
-	t.c = make(chan func() bool)
-	t.allBusinessGo = make([]*businessGo, t.initCount)
+	t.public = make(chan func() bool, runtime.NumCPU())
+	t.allBusinessGo = make([]*businessGo, 0, t.initCount)
 	t.windows.init()
 	go t.manageGo()
 	go t.runConsumerLoop()
@@ -109,35 +115,63 @@ func (t *task) sharkAllBusinessGo() {
 }
 
 // 消费者循环
-func (t *task) consumer() {
+func (t *task) consumer(steal *businessGo) {
 	defer atomic.AddInt64(&t.curGo, -1)
 	currBusinessGo := newBusinessGo(t.businessChanNum)
 	t.mu.Lock()
 	t.allBusinessGo = append(t.allBusinessGo, currBusinessGo)
 	t.mu.Unlock()
 
+	// 窃取下任务
+	if steal == nil {
+		t.mu.Lock()
+		steal = t.allBusinessGo[t.nextStealID()]
+		t.mu.Unlock()
+	}
+
+	// 如果有任务，先窃取
+	if len(steal.taskChan) > 0 {
+		for {
+			select {
+			case f := <-steal.taskChan:
+				if exit := t.runWork(currBusinessGo, f); exit {
+					return
+				}
+			default:
+				goto next
+			}
+		}
+	next:
+	}
+
 	var f func() bool
 	for {
 		select {
-		case f = <-t.c:
+		case f = <-t.public:
 		case f = <-currBusinessGo.taskChan:
 		}
 
-		atomic.AddInt64(&t.curTask, 1)
-		if b := f(); b {
-			t.mu.Lock()
-			t.sharkAllBusinessGo()
-			t.mu.Unlock()
-
-			atomic.AddInt64(&t.curTask, -1)
-			if !currBusinessGo.canKill() {
-				continue
-			}
-
-			break
+		if exit := t.runWork(currBusinessGo, f); exit {
+			return
 		}
-		atomic.AddInt64(&t.curTask, -1)
 	}
+}
+func (t *task) runWork(currBusinessGo *businessGo, f func() bool) (exit bool) {
+	atomic.AddInt64(&t.curTask, 1)
+	if b := f(); b {
+		t.mu.Lock()
+		t.sharkAllBusinessGo()
+		t.mu.Unlock()
+
+		atomic.AddInt64(&t.curTask, -1)
+		if !currBusinessGo.canKill() {
+			return false
+		}
+
+		return true
+	}
+	atomic.AddInt64(&t.curTask, -1)
+	return false
 }
 
 // 获取一个go程，如果是slice的话，轮询获取
@@ -176,24 +210,29 @@ func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
 		}
 
 	}
-
-	if len(t.c) >= cap(t.c) {
+	// 如果任务未满，直接放入公共队列
+	if len(t.public) >= cap(t.public) {
 		return ErrTaskQueueFull
 	}
-	t.c <- f
+	t.public <- f
 	return nil
 }
 
 // 新增go程
 func (t *task) addGo() {
+	if atomic.LoadInt64(&t.curGo) >= int64(t.max) {
+		return
+	}
 	atomic.AddInt64(&t.curGo, 1)
-	defer atomic.AddInt64(&t.curGo, -1)
-	t.consumer()
+	go func() {
+		defer atomic.AddInt64(&t.curGo, -1)
+		t.consumer(nil)
+	}()
 }
 
 func (t *task) addGoNum(n int) {
 	for i := 0; i < n; i++ {
-		go t.addGo()
+		t.addGo()
 	}
 }
 
@@ -207,7 +246,7 @@ func (t *task) cancelGoNum(sharkSize int) {
 		if atomic.LoadInt64(&t.curGo) < int64(t.min) {
 			return
 		}
-		t.c <- exitFunc
+		t.public <- exitFunc
 	}
 
 }
