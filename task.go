@@ -315,7 +315,7 @@ func (t *task) manageGo() {
 func (t *task) runConsumerLoop() {
 	atomic.AddInt64(&t.curGo, int64(t.initCount))
 	for i := 0; i < t.initCount; i++ {
-		go t.consumer()
+		go t.consumer(nil)
 	}
 }
 
