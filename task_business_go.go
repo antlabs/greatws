@@ -20,6 +20,7 @@ type businessGo struct {
 	// 被多少conn绑定
 	bindConnCount int64
 	closed        uint32
+	index         int //在min heap中的索引，方便删除或者重新推入堆中
 }
 
 func (b *businessGo) isClose() bool {
@@ -49,4 +50,34 @@ func newBusinessGo(num int) *businessGo {
 	return &businessGo{
 		taskChan: make(chan func() bool, num),
 	}
+}
+
+type allBusinessGo []*businessGo
+
+func (a allBusinessGo) Less(i, j int) bool {
+	return atomic.LoadInt64(&a[i].bindConnCount) < atomic.LoadInt64(&a[j].bindConnCount)
+}
+
+func (a allBusinessGo) Len() int { return len(a) }
+
+func (a allBusinessGo) Swap(i, j int) {
+	a[i], a[j] = a[j], a[i]
+	a[i].index = i
+	a[j].index = j
+}
+
+func (a *allBusinessGo) Push(x any) {
+	// Push and Pop use pointer receivers because they modify the slice's length,
+	// not just its contents.
+	*a = append(*a, x.(*businessGo))
+	lastIndex := len(*a) - 1
+	(*a)[lastIndex].index = lastIndex
+}
+
+func (a *allBusinessGo) Pop() any {
+	old := *a
+	n := len(old)
+	x := old[n-1]
+	*a = old[0 : n-1]
+	return x
 }
