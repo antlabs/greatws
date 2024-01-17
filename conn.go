@@ -23,6 +23,7 @@ import (
 	"math/rand"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/enum"
@@ -75,6 +76,14 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
+// 获取当前绑定的go程
+func (c *Conn) getCurrBindGo() *businessGo {
+	return (*businessGo)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo))))
+}
+
+func (c *Conn) setCurrBindGo(b *businessGo) {
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo)), unsafe.Pointer(b))
+}
 func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 	if c.isClosed() {
 		return
@@ -96,22 +105,22 @@ func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 			break
 		}
 		if err == ErrTaskQueueFull {
-			c.parent.localTask.addGo()
-			err = c.multiEventLoop.globalTask.addTask(c, ts, f)
-			if err == nil {
-				break
-			}
-
-			if err == ErrTaskQueueFull {
-				c.multiEventLoop.globalTask.addGo()
-				c.getLogger().Debug("greatws. 负载较高")
-			}
+			c.parent.localTask.addGoWithSteal(c.getCurrBindGo())
+			c.parent.localTask.rebindGo(c)
+			continue
 		}
-		// time.Sleep(time.Duration(i+1) * time.Millisecond)
+
 	}
 
 	if err == ErrTaskQueueFull {
-		c.currBindGo.taskChan <- f
+		err = c.multiEventLoop.globalTask.addTask(c, ts, f)
+		if err != ErrTaskQueueFull {
+			c.multiEventLoop.globalTask.addGoWithSteal(c.getCurrBindGo())
+			c.multiEventLoop.globalTask.rebindGo(c)
+		}
+
+		c.multiEventLoop.globalTask.public <- f
+
 	}
 
 }

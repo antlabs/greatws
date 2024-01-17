@@ -132,7 +132,7 @@ func (c *Conn) closeWithLock(err error) {
 
 	switch c.Config.runInGoStrategy {
 	case taskStrategyBind:
-		if c.currBindGo != nil {
+		if c.getCurrBindGo() != nil {
 			c.currBindGo.subBinConnCount()
 		}
 	case taskStrategyStream:

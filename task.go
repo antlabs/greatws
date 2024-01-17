@@ -14,6 +14,7 @@
 package greatws
 
 import (
+	"container/heap"
 	"errors"
 	"runtime"
 	"sync"
@@ -65,7 +66,7 @@ type task struct {
 	curTask int64 // 当前运行任务数
 
 	mu            sync.Mutex
-	allBusinessGo []*businessGo
+	allBusinessGo allBusinessGo
 	id            uint32
 	// 窃取id
 	stealID         uint32
@@ -119,7 +120,8 @@ func (t *task) consumer(steal *businessGo) {
 	defer atomic.AddInt64(&t.curGo, -1)
 	currBusinessGo := newBusinessGo(t.businessChanNum)
 	t.mu.Lock()
-	t.allBusinessGo = append(t.allBusinessGo, currBusinessGo)
+	// t.allBusinessGo = append(t.allBusinessGo, currBusinessGo)
+	heap.Push(&t.allBusinessGo, currBusinessGo)
 	t.mu.Unlock()
 
 	// 窃取下任务
@@ -199,10 +201,10 @@ func (t *task) getGo() *businessGo {
 func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
 
 	if ts == taskStrategyBind {
-		if c.currBindGo == nil {
-			c.currBindGo = t.getGo()
+		if c.getCurrBindGo() == nil {
+			c.setCurrBindGo(t.getGo())
 		}
-		currChan := c.currBindGo.taskChan
+		currChan := c.getCurrBindGo().taskChan
 		// 如果任务未满，直接放入任务队列
 		if len(currChan) < cap(currChan) {
 			currChan <- f
@@ -218,16 +220,36 @@ func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
 	return nil
 }
 
-// 新增go程
-func (t *task) addGo() {
+// 重新绑定
+func (t *task) rebindGo(c *Conn) {
+
+	t.mu.Lock()
+	minTask := t.allBusinessGo[0]
+	src := c.getCurrBindGo()
+	if src.bindConnCount > minTask.bindConnCount {
+		src.subBinConnCount()
+		minTask.addBinConnCount()
+		c.setCurrBindGo(minTask)
+		heap.Fix(&t.allBusinessGo, src.index)
+		heap.Fix(&t.allBusinessGo, minTask.index)
+	}
+	t.mu.Unlock()
+}
+
+func (t *task) addGoWithSteal(g *businessGo) {
 	if atomic.LoadInt64(&t.curGo) >= int64(t.max) {
 		return
 	}
 	atomic.AddInt64(&t.curGo, 1)
 	go func() {
 		defer atomic.AddInt64(&t.curGo, -1)
-		t.consumer(nil)
+		t.consumer(g)
 	}()
+}
+
+// 新增go程
+func (t *task) addGo() {
+	t.addGoWithSteal(nil)
 }
 
 func (t *task) addGoNum(n int) {
