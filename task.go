@@ -20,8 +20,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/antlabs/gstl/cmp"
 )
 
 // 运行task的策略
@@ -78,9 +76,9 @@ func (t *task) nextStealID() uint32 {
 	return (atomic.AddUint32(&t.stealID, 1) - 1) % uint32(len(t.allBusinessGo))
 }
 
-func (t *task) nextID() uint32 {
-	return (atomic.AddUint32(&t.id, 1) - 1) % uint32(len(t.allBusinessGo))
-}
+// func (t *task) nextID() uint32 {
+// 	return (atomic.AddUint32(&t.id, 1) - 1) % uint32(len(t.allBusinessGo))
+// }
 
 // 初始化
 func (t *task) initInner() {
@@ -97,22 +95,6 @@ func (t *task) init() {
 		t.businessChanNum = 1024
 	}
 	t.initInner()
-}
-
-// 收缩go程的slice，直接迁移完。TODO：分摊优化
-func (t *task) sharkAllBusinessGo() {
-	if len(t.allBusinessGo)/2 > int(t.curGo) {
-		needSize := cmp.Max(len(t.allBusinessGo)/2, t.min)
-		newAllBusinessGo := make([]*businessGo, 0, needSize)
-		for _, v := range t.allBusinessGo {
-			if v == nil || v.isClose() {
-				continue
-			}
-
-			newAllBusinessGo = append(newAllBusinessGo, v)
-		}
-		t.allBusinessGo = newAllBusinessGo
-	}
 }
 
 // 消费者循环
@@ -161,14 +143,14 @@ func (t *task) consumer(steal *businessGo) {
 func (t *task) runWork(currBusinessGo *businessGo, f func() bool) (exit bool) {
 	atomic.AddInt64(&t.curTask, 1)
 	if b := f(); b {
-		t.mu.Lock()
-		t.sharkAllBusinessGo()
-		t.mu.Unlock()
-
-		atomic.AddInt64(&t.curTask, -1)
 		if !currBusinessGo.canKill() {
 			return false
 		}
+		t.mu.Lock()
+		heap.Remove(&t.allBusinessGo, currBusinessGo.index)
+		t.mu.Unlock()
+
+		atomic.AddInt64(&t.curTask, -1)
 
 		return true
 	}
@@ -176,26 +158,14 @@ func (t *task) runWork(currBusinessGo *businessGo, f func() bool) (exit bool) {
 	return false
 }
 
-// 获取一个go程，如果是slice的话，轮询获取
+// 获取一个go程，如果是slice的话，最小连接数的方式
 func (t *task) getGo() *businessGo {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for i := 0; i < len(t.allBusinessGo); i++ {
-		k := t.nextID()
-		v := t.allBusinessGo[k]
-		if v == nil {
-			continue
-		}
-
-		if v.isClose() {
-			t.allBusinessGo[k] = nil
-			continue
-		}
-		v.addBinConnCount()
-		return v
-	}
-
-	panic("businessgo is nil ")
+	v := t.allBusinessGo[0]
+	v.addBinConnCount()
+	heap.Fix(&t.allBusinessGo, v.index)
+	return v
 }
 
 func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
