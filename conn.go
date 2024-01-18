@@ -113,14 +113,7 @@ func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 	}
 
 	if err == ErrTaskQueueFull {
-		err = c.multiEventLoop.globalTask.addTask(c, ts, f)
-		if err != ErrTaskQueueFull {
-			c.multiEventLoop.globalTask.addGoWithSteal(c.getCurrBindGo())
-			c.multiEventLoop.globalTask.rebindGo(c)
-		}
-
-		c.multiEventLoop.globalTask.public <- f
-
+		c.parent.localTask.public <- f
 	}
 
 }

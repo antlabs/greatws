@@ -189,9 +189,21 @@ func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
 	return nil
 }
 
-// 重新绑定
-func (t *task) rebindGo(c *Conn) {
+func (t *task) rebindGoFast(c *Conn) {
+	t.mu.Lock()
+	minTask := t.allBusinessGo[0]
+	src := c.getCurrBindGo()
+	if src.bindConnCount > minTask.bindConnCount {
+		src.subBinConnCount()
+		minTask.addBinConnCount()
+		c.setCurrBindGo(minTask)
+		heap.Fix(&t.allBusinessGo, src.index)
+		heap.Fix(&t.allBusinessGo, minTask.index)
+	}
+	t.mu.Unlock()
+}
 
+func (t *task) rebindGoSlow(c *Conn) {
 	src := c.getCurrBindGo()
 	srcBindConnCount := src.getBindConnCount()
 	need := false
@@ -215,6 +227,15 @@ func (t *task) rebindGo(c *Conn) {
 		heap.Fix(&src.parent.allBusinessGo, src.index)
 		src.parent.mu.Unlock()
 	}
+}
+
+// 重新绑定
+func (t *task) rebindGo(c *Conn) {
+	if t == c.currBindGo.parent {
+		t.rebindGoFast(c)
+		return
+	}
+	t.rebindGoSlow(c)
 }
 
 func (t *task) addGoWithSteal(g *businessGo) {

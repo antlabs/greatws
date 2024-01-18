@@ -24,11 +24,14 @@ type MultiEventLoop struct {
 	numLoops    int // 事件循环数量
 	maxEventNum int
 	loops       []*EventLoop
-	globalTask  task
-	runInIo     taskIo
-	flag        evFlag // 是否使用io_uring
-	level       slog.Level
-	stat        // 统计信息
+	// 只是配置的作用，不是真正的任务池， fd是绑定到某个事件循环上的，
+	// 任务池是绑定到某个事件循环上的，所以这里的任务池也绑定到对应的localTask上
+	// 如果设计全局任务池，那么概念就会很乱，容易出错，也会临界区竞争
+	configTask task
+	runInIo    taskIo
+	flag       evFlag // 是否使用io_uring
+	level      slog.Level
+	stat       // 统计信息
 	*slog.Logger
 	taskMode taskMode
 }
@@ -52,22 +55,22 @@ func (m *MultiEventLoop) initDefaultSetting() {
 		m.maxEventNum = defMaxEventNum
 	}
 
-	if m.globalTask.min == 0 {
-		m.globalTask.min = defTaskMin
+	if m.configTask.min == 0 {
+		m.configTask.min = defTaskMin
 	} else {
-		m.globalTask.min = max(m.globalTask.min/(m.numLoops+1), 1)
+		m.configTask.min = max(m.configTask.min/(m.numLoops), 1)
 	}
 
-	if m.globalTask.max == 0 {
-		m.globalTask.max = defTaskMax
+	if m.configTask.max == 0 {
+		m.configTask.max = defTaskMax
 	} else {
-		m.globalTask.max = max(m.globalTask.max/(m.numLoops+1), 1)
+		m.configTask.max = max(m.configTask.max/(m.numLoops), 1)
 	}
 
-	if m.globalTask.initCount == 0 {
-		m.globalTask.initCount = defTaskInitCount
+	if m.configTask.initCount == 0 {
+		m.configTask.initCount = defTaskInitCount
 	} else {
-		m.globalTask.initCount = max(m.globalTask.initCount/(m.numLoops+1), 1)
+		m.configTask.initCount = max(m.configTask.initCount/(m.numLoops), 1)
 	}
 
 	if m.flag == 0 {
@@ -96,9 +99,9 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m.initDefaultSetting()
 
 	// 设置任务池模式(tps, 或者流量模式)
-	m.globalTask.taskMode = m.taskMode
+	m.configTask.taskMode = m.taskMode
 
-	m.globalTask.init()
+	m.configTask.init()
 
 	m.loops = make([]*EventLoop, m.numLoops)
 
