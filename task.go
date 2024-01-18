@@ -100,9 +100,8 @@ func (t *task) init() {
 // 消费者循环
 func (t *task) consumer(steal *businessGo) {
 	defer atomic.AddInt64(&t.curGo, -1)
-	currBusinessGo := newBusinessGo(t.businessChanNum)
+	currBusinessGo := newBusinessGo(t.businessChanNum, t)
 	t.mu.Lock()
-	// t.allBusinessGo = append(t.allBusinessGo, currBusinessGo)
 	heap.Push(&t.allBusinessGo, currBusinessGo)
 	t.mu.Unlock()
 
@@ -140,6 +139,7 @@ func (t *task) consumer(steal *businessGo) {
 		}
 	}
 }
+
 func (t *task) runWork(currBusinessGo *businessGo, f func() bool) (exit bool) {
 	atomic.AddInt64(&t.curTask, 1)
 	if b := f(); b {
@@ -169,7 +169,6 @@ func (t *task) getGo() *businessGo {
 }
 
 func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
-
 	if ts == taskStrategyBind {
 		if c.getCurrBindGo() == nil {
 			c.setCurrBindGo(t.getGo())
@@ -193,17 +192,29 @@ func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
 // 重新绑定
 func (t *task) rebindGo(c *Conn) {
 
+	src := c.getCurrBindGo()
+	srcBindConnCount := src.getBindConnCount()
+	need := false
+
 	t.mu.Lock()
 	minTask := t.allBusinessGo[0]
-	src := c.getCurrBindGo()
-	if src.bindConnCount > minTask.bindConnCount {
+
+	if srcBindConnCount > minTask.bindConnCount {
 		src.subBinConnCount()
 		minTask.addBinConnCount()
+
 		c.setCurrBindGo(minTask)
-		heap.Fix(&t.allBusinessGo, src.index)
+
 		heap.Fix(&t.allBusinessGo, minTask.index)
+		need = true
 	}
 	t.mu.Unlock()
+
+	if need {
+		src.parent.mu.Lock()
+		heap.Fix(&src.parent.allBusinessGo, src.index)
+		src.parent.mu.Unlock()
+	}
 }
 
 func (t *task) addGoWithSteal(g *businessGo) {
@@ -230,7 +241,6 @@ func (t *task) addGoNum(n int) {
 
 // 取消go程
 func (t *task) cancelGoNum(sharkSize int) {
-
 	if atomic.LoadInt64(&t.curGo) < int64(t.min) {
 		return
 	}
@@ -240,7 +250,6 @@ func (t *task) cancelGoNum(sharkSize int) {
 		}
 		t.public <- exitFunc
 	}
-
 }
 
 // 需要扩容
@@ -285,7 +294,6 @@ func (t *task) needShrink() (bool, int) {
 
 // 管理go程
 func (t *task) manageGo() {
-
 	for {
 		time.Sleep(time.Second * 1)
 		// 当前运行的go程数
@@ -300,7 +308,6 @@ func (t *task) manageGo() {
 			t.addGoNum(newSize - int(curGo))
 		}
 	}
-
 }
 
 // 运行任务

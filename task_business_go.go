@@ -20,7 +20,12 @@ type businessGo struct {
 	// 被多少conn绑定
 	bindConnCount int64
 	closed        uint32
-	index         int //在min heap中的索引，方便删除或者重新推入堆中
+	index         int // 在min heap中的索引，方便删除或者重新推入堆中
+	parent        *task
+}
+
+func (b *businessGo) getBindConnCount() int64 {
+	return atomic.LoadInt64(&b.bindConnCount)
 }
 
 func (b *businessGo) isClose() bool {
@@ -46,9 +51,10 @@ func (b *businessGo) canKill() bool {
 	return curConn == 0
 }
 
-func newBusinessGo(num int) *businessGo {
+func newBusinessGo(num int, parent *task) *businessGo {
 	return &businessGo{
 		taskChan: make(chan func() bool, num),
+		parent:   parent,
 	}
 }
 
@@ -77,7 +83,9 @@ func (a *allBusinessGo) Push(x any) {
 func (a *allBusinessGo) Pop() any {
 	old := *a
 	n := len(old)
-	x := old[n-1]
+	item := old[n-1]
+	old[n-1] = nil
+	item.index = -1
 	*a = old[0 : n-1]
-	return x
+	return item
 }
