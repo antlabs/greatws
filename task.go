@@ -90,7 +90,7 @@ func (t *task) initInner() {
 }
 
 func (t *task) init() {
-	t.businessChanNum = runtime.NumCPU()
+	t.businessChanNum = runtime.NumCPU() / 4
 	if t.taskMode == trafficMode {
 		t.businessChanNum = 1024
 	}
@@ -203,50 +203,32 @@ func (t *task) rebindGoFast(c *Conn) {
 	t.mu.Unlock()
 }
 
-func (t *task) rebindGoSlow(c *Conn) {
-	src := c.getCurrBindGo()
-	srcBindConnCount := src.getBindConnCount()
-	need := false
-
-	t.mu.Lock()
-	minTask := t.allBusinessGo[0]
-
-	if srcBindConnCount > minTask.bindConnCount {
-		src.subBinConnCount()
-		minTask.addBinConnCount()
-
-		c.setCurrBindGo(minTask)
-
-		heap.Fix(&t.allBusinessGo, minTask.index)
-		need = true
-	}
-	t.mu.Unlock()
-
-	if need {
-		src.parent.mu.Lock()
-		heap.Fix(&src.parent.allBusinessGo, src.index)
-		src.parent.mu.Unlock()
-	}
-}
-
 // 重新绑定
 func (t *task) rebindGo(c *Conn) {
 	if t == c.currBindGo.parent {
 		t.rebindGoFast(c)
 		return
 	}
-	t.rebindGoSlow(c)
+	panic("not support")
+	// t.rebindGoSlow(c)
 }
 
-func (t *task) addGoWithSteal(g *businessGo) {
+// 是否满了
+func (t *task) isFull() bool {
+	return atomic.LoadInt64(&t.curGo) >= int64(t.max)
+
+}
+
+func (t *task) addGoWithSteal(g *businessGo) bool {
 	if atomic.LoadInt64(&t.curGo) >= int64(t.max) {
-		return
+		return false
 	}
 	atomic.AddInt64(&t.curGo, 1)
 	go func() {
 		defer atomic.AddInt64(&t.curGo, -1)
 		t.consumer(g)
 	}()
+	return true
 }
 
 // 新增go程

@@ -99,21 +99,30 @@ func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 	}
 
 	var err error
-	for i := 0; i < 2; i++ {
+	retry := 2
+	if c.parent.localTask.isFull() {
+		retry = 1
+	}
+
+	for i := 0; i < retry; i++ {
 		err = c.parent.localTask.addTask(c, ts, f)
-		if err == nil {
+		if err == nil || retry == 1 {
 			break
 		}
 		if err == ErrTaskQueueFull {
-			c.parent.localTask.addGoWithSteal(c.getCurrBindGo())
-			c.parent.localTask.rebindGo(c)
+			if c.parent.localTask.addGoWithSteal(c.getCurrBindGo()) {
+				c.parent.localTask.rebindGo(c)
+			}
 			continue
 		}
 
 	}
 
 	if err == ErrTaskQueueFull {
-		c.parent.localTask.public <- f
+		// 负载高走自己专用chan
+		c.getCurrBindGo().taskChan <- f
+		// 负载低走公共chan, TODO， 需要找一个判断高/低雷负载的条件
+		// c.parent.localTask.public <- f
 	}
 
 }
@@ -594,15 +603,11 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 	}
 
 	var fw fixedwriter.FixedWriter
-	// 没有使用io_uring
-	if !c.useIoUring() {
-		c.mu.Lock()
-		err = frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
-		c.mu.Unlock()
-	} else {
-		// 使用io_uring
-		// TODO
-	}
+
+	c.mu.Lock()
+	err = frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
+	c.mu.Unlock()
+
 	return err
 }
 
