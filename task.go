@@ -14,13 +14,12 @@
 package greatws
 
 import (
+	"container/heap"
 	"errors"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/antlabs/gstl/cmp"
 )
 
 // 运行task的策略
@@ -58,117 +57,123 @@ const (
 )
 
 type task struct {
-	c       chan func() bool
+	public  chan func() bool
 	windows windows // 滑动窗口计数，用于判断是否需要新增go程
 	taskConfig
 	curGo   int64 // 当前运行协程数
 	curTask int64 // 当前运行任务数
 
-	mu              sync.Mutex
-	allBusinessGo   []*businessGo
-	id              uint32
+	mu            sync.Mutex
+	allBusinessGo allBusinessGo
+	id            uint32
+	// 窃取id
+	stealID         uint32
 	taskMode        taskMode
 	businessChanNum int
 }
 
-func (t *task) nextID() uint32 {
-	return (atomic.AddUint32(&t.id, 1) - 1) % uint32(len(t.allBusinessGo))
+func (t *task) nextStealID() uint32 {
+	return (atomic.AddUint32(&t.stealID, 1) - 1) % uint32(len(t.allBusinessGo))
 }
+
+// func (t *task) nextID() uint32 {
+// 	return (atomic.AddUint32(&t.id, 1) - 1) % uint32(len(t.allBusinessGo))
+// }
 
 // 初始化
 func (t *task) initInner() {
-	t.c = make(chan func() bool)
-	t.allBusinessGo = make([]*businessGo, t.initCount)
+	t.public = make(chan func() bool, runtime.NumCPU())
+	t.allBusinessGo = make([]*businessGo, 0, t.initCount)
 	t.windows.init()
 	go t.manageGo()
 	go t.runConsumerLoop()
 }
 
 func (t *task) init() {
-	t.businessChanNum = runtime.NumCPU()
+	t.businessChanNum = runtime.NumCPU() / 4
 	if t.taskMode == trafficMode {
 		t.businessChanNum = 1024
 	}
 	t.initInner()
 }
 
-// 收缩go程的slice，直接迁移完。TODO：分摊优化
-func (t *task) sharkAllBusinessGo() {
-	if len(t.allBusinessGo)/2 > int(t.curGo) {
-		needSize := cmp.Max(len(t.allBusinessGo)/2, t.min)
-		newAllBusinessGo := make([]*businessGo, 0, needSize)
-		for _, v := range t.allBusinessGo {
-			if v == nil || v.isClose() {
-				continue
-			}
-
-			newAllBusinessGo = append(newAllBusinessGo, v)
-		}
-		t.allBusinessGo = newAllBusinessGo
-	}
-}
-
 // 消费者循环
-func (t *task) consumer() {
+func (t *task) consumer(steal *businessGo) {
 	defer atomic.AddInt64(&t.curGo, -1)
-	currBusinessGo := newBusinessGo(t.businessChanNum)
+	currBusinessGo := newBusinessGo(t.businessChanNum, t)
 	t.mu.Lock()
-	t.allBusinessGo = append(t.allBusinessGo, currBusinessGo)
+	heap.Push(&t.allBusinessGo, currBusinessGo)
 	t.mu.Unlock()
+
+	// 窃取下任务
+	if steal == nil {
+		t.mu.Lock()
+		steal = t.allBusinessGo[t.nextStealID()]
+		t.mu.Unlock()
+	}
+
+	// 如果有任务，先窃取
+	if len(steal.taskChan) > 0 {
+		for {
+			select {
+			case f := <-steal.taskChan:
+				if exit := t.runWork(currBusinessGo, f); exit {
+					return
+				}
+			default:
+				goto next
+			}
+		}
+	next:
+	}
 
 	var f func() bool
 	for {
 		select {
-		case f = <-t.c:
+		case f = <-t.public:
 		case f = <-currBusinessGo.taskChan:
 		}
 
-		atomic.AddInt64(&t.curTask, 1)
-		if b := f(); b {
-			t.mu.Lock()
-			t.sharkAllBusinessGo()
-			t.mu.Unlock()
-
-			atomic.AddInt64(&t.curTask, -1)
-			if !currBusinessGo.canKill() {
-				continue
-			}
-
-			break
+		if exit := t.runWork(currBusinessGo, f); exit {
+			return
 		}
-		atomic.AddInt64(&t.curTask, -1)
 	}
 }
 
-// 获取一个go程，如果是slice的话，轮询获取
+func (t *task) runWork(currBusinessGo *businessGo, f func() bool) (exit bool) {
+	atomic.AddInt64(&t.curTask, 1)
+	if b := f(); b {
+		if !currBusinessGo.canKill() {
+			return false
+		}
+		t.mu.Lock()
+		heap.Remove(&t.allBusinessGo, currBusinessGo.index)
+		t.mu.Unlock()
+
+		atomic.AddInt64(&t.curTask, -1)
+
+		return true
+	}
+	atomic.AddInt64(&t.curTask, -1)
+	return false
+}
+
+// 获取一个go程，如果是slice的话，最小连接数的方式
 func (t *task) getGo() *businessGo {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for i := 0; i < len(t.allBusinessGo); i++ {
-		k := t.nextID()
-		v := t.allBusinessGo[k]
-		if v == nil {
-			continue
-		}
-
-		if v.isClose() {
-			t.allBusinessGo[k] = nil
-			continue
-		}
-		v.addBinConnCount()
-		return v
-	}
-
-	panic("businessgo is nil ")
+	v := t.allBusinessGo[0]
+	v.addBinConnCount()
+	heap.Fix(&t.allBusinessGo, v.index)
+	return v
 }
 
 func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
-
 	if ts == taskStrategyBind {
-		if c.currBindGo == nil {
-			c.currBindGo = t.getGo()
+		if c.getCurrBindGo() == nil {
+			c.setCurrBindGo(t.getGo())
 		}
-		currChan := c.currBindGo.taskChan
+		currChan := c.getCurrBindGo().taskChan
 		// 如果任务未满，直接放入任务队列
 		if len(currChan) < cap(currChan) {
 			currChan <- f
@@ -176,30 +181,69 @@ func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
 		}
 
 	}
-
-	if len(t.c) >= cap(t.c) {
+	// 如果任务未满，直接放入公共队列
+	if len(t.public) >= cap(t.public) {
 		return ErrTaskQueueFull
 	}
-	t.c <- f
+	t.public <- f
 	return nil
+}
+
+func (t *task) rebindGoFast(c *Conn) {
+	t.mu.Lock()
+	minTask := t.allBusinessGo[0]
+	src := c.getCurrBindGo()
+	if src.bindConnCount > minTask.bindConnCount {
+		src.subBinConnCount()
+		minTask.addBinConnCount()
+		c.setCurrBindGo(minTask)
+		heap.Fix(&t.allBusinessGo, src.index)
+		heap.Fix(&t.allBusinessGo, minTask.index)
+	}
+	t.mu.Unlock()
+}
+
+// 重新绑定
+func (t *task) rebindGo(c *Conn) {
+	if t == c.currBindGo.parent {
+		t.rebindGoFast(c)
+		return
+	}
+	panic("not support")
+	// t.rebindGoSlow(c)
+}
+
+// 是否满了
+func (t *task) isFull() bool {
+	return atomic.LoadInt64(&t.curGo) >= int64(t.max)
+
+}
+
+func (t *task) addGoWithSteal(g *businessGo) bool {
+	if atomic.LoadInt64(&t.curGo) >= int64(t.max) {
+		return false
+	}
+	atomic.AddInt64(&t.curGo, 1)
+	go func() {
+		defer atomic.AddInt64(&t.curGo, -1)
+		t.consumer(g)
+	}()
+	return true
 }
 
 // 新增go程
 func (t *task) addGo() {
-	atomic.AddInt64(&t.curGo, 1)
-	defer atomic.AddInt64(&t.curGo, -1)
-	t.consumer()
+	t.addGoWithSteal(nil)
 }
 
 func (t *task) addGoNum(n int) {
 	for i := 0; i < n; i++ {
-		go t.addGo()
+		t.addGo()
 	}
 }
 
 // 取消go程
 func (t *task) cancelGoNum(sharkSize int) {
-
 	if atomic.LoadInt64(&t.curGo) < int64(t.min) {
 		return
 	}
@@ -207,9 +251,8 @@ func (t *task) cancelGoNum(sharkSize int) {
 		if atomic.LoadInt64(&t.curGo) < int64(t.min) {
 			return
 		}
-		t.c <- exitFunc
+		t.public <- exitFunc
 	}
-
 }
 
 // 需要扩容
@@ -254,7 +297,6 @@ func (t *task) needShrink() (bool, int) {
 
 // 管理go程
 func (t *task) manageGo() {
-
 	for {
 		time.Sleep(time.Second * 1)
 		// 当前运行的go程数
@@ -269,14 +311,13 @@ func (t *task) manageGo() {
 			t.addGoNum(newSize - int(curGo))
 		}
 	}
-
 }
 
 // 运行任务
 func (t *task) runConsumerLoop() {
 	atomic.AddInt64(&t.curGo, int64(t.initCount))
 	for i := 0; i < t.initCount; i++ {
-		go t.consumer()
+		go t.consumer(nil)
 	}
 }
 

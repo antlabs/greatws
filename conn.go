@@ -23,6 +23,7 @@ import (
 	"math/rand"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/enum"
@@ -75,6 +76,14 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
+// 获取当前绑定的go程
+func (c *Conn) getCurrBindGo() *businessGo {
+	return (*businessGo)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo))))
+}
+
+func (c *Conn) setCurrBindGo(b *businessGo) {
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo)), unsafe.Pointer(b))
+}
 func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 	if c.isClosed() {
 		return
@@ -89,11 +98,33 @@ func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 		return
 	}
 
-	if err := c.parent.localTask.addTask(c, ts, f); err == ErrTaskQueueFull {
-		if err = c.multiEventLoop.globalTask.addTask(c, ts, f); err == ErrTaskQueueFull {
-			// TODO
-		}
+	var err error
+	retry := 2
+	if c.parent.localTask.isFull() {
+		retry = 1
 	}
+
+	for i := 0; i < retry; i++ {
+		err = c.parent.localTask.addTask(c, ts, f)
+		if err == nil || retry == 1 {
+			break
+		}
+		if err == ErrTaskQueueFull {
+			if c.parent.localTask.addGoWithSteal(c.getCurrBindGo()) {
+				c.parent.localTask.rebindGo(c)
+			}
+			continue
+		}
+
+	}
+
+	if err == ErrTaskQueueFull {
+		// 负载高走自己专用chan
+		c.getCurrBindGo().taskChan <- f
+		// 负载低走公共chan, TODO， 需要找一个判断高/低雷负载的条件
+		// c.parent.localTask.public <- f
+	}
+
 }
 
 func (c *Conn) getFd() int {
@@ -572,15 +603,11 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 	}
 
 	var fw fixedwriter.FixedWriter
-	// 没有使用io_uring
-	if !c.useIoUring() {
-		c.mu.Lock()
-		err = frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
-		c.mu.Unlock()
-	} else {
-		// 使用io_uring
-		// TODO
-	}
+
+	c.mu.Lock()
+	err = frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
+	c.mu.Unlock()
+
 	return err
 }
 

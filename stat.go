@@ -27,14 +27,8 @@ type stat struct {
 	pollEv       int64  // poll事件次数, 包含读,写, 错误事件
 }
 
-// func (m *MultiEventLoop) HighLoad() bool {
-// 	return m.globalTask.highLoad()
-// }
-
 // 对外接口，查询当前业务协程池个数
 func (m *MultiEventLoop) GetCurGoNum() (total int) {
-	// 全局go程数
-	total += int(m.globalTask.getCurGo())
 	for _, v := range m.loops {
 		// 本地任务数
 		total += int(v.localTask.getCurGo())
@@ -42,25 +36,13 @@ func (m *MultiEventLoop) GetCurGoNum() (total int) {
 	return
 }
 
-// 对外接口，查询业务协程池-全局池运行的当前业务数
-func (m *MultiEventLoop) GetGlobalCurGoNum() int {
-	return int(m.globalTask.getCurGo())
-}
-
 // 对外接口，查询业务协程池运行的当前业务数
 func (m *MultiEventLoop) GetCurTaskNum() (total int64) {
-	/// 全局任务数
-	total += m.globalTask.getCurTask()
 	for _, v := range m.loops {
 		// 本地任务数
 		total += v.localTask.getCurTask()
 	}
 	return
-}
-
-// 对外接口，查询业务协程池-全局池运行的当前业务数
-func (m *MultiEventLoop) GetGlobalTaskNum() int {
-	return int(m.globalTask.getCurTask())
 }
 
 // 对外接口，查询移动字节数

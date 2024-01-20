@@ -40,9 +40,9 @@ type Config struct {
 	runInGoStrategy                 taskStrategy
 }
 
-func (c *Config) useIoUring() bool {
-	return c.multiEventLoop.flag == EVENT_IOURING
-}
+// func (c *Config) useIoUring() bool {
+// 	return c.multiEventLoop.flag == EVENT_IOURING
+// }
 
 func (c *Config) initPayloadSize() int {
 	return int((1024.0 + float32(enum.MaxFrameHeaderSize)) * c.windowsMultipleTimesPayloadSize)

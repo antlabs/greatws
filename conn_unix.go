@@ -132,7 +132,7 @@ func (c *Conn) closeWithLock(err error) {
 
 	switch c.Config.runInGoStrategy {
 	case taskStrategyBind:
-		if c.currBindGo != nil {
+		if c.getCurrBindGo() != nil {
 			c.currBindGo.subBinConnCount()
 		}
 	case taskStrategyStream:
@@ -309,7 +309,8 @@ func (c *Conn) flushOrClose() (err error) {
 // 2. 缓冲区数据不够，并且一次性读取了多个frame
 func (c *Conn) processWebsocketFrame() (n int, err error) {
 	// 1. 处理frame header
-	if !c.useIoUring() {
+	// if !c.useIoUring() {
+	if true {
 		// 不使用io_uring的直接调用read获取buffer数据
 		for i := 0; ; i++ {
 			fd := atomic.LoadInt64(&c.fd)

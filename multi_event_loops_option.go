@@ -41,9 +41,9 @@ func WithBusinessGoNum(initCount, min, max int) EvOption {
 		if max <= 0 {
 			max = defTaskMax
 		}
-		e.globalTask.initCount = initCount
-		e.globalTask.min = min
-		e.globalTask.max = max
+		e.configTask.initCount = initCount
+		e.configTask.min = min
+		e.configTask.max = max
 	}
 }
 
