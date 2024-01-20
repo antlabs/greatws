@@ -1,6 +1,10 @@
 # greatws
 支持海量连接的websocket库，callback写法
 
+![Go](https://github.com/antlabs/greatws/workflows/Go/badge.svg)
+[![codecov](https://codecov.io/gh/antlabs/greatws/branch/master/graph/badge.svg)](https://codecov.io/gh/antlabs/greatws)
+[![Go Report Card](https://goreportcard.com/badge/github.com/antlabs/greatws)](https://goreportcard.com/report/github.com/antlabs/greatws)
+
 # 特性
 * 支持 epoll/kqueue
 * 低内存占用
