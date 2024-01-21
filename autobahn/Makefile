@@ -11,6 +11,9 @@ all:
 	# windows amd64
 	#GOOS=windows GOARCH=amd64 go build -o autobahn-server-windows-amd64.exe ./autobahn-server.go 
 
+	# freebsd amd64
+	GOOS=freebsd GOARCH=amd64 go build -o autobahn-server-windows-amd64.exe ./autobahn-server.go 
+
 	# mac, arm64
 	#GOOS=darwin GOARCH=arm64 go build -o autobahn-client-darwin-arm64 ./autobahn-client.go 
 	# linux amd64

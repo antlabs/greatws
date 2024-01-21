@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build darwin
-// +build darwin
+//go:build darwin || freebsd
+// +build darwin freebsd
 
 package greatws
 
