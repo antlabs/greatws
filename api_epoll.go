@@ -26,25 +26,19 @@ import (
 )
 
 const (
-
-	// EPOLLET .
-	EPOLLET = 0x80000000
-)
-
-const (
 	// 垂直触发
 	// 来自man 手册
 	// When  used as an edge-triggered interface, for performance reasons,
 	// it is possible to add the file descriptor inside the epoll interface (EPOLL_CTL_ADD) once by specifying (EPOLLIN|EPOLLOUT).
 	// This allows you to avoid con‐
 	// tinuously switching between EPOLLIN and EPOLLOUT calling epoll_ctl(2) with EPOLL_CTL_MOD.
-	etRead      = uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | EPOLLET)
+	etRead      = uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | unix.EPOLLET)
 	etWrite     = uint32(0)
 	etDelWrite  = uint32(0)
 	etResetRead = uint32(0)
 
 	// 一次性触发
-	etReadOneShot      = uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | EPOLLET | unix.EPOLLONESHOT)
+	etReadOneShot      = uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | unix.EPOLLET | unix.EPOLLONESHOT)
 	etWriteOneShot     = uint32(etReadOneShot)
 	etDelWriteOneShot  = uint32(0)
 	etResetReadOneShot = uint32(etReadOneShot)
