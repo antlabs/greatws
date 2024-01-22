@@ -31,7 +31,7 @@ type apiState struct {
 	changes []unix.Kevent_t
 }
 
-const customFd = 1 << 32
+// const customFd = 1 << 32
 
 func (e *EventLoop) apiCreate(flag evFlag) (err error) {
 	var state apiState
@@ -106,10 +106,10 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 
 			conn := e.getConn(fd)
 			if conn == nil {
-				if fd == customFd {
-					e.parent.Logger.Debug("conn is nil", "fd", fd)
-					continue
-				}
+				// if fd == customFd {
+				// 	e.parent.Logger.Debug("conn is nil", "fd", fd)
+				// 	continue
+				// }
 				unix.Close(fd)
 				e.parent.Logger.Debug("conn is nil", "fd", fd)
 				continue
