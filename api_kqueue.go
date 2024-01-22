@@ -31,8 +31,6 @@ type apiState struct {
 	changes []unix.Kevent_t
 }
 
-// const customFd = 1 << 32
-
 func (e *EventLoop) apiCreate(flag evFlag) (err error) {
 	var state apiState
 	state.kqfd, err = unix.Kqueue()
@@ -42,12 +40,6 @@ func (e *EventLoop) apiCreate(flag evFlag) (err error) {
 	e.apiState = &state
 	e.apiState.events = make([]unix.Kevent_t, 1024)
 
-	// _, err = unix.Kevent(state.kqfd, []unix.Kevent_t{{
-	// 	Ident:  customFd,
-	// 	Filter: unix.EVFILT_USER,
-	// 	Flags:  unix.EV_ADD,
-	// 	// Flags:  unix.EV_ADD | unix.EV_CLEAR,
-	// }}, nil, nil)
 	return err
 }
 
@@ -106,10 +98,7 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 
 			conn := e.getConn(fd)
 			if conn == nil {
-				// if fd == customFd {
-				// 	e.parent.Logger.Debug("conn is nil", "fd", fd)
-				// 	continue
-				// }
+
 				unix.Close(fd)
 				e.parent.Logger.Debug("conn is nil", "fd", fd)
 				continue
