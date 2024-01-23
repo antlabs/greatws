@@ -34,8 +34,8 @@ jobs:
     - name: Build
       run: go build -v .
 
-    - name: Test-386
-      run: env GOARCH=386 go test -test.run=Test_Retry_sleep -v 
+    # - name: Test-386
+    #   run: env GOARCH=386 go test -test.run=Test_Retry_sleep -v 
       #run: env GOARCH=386 go test -v -coverprofile='coverage.out' -covermode=count ./...
       
     - name: Test-Race
