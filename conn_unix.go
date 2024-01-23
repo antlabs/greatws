@@ -112,11 +112,13 @@ func duplicateSocket(socketFD int) (int, error) {
 }
 
 func (c *Conn) closeInner(err error) {
-	fd := c.getFd()
-	c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
-	c.parent.del(c)
-	atomic.StoreInt64(&c.fd, -1)
-	atomic.StoreInt32(&c.closed, 1)
+	c.closeOnce.Do(func() {
+		fd := c.getFd()
+		c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
+		c.parent.del(c)
+		atomic.StoreInt64(&c.fd, -1)
+		atomic.StoreInt32(&c.closed, 1)
+	})
 }
 
 func (c *Conn) closeWithLock(err error) {

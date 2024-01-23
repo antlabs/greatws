@@ -40,11 +40,6 @@ func (e *EventLoop) apiCreate(flag evFlag) (err error) {
 	e.apiState = &state
 	e.apiState.events = make([]unix.Kevent_t, 1024)
 
-	_, err = unix.Kevent(state.kqfd, []unix.Kevent_t{{
-		Ident:  0,
-		Filter: unix.EVFILT_USER,
-		Flags:  unix.EV_ADD | unix.EV_CLEAR,
-	}}, nil, nil)
 	return err
 }
 
@@ -54,55 +49,41 @@ func (e *EventLoop) apiFree() {
 	}
 }
 
-// 在另外一个线程唤醒kqueue
-func (e *EventLoop) trigger() (err error) {
-	_, err = unix.Kevent(e.apiState.kqfd, []unix.Kevent_t{{Ident: 0, Filter: unix.EVFILT_USER, Fflags: unix.NOTE_TRIGGER}}, nil, nil)
+// 新加读事件
+func (e *EventLoop) addRead(c *Conn) error {
+	fd := c.getFd()
+	if fd == -1 {
+		return nil
+	}
+
+	_, err := unix.Kevent(e.kqfd, []unix.Kevent_t{
+		{Ident: uint64(fd), Flags: unix.EV_ADD, Filter: unix.EVFILT_READ},
+		{Ident: uint64(fd), Flags: unix.EV_ADD, Filter: unix.EVFILT_WRITE},
+	}, nil, nil)
 	return err
 }
 
-// 新加读事件
-func (e *EventLoop) addRead(c *Conn) error {
-	e.mu.Lock()
-	fd := c.getFd()
-	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_READ, Flags: unix.EV_ADD | unix.EV_CLEAR})
-	e.mu.Unlock()
-	return e.trigger()
-}
-
 func (e *EventLoop) delWrite(c *Conn) (err error) {
-	e.mu.Lock()
-	fd := c.getFd()
-	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_DELETE | unix.EV_CLEAR})
-	e.mu.Unlock()
-	return e.trigger()
+	return nil
 }
 
 // 新加写事件
 func (e *EventLoop) addWrite(c *Conn) error {
-	e.mu.Lock()
-	fd := c.getFd()
-	e.apiState.changes = append(e.apiState.changes, unix.Kevent_t{Ident: uint64(fd), Filter: unix.EVFILT_WRITE, Flags: unix.EV_ADD | unix.EV_CLEAR})
-	e.mu.Unlock()
-	return e.trigger()
+	return nil
 }
 
 func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 	state := e.apiState
 
-	var changes []unix.Kevent_t
-	e.mu.Lock()
-	changes = e.apiState.changes
-	e.apiState.changes = nil
-	e.mu.Unlock()
+	var timeout *unix.Timespec
 	if tv >= 0 {
-		var timeout unix.Timespec
-		timeout.Sec = int64(tv / time.Second)
-		timeout.Nsec = int64(tv % time.Second)
-
-		retVal, err = unix.Kevent(state.kqfd, changes, state.events, &timeout)
-	} else {
-		retVal, err = unix.Kevent(state.kqfd, changes, state.events, nil)
+		var tempTimeout unix.Timespec
+		tempTimeout.Sec = int64(tv / time.Second)
+		tempTimeout.Nsec = int64(tv % time.Second)
+		timeout = &tempTimeout
 	}
+
+	retVal, err = unix.Kevent(state.kqfd, nil, state.events, timeout)
 	if err != nil {
 		if errors.Is(err, unix.EINTR) {
 			return 0, nil
@@ -110,15 +91,16 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 		return 0, err
 	}
 
-	// fmt.Printf("有新的事件发生 %d, err :%v\n", retVal, err)
 	if retVal > 0 {
 		for j := 0; j < retVal; j++ {
 			ev := &state.events[j]
 			fd := int(ev.Ident)
-			// fmt.Printf("fd :%d, filter :%x, flags :%x\n", fd, ev.Filter, ev.Flags)
+
 			conn := e.getConn(fd)
 			if conn == nil {
+
 				unix.Close(fd)
+				e.parent.Logger.Debug("conn is nil", "fd", fd)
 				continue
 			}
 
