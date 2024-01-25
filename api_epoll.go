@@ -183,7 +183,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				e.parent.parent.addReadEvNum()
 
 				// 读取数据，这里要发行下websocket的解析变成流式解析
-				_, err = conn.processWebsocketFrame()
+				err = conn.processWebsocketFrame()
 				if err != nil {
 					conn.closeWithLock(err)
 				}

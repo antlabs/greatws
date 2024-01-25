@@ -110,7 +110,7 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 					continue
 				}
 				// 读取数据，这里要发行下websocket的解析变成流式解析
-				_, err = conn.processWebsocketFrame()
+				err = conn.processWebsocketFrame()
 				if err != nil {
 					conn.closeWithLock(err)
 					continue
