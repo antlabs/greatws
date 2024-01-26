@@ -313,7 +313,7 @@ func (c *Conn) processWebsocketFrame() (err error) {
 	}
 
 	n := 0
-
+	var success bool
 	// 不使用io_uring的直接调用read获取buffer数据
 	for i := 0; ; i++ {
 		fd := atomic.LoadInt64(&c.fd)
@@ -351,11 +351,11 @@ func (c *Conn) processWebsocketFrame() (err error) {
 			// 说明缓存区已经满了。需要扩容
 			// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
 			// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
-			if _, err := c.readHeader(); err != nil {
+			if _, err = c.readHeader(); err != nil {
 				err = fmt.Errorf("read header err: %w", err)
 				goto fail
 			}
-			if _, err := c.readPayloadAndCallback(); err != nil {
+			if _, err = c.readPayloadAndCallback(); err != nil {
 				err = fmt.Errorf("read header err: %w", err)
 				goto fail
 			}
@@ -370,22 +370,22 @@ func (c *Conn) processWebsocketFrame() (err error) {
 	}
 
 	for i := 0; ; i++ {
-		sucess, err := c.readHeader()
+		success, err = c.readHeader()
 		if err != nil {
 			err = fmt.Errorf("read header err: %w", err)
 			goto fail
 		}
 
-		if !sucess {
+		if !success {
 			goto success
 		}
-		sucess, err = c.readPayloadAndCallback()
+		success, err = c.readPayloadAndCallback()
 		if err != nil {
 			err = fmt.Errorf("read payload err: %w", err)
 			goto fail
 		}
 
-		if !sucess {
+		if !success {
 			goto success
 		}
 	}
@@ -393,7 +393,8 @@ func (c *Conn) processWebsocketFrame() (err error) {
 success:
 fail:
 	// 回收read buffer至内存池中
-	if err != nil || c.rbuf != nil && c.rr == c.rw && c.rr == 0 {
+	if err != nil || c.rbuf != nil && c.rr == c.rw {
+		c.rr, c.rw = 0, 0
 		bytespool.PutBytes(c.rbuf)
 		c.rbuf = nil
 	}
