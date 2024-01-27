@@ -15,6 +15,7 @@
 package greatws
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
@@ -31,7 +32,7 @@ func (t *taskStream) loop() {
 	}
 }
 func (t *taskStream) init() {
-	t.streamChan = make(chan func() bool, 3)
+	t.streamChan = make(chan func() bool, runtime.NumCPU())
 	go t.loop()
 }
 
