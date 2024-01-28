@@ -62,6 +62,7 @@ const (
 type conn struct {
 	fd             int64      // 文件描述符fd
 	rbuf           *[]byte    // 读缓冲区
+	lastPayloadLen int64      // 上一次读取的payload长度
 	rr             int        // rbuf读索引
 	rw             int        // rbuf写索引
 	curState       frameState // 保存当前状态机的状态
@@ -292,7 +293,7 @@ func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 	if needRead > 0 {
 		return
 	}
-
+	c.lastPayloadLen = c.rh.PayloadLen
 	// 普通frame
 	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
 	copy(*newBuf, (*c.rbuf)[c.rr:c.rr+int(c.rh.PayloadLen)])

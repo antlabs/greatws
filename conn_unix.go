@@ -27,6 +27,7 @@ import (
 	"unsafe"
 
 	"github.com/antlabs/wsutil/bytespool"
+	"github.com/antlabs/wsutil/enum"
 	"golang.org/x/sys/unix"
 )
 
@@ -74,26 +75,21 @@ func (s writeState) String() string {
 type Conn struct {
 	conn
 
-	// 存在io-uring相关的控制信息
-	// onlyIoUringState
-
-	wbuf       *[]byte // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	mu         sync.Mutex
-	client     bool  // 客户端为true，服务端为false
-	*Config          // 配置
-	closed     int32 // 是否关闭
-	closeOnce  sync.Once
-	parent     *EventLoop
+	wbuf       *[]byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	mu         sync.Mutex  // 锁
+	client     bool        // 客户端为true，服务端为false
+	*Config                // 配置
+	closed     int32       // 是否关闭
+	closeOnce  sync.Once   // 关闭一次
+	parent     *EventLoop  // event loop
 	currBindGo *businessGo // 绑定模式下，当前绑定的go程
 	streamGo   taskStream  // stream模式下，当前绑定的go程
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
-	rbuf := bytespool.GetBytes(conf.initPayloadSize())
 	c := &Conn{
 		conn: conn{
-			fd:   fd,
-			rbuf: rbuf,
+			fd: fd,
 		},
 		// 初始化不分配内存，只有在需要的时候才分配
 		Config: conf,
@@ -309,80 +305,100 @@ func (c *Conn) flushOrClose() (err error) {
 // 有几种情况需要处理下
 // 1. 缓冲区空间不句够，需要扩容
 // 2. 缓冲区数据不够，并且一次性读取了多个frame
-func (c *Conn) processWebsocketFrame() (n int, err error) {
+func (c *Conn) processWebsocketFrame() (err error) {
 	// 1. 处理frame header
 	// if !c.useIoUring() {
-	if true {
-		// 不使用io_uring的直接调用read获取buffer数据
-		for i := 0; ; i++ {
-			fd := atomic.LoadInt64(&c.fd)
-			n, err = unix.Read(int(fd), (*c.rbuf)[c.rw:])
-			c.multiEventLoop.addReadSyscall()
-			// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n", i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
-			if err != nil {
-				// 信号中断，继续读
-				if errors.Is(err, unix.EINTR) {
-					continue
-				}
-				// 出错返回
-				if !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EWOULDBLOCK) {
-					return 0, err
-				}
-				// 缓冲区没有数据，等待可读
-				err = nil
-				break
-			}
+	if c.rbuf == nil {
+		c.rbuf = bytespool.GetBytes(int(float32(c.rh.PayloadLen+enum.MaxFrameHeaderSize) * c.windowsMultipleTimesPayloadSize))
+	}
 
-			// 读到eof，直接关闭
-			if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
-				c.closeWithLock(io.EOF)
-				c.OnClose(c, io.EOF)
-				return
-			}
-
-			if n > 0 {
-				c.rw += n
-			}
-
-			if len((*c.rbuf)[c.rw:]) == 0 {
-				// 说明缓存区已经满了。需要扩容
-				// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
-				// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
-				if _, err := c.readHeader(); err != nil {
-					return 0, fmt.Errorf("read header err: %w", err)
-				}
-				if _, err := c.readPayloadAndCallback(); err != nil {
-					return 0, fmt.Errorf("read header err: %w", err)
-				}
-
-				// TODO
-				if len((*c.rbuf)[c.rw:]) == 0 {
-					//
-					// panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
-				}
+	n := 0
+	var success bool
+	// 不使用io_uring的直接调用read获取buffer数据
+	for i := 0; ; i++ {
+		fd := atomic.LoadInt64(&c.fd)
+		n, err = unix.Read(int(fd), (*c.rbuf)[c.rw:])
+		c.multiEventLoop.addReadSyscall()
+		// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n",
+		// i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
+		if err != nil {
+			// 信号中断，继续读
+			if errors.Is(err, unix.EINTR) {
 				continue
 			}
+			// 出错返回
+			if !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EWOULDBLOCK) {
+				goto fail
+			}
+			// 缓冲区没有数据，等待可读
+			err = nil
+			break
+		}
+
+		// 读到eof，直接关闭
+		if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
+			c.closeWithLock(io.EOF)
+			c.OnClose(c, io.EOF)
+			err = io.EOF
+			goto fail
+		}
+
+		if n > 0 {
+			c.rw += n
+		}
+
+		if len((*c.rbuf)[c.rw:]) == 0 {
+			// 说明缓存区已经满了。需要扩容
+			// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
+			// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
+			if _, err = c.readHeader(); err != nil {
+				err = fmt.Errorf("read header err: %w", err)
+				goto fail
+			}
+			if _, err = c.readPayloadAndCallback(); err != nil {
+				err = fmt.Errorf("read header err: %w", err)
+				goto fail
+			}
+
+			// TODO
+			if len((*c.rbuf)[c.rw:]) == 0 {
+				//
+				// panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
+			}
+			continue
 		}
 	}
 
 	for i := 0; ; i++ {
-		sucess, err := c.readHeader()
+		success, err = c.readHeader()
 		if err != nil {
-			return 0, fmt.Errorf("read header err: %w", err)
+			err = fmt.Errorf("read header err: %w", err)
+			goto fail
 		}
 
-		if !sucess {
-			return 0, nil
+		if !success {
+			goto success
 		}
-		sucess, err = c.readPayloadAndCallback()
+		success, err = c.readPayloadAndCallback()
 		if err != nil {
-			return 0, fmt.Errorf("read header err: %w", err)
+			err = fmt.Errorf("read payload err: %w", err)
+			goto fail
 		}
 
-		if !sucess {
-			return 0, nil
+		if !success {
+			goto success
 		}
 	}
+
+success:
+fail:
+	// 回收read buffer至内存池中
+	if err != nil || c.rbuf != nil && c.rr == c.rw {
+		c.rr, c.rw = 0, 0
+		bytespool.PutBytes(c.rbuf)
+		c.rbuf = nil
+	}
+	return err
 }
 
 func closeFd(fd int) {
