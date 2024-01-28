@@ -31,6 +31,13 @@ func (t *taskStream) loop() {
 		cb()
 	}
 }
+
+func newTaskStream() *taskStream {
+	t := &taskStream{}
+	t.init()
+	return t
+}
+
 func (t *taskStream) init() {
 	t.streamChan = make(chan func() bool, runtime.NumCPU())
 	go t.loop()
