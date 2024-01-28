@@ -77,13 +77,13 @@ type Conn struct {
 
 	wbuf       *[]byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
 	mu         sync.Mutex  // 锁
-	client     bool        // 客户端为true，服务端为false
 	*Config                // 配置
-	closed     int32       // 是否关闭
-	closeOnce  sync.Once   // 关闭一次
 	parent     *EventLoop  // event loop
 	currBindGo *businessGo // 绑定模式下，当前绑定的go程
-	streamGo   taskStream  // stream模式下，当前绑定的go程
+	streamGo   *taskStream // stream模式下，当前绑定的go程
+	closeOnce  sync.Once   // 关闭一次
+	closed     int32       // 是否关闭
+	client     bool        // 客户端为true，服务端为false
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
@@ -98,7 +98,7 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 	}
 
 	if conf.runInGoStrategy == taskStrategyStream {
-		c.streamGo.init()
+		c.streamGo = newTaskStream()
 	}
 	return c
 }

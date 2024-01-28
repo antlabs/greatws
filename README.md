@@ -82,3 +82,65 @@ func main() {
 	}
 }
 ```
+## 100w websocket长链接测试
+### e5 洋垃圾机器
+* cpu=e5 2686(单路)
+* memory=32GB
+```
+BenchType  : BenchEcho
+Framework  : greatws
+TPS        : 27954
+EER        : 225.42
+Min        : 35.05us
+Avg        : 1.79s
+Max        : 2.74s
+TP50       : 1.88s
+TP75       : 1.95s
+TP90       : 1.99s
+TP95       : 2.02s
+TP99       : 2.09s
+Used       : 178.86s
+Total      : 5000000
+Success    : 5000000
+Failed     : 0
+Conns      : 1000000
+Concurrency: 50000
+Payload    : 1024
+CPU Min    : 41.62%
+CPU Avg    : 124.01%
+CPU Max    : 262.72%
+MEM Min    : 555.25M
+MEM Avg    : 562.44M
+MEM Max    : 626.47M
+```
+
+### 5800h cpu
+* cpu=5800h
+* memory=64GB
+```
+BenchType  : BenchEcho
+Framework  : greatws
+TPS        : 82088
+EER        : 447.72
+Min        : -1ns
+Avg        : 605.25ms
+Max        : 1.68s
+TP50       : 609.79ms
+TP75       : 709.26ms
+TP90       : 761.86ms
+TP95       : 771.77ms
+TP99       : 779.10ms
+Used       : 50.47s
+Total      : 5000000
+Success    : 4142842
+Failed     : 857158
+Conns      : 1000000
+Concurrency: 50000
+Payload    : 1024
+CPU Min    : 114.33%
+CPU Avg    : 183.35%
+CPU Max    : 280.22%
+MEM Min    : 625.27M
+MEM Avg    : 632.89M
+MEM Max    : 666.96M
+```
