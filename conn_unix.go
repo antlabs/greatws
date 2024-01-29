@@ -31,28 +31,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type ioUringOpState uint32
-
-const (
-	connInvalid ioUringOpState = 1 << iota
-	opRead
-	opWrite
-	opClose
-)
-
-func (s ioUringOpState) String() string {
-	switch s {
-	case opRead:
-		return "read"
-	case opWrite:
-		return "write"
-	case opClose:
-		return "close"
-	default:
-		return "invalid"
-	}
-}
-
 type writeState int32
 
 const (
@@ -82,18 +60,17 @@ type Conn struct {
 	currBindGo *businessGo // 绑定模式下，当前绑定的go程
 	streamGo   *taskStream // stream模式下，当前绑定的go程
 	closeOnce  sync.Once   // 关闭一次
-	closed     int32       // 是否关闭
-	client     bool        // 客户端为true，服务端为false
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
 	c := &Conn{
 		conn: conn{
-			fd: fd,
+			fd:     fd,
+			client: client,
 		},
 		// 初始化不分配内存，只有在需要的时候才分配
 		Config: conf,
-		client: client,
+
 		parent: conf.multiEventLoop.getEventLoop(int(fd)),
 	}
 

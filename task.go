@@ -65,7 +65,6 @@ type task struct {
 
 	mu            sync.Mutex
 	allBusinessGo allBusinessGo
-	id            uint32
 	// 窃取id
 	stealID         uint32
 	taskMode        taskMode
@@ -75,10 +74,6 @@ type task struct {
 func (t *task) nextStealID() uint32 {
 	return (atomic.AddUint32(&t.stealID, 1) - 1) % uint32(len(t.allBusinessGo))
 }
-
-// func (t *task) nextID() uint32 {
-// 	return (atomic.AddUint32(&t.id, 1) - 1) % uint32(len(t.allBusinessGo))
-// }
 
 // 初始化
 func (t *task) initInner() {

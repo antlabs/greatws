@@ -38,7 +38,7 @@ const (
 	maxControlFrameSize = 125
 )
 
-type frameState int
+type frameState int8
 
 func (f frameState) String() string {
 	switch f {
@@ -60,17 +60,18 @@ const (
 
 // 内部的conn, 只包含fd, 读缓冲区, 写缓冲区, 状态机, 分段帧缓冲区
 type conn struct {
-	fd             int64      // 文件描述符fd
-	rbuf           *[]byte    // 读缓冲区
-	lastPayloadLen int64      // 上一次读取的payload长度
-	rr             int        // rbuf读索引
-	rw             int        // rbuf写索引
-	curState       frameState // 保存当前状态机的状态
-	lenAndMaskSize int        // payload长度和掩码的长度
-	rh             frame.FrameHeader
-
-	fragmentFramePayload *[]byte // 存放分片帧的缓冲区
-	fragmentFrameHeader  *frame.FrameHeader
+	fd                   int64              // 文件描述符fd
+	rbuf                 *[]byte            // 读缓冲区
+	rr                   int                // rbuf读索引
+	rw                   int                // rbuf写索引
+	lenAndMaskSize       int                // payload长度和掩码的长度
+	lastPayloadLen       int64              // 上一次读取的payload长度
+	rh                   frame.FrameHeader  // frame头部
+	fragmentFramePayload *[]byte            // 存放分片帧的缓冲区
+	fragmentFrameHeader  *frame.FrameHeader // 存放分段帧的头部
+	closed               int32              // 是否关闭
+	curState             frameState         // 保存当前状态机的状态
+	client               bool               // 客户端为true，服务端为false
 }
 
 func (c *Conn) getLogger() *slog.Logger {

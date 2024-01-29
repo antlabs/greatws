@@ -14,28 +14,34 @@
 package greatws
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
 	"unsafe"
 )
 
 func Test_Pool(t *testing.T) {
-	t.Run("<=3000", func(t *testing.T) {
-		for i := 0; i <= 3000; i++ {
-			if i >= 0 && i < 2*pageSize {
-				n := putSelectIndex(i)
-				if n != 0 {
-					t.Fatalf("selectIndex error:(%d):(%d):(%d)\n", 0, n, i)
-				}
-			} else if i >= 2*pageSize && i < 3*pageSize {
-				n := putSelectIndex(i)
-				if n != 1 {
-					t.Fatalf("selectIndex error:%d:pool-index(%d):%d\n", 1, n, i)
-				}
+	t.Run("<=1024", func(t *testing.T) {
+		for i := 0; i <= 1024; i++ {
+			got := getSelectIndex(i)
+			if got != 0 {
+				t.Fatalf("getSelectIndex error:%d\n", i)
+			}
+		}
+	})
+	t.Run("1025-2048", func(t *testing.T) {
+		for i := 1025; i <= 2048; i++ {
+			got := getSelectIndex(i)
+			if got != 1 {
+				t.Fatalf("getSelectIndex error:%d\n", i)
+			}
+		}
+	})
 
-			} else {
-				panic(fmt.Sprintf("selectIndex error:%d", i))
+	t.Run("2049-3072", func(t *testing.T) {
+		for i := 2049; i <= 3072; i++ {
+			got := getSelectIndex(i)
+			if got != 2 {
+				t.Fatalf("getSelectIndex error:%d\n", i)
 			}
 		}
 	})

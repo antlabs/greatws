@@ -47,11 +47,12 @@ func (e *EventLoop) apiCreate(flag evFlag) (err error) {
 		}
 		state.linuxApi = la
 	} else if flag&EVENT_IOURING != 0 {
-		la, err := apiIoUringCreate(e, 16384)
-		if err != nil {
-			return err
-		}
-		state.linuxApi = la
+		// io-uring的代码先删除，等稳定了再加回来
+		// la, err := apiIoUringCreate(e, 16384)
+		// if err != nil {
+		// 	return err
+		// }
+		// state.linuxApi = la
 	} else {
 		return fmt.Errorf("not support api")
 	}

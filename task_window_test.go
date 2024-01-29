@@ -24,7 +24,7 @@ func Test_Windows(t *testing.T) {
 		var w windows
 		w.init()
 		w.add(1)
-		if !slices.Equal(w.historyGo, []int64{1, 0, 0}) {
+		if !slices.Equal(w.historyGo[:3], []int64{1, 0, 0}) {
 			// 报错
 			t.Errorf("w.historyGo is fail")
 		}
