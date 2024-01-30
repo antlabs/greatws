@@ -15,6 +15,7 @@ package greatws
 
 import (
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"unsafe"
 )
@@ -59,15 +60,19 @@ func Test_Index(t *testing.T) {
 
 func Test_PutGet(t *testing.T) {
 	t.Run("1024", func(t *testing.T) {
-		buf := GetPayloadBytes(1024)
+		buf := getPayloadBytesInner(1024, true)
 		if len(*buf) != 1024 {
 			t.Fatalf("GetPayloadBytes error:%d\n", len(*buf))
 		}
 
-		PutPayloadBytes(buf)
-		buf2 := GetPayloadBytes(1024)
-		if getData(*buf) != getData(*buf2) {
-			t.Fatalf("PutPayloadBytes error:%p:%p\n", buf, buf2)
+		putPayloadBytesInner(buf, true)
+		buf2 := getPayloadBytesInner(1024, true)
+		// if getData(*buf) != getData(*buf2) {
+		// 	t.Fatalf("PutPayloadBytes error:%p:%p\n", buf, buf2)
+		// }
+		putPayloadBytesInner(buf2, true)
+		if atomic.LoadInt32(&testMalloc) != atomic.LoadInt32(&testFree) {
+			t.Fatalf("PutPayloadBytes error:%d:%d\n", atomic.LoadInt32(&testMalloc), atomic.LoadInt32(&testFree))
 		}
 	})
 

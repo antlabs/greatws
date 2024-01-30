@@ -15,6 +15,7 @@ package greatws
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 // 多级缓存池，只有当缓存池的大小不够时，才会使用大缓存池
@@ -48,6 +49,8 @@ const (
 var (
 	pools      = make([]sync.Pool, 0, maxIndex)
 	emptyBytes = make([]byte, 0)
+	testMalloc int32
+	testFree   int32
 )
 
 func getSelectIndex(n int) int {
@@ -65,6 +68,9 @@ func putSelectIndex(n int) int {
 }
 
 func GetPayloadBytes(n int) (rv *[]byte) {
+	return getPayloadBytesInner(n, false)
+}
+func getPayloadBytesInner(n int, isTest bool) (rv *[]byte) {
 	if n == 0 {
 		return &emptyBytes
 	}
@@ -81,18 +87,26 @@ func GetPayloadBytes(n int) (rv *[]byte) {
 			continue
 		}
 		*rv2 = (*rv2)[:n]
+		if isTest {
+			atomic.AddInt32(&testMalloc, 1)
+		}
 		return rv2
 	}
 
 	rv2 := make([]byte, (index+1)*pageSize)
 	return &rv2
 }
-
 func PutPayloadBytes(bytes *[]byte) {
+	putPayloadBytesInner(bytes, false)
+}
+func putPayloadBytesInner(bytes *[]byte, isTest bool) {
 	if cap(*bytes) == 0 {
 		return
 	}
 
+	if isTest {
+		atomic.AddInt32(&testFree, 1)
+	}
 	*bytes = (*bytes)[:cap(*bytes)]
 
 	newLen := cap(*bytes)
