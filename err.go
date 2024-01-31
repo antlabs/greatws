@@ -44,5 +44,9 @@ var (
 	ErrWriteClosed          = errors.New("write close")
 )
 
-// 事件循环为空
-var ErrEventLoopEmpty = errors.New("event loop is empty")
+var (
+	// 事件循环为空
+	ErrEventLoopEmpty = errors.New("event loop is empty")
+	// 事件循环没有启动
+	ErrEventLoopNotStart = errors.New("event loop not start")
+)

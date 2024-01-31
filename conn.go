@@ -536,9 +536,10 @@ func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
 	return userErr
 }
 
-func (c *Conn) WriteTimeout(op Opcode, data []byte, t time.Duration) (err error) {
-	// TODO 超时时间
-	return c.WriteMessage(op, data)
+// TODO:
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	// return c.c.SetWriteDeadline(t)
+	return nil
 }
 
 func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
@@ -611,6 +612,82 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 	c.mu.Unlock()
 
 	return err
+}
+
+// 写分段数据, 目前主要是单元测试使用
+func (c *Conn) writeFragment(op Opcode, writeBuf []byte, maxFragment int /*单个段最大size*/) (err error) {
+	if len(writeBuf) < maxFragment {
+		return c.WriteMessage(op, writeBuf)
+	}
+
+	if op == opcode.Text {
+		if !c.utf8Check(writeBuf) {
+			return ErrTextNotUTF8
+		}
+	}
+
+	rsv1 := c.compression && (op == opcode.Text || op == opcode.Binary)
+	if rsv1 {
+		var out wrapBuffer
+		w := compressNoContextTakeover(&out, defaultCompressionLevel)
+		if _, err = io.Copy(w, bytes.NewReader(writeBuf)); err != nil {
+			return
+		}
+
+		if err = w.Close(); err != nil {
+			return
+		}
+		writeBuf = out.Bytes()
+	}
+
+	// f.Opcode = op
+	// f.PayloadLen = int64(len(writeBuf))
+	maskValue := uint32(0)
+	if c.client {
+		maskValue = rand.Uint32()
+	}
+
+	var fw fixedwriter.FixedWriter
+	for len(writeBuf) > 0 {
+		if len(writeBuf) > maxFragment {
+			if err := frame.WriteFrame(&fw, c, writeBuf[:maxFragment], false, rsv1, c.client, op, maskValue); err != nil {
+				return err
+			}
+			writeBuf = writeBuf[maxFragment:]
+			op = Continuation
+			continue
+		}
+		return frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
+	}
+	return nil
+}
+
+// TODO
+func (c *Conn) WriteTimeout(op Opcode, data []byte, t time.Duration) (err error) {
+	// TODO 超时时间
+	return c.WriteMessage(op, data)
+}
+
+func (c *Conn) WriteControl(op Opcode, data []byte) (err error) {
+	if len(data) > maxControlFrameSize {
+		return ErrMaxControlFrameSize
+	}
+	return c.WriteMessage(op, data)
+}
+
+func (c *Conn) WriteCloseTimeout(sc StatusCode, t time.Duration) (err error) {
+	buf := statusCodeToBytes(sc)
+	return c.WriteTimeout(opcode.Close, buf, t)
+}
+
+// data 不能超过125字节
+func (c *Conn) WritePing(data []byte) (err error) {
+	return c.WriteControl(Ping, data[:])
+}
+
+// data 不能超过125字节
+func (c *Conn) WritePong(data []byte) (err error) {
+	return c.WriteControl(Pong, data[:])
 }
 
 func (c *Conn) Close() {

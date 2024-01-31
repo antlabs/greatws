@@ -314,3 +314,9 @@ func WithServerMultiEventLoop(m *MultiEventLoop) ServerOption {
 		o.multiEventLoop = m
 	}
 }
+
+func WithClientMultiEventLoop(m *MultiEventLoop) ClientOption {
+	return func(o *DialOption) {
+		o.multiEventLoop = m
+	}
+}

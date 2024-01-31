@@ -21,7 +21,7 @@ import (
 )
 
 type MultiEventLoop struct {
-	numLoops    int // 事件循环数量
+	numLoops    int // 每次epoll/kqueue返回时，一次最多处理多少事件
 	maxEventNum int
 	loops       []*EventLoop
 	// 只是配置的作用，不是真正的任务池， fd是绑定到某个事件循环上的，
@@ -33,7 +33,8 @@ type MultiEventLoop struct {
 	level      slog.Level
 	stat       // 统计信息
 	*slog.Logger
-	taskMode taskMode
+	taskMode    taskMode
+	evLoopStart uint32
 }
 
 var (
@@ -114,11 +115,23 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	return m, nil
 }
 
+// 初始化一个多路事件循环,并且运行它
+func NewMultiEventLoopAndStartMust(opts ...EvOption) (m *MultiEventLoop) {
+	m = NewMultiEventLoopMust(opts...)
+	m.Start()
+	return m
+}
+
 // 启动多路事件循环
 func (m *MultiEventLoop) Start() {
 	for _, loop := range m.loops {
 		go loop.Loop()
 	}
+	atomic.StoreUint32(&m.evLoopStart, 1)
+}
+
+func (m *MultiEventLoop) isStart() bool {
+	return atomic.LoadUint32(&m.evLoopStart) == 1
 }
 
 func (m *MultiEventLoop) getEventLoop(fd int) *EventLoop {
