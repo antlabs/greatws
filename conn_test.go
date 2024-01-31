@@ -970,7 +970,7 @@ func TestPingPongClose(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := upgrade.Upgrade(w, r)
 			if err != nil {
-				t.Error(err)
+				t.Errorf("upgrader:%s", err)
 			}
 
 		}))
