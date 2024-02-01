@@ -22,22 +22,22 @@ import (
 
 type Config struct {
 	Callback
-	tcpNoDelay                      bool
+	tcpNoDelay                      bool              //TODO: 加下这个功能
 	replyPing                       bool              // 开启自动回复
 	decompression                   bool              // 开启解压缩功能
 	compression                     bool              // 开启压缩功能
 	ignorePong                      bool              // 忽略pong消息
 	disableBufioClearHack           bool              // 关闭bufio的clear hack优化
 	utf8Check                       func([]byte) bool // utf8检查
-	readTimeout                     time.Duration
-	windowsMultipleTimesPayloadSize float32       // 设置几倍(1024+14)的payload大小
-	maxDelayWriteNum                int32         // 最大延迟包的个数, 默认值为10
-	delayWriteInitBufferSize        int32         // 延迟写入的初始缓冲区大小, 默认值是8k
-	maxDelayWriteDuration           time.Duration // 最大延迟时间, 默认值是10ms
-	subProtocols                    []string      // 设置支持的子协议
-	multiEventLoop                  *MultiEventLoop
-	callbackInEventLoop             bool // 在event loop中运行websocket OnOpen, OnMessage, OnClose 回调函数
-	runInGoStrategy                 taskStrategy
+	readTimeout                     time.Duration     // TODO: 加下这个功能
+	windowsMultipleTimesPayloadSize float32           // 设置几倍(1024+14)的payload大小
+	maxDelayWriteNum                int32             // 最大延迟包的个数, 默认值为10
+	delayWriteInitBufferSize        int32             // 延迟写入的初始缓冲区大小, 默认值是8k
+	maxDelayWriteDuration           time.Duration     // 最大延迟时间, 默认值是10ms
+	subProtocols                    []string          // 设置支持的子协议
+	multiEventLoop                  *MultiEventLoop   // 事件循环
+	callbackInEventLoop             bool              // 在event loop中运行websocket OnOpen, OnMessage, OnClose 回调函数
+	runInGoStrategy                 taskStrategy      //运行业务OnMessage的策略
 }
 
 // func (c *Config) useIoUring() bool {

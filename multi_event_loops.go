@@ -18,6 +18,7 @@ import (
 	"os"
 	"runtime"
 	"sync/atomic"
+	"time"
 )
 
 type MultiEventLoop struct {
@@ -98,7 +99,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 		o(m)
 	}
 	m.initDefaultSetting()
-
+	// m.startOk = make(chan struct{}, 1)
 	// 设置任务池模式(tps, 或者流量模式)
 	m.configTask.taskMode = m.taskMode
 
@@ -127,6 +128,7 @@ func (m *MultiEventLoop) Start() {
 	for _, loop := range m.loops {
 		go loop.Loop()
 	}
+	time.Sleep(time.Millisecond * 10)
 	atomic.StoreUint32(&m.evLoopStart, 1)
 }
 

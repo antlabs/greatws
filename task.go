@@ -23,8 +23,6 @@ import (
 )
 
 // 运行task的策略
-// 1. 随机
-// 2. 取余映射
 type taskStrategy int
 
 const (
@@ -48,7 +46,7 @@ type taskConfig struct {
 
 // task 模式
 // 1. tps模式
-// 2. 流量模式
+// 2. 流量模式, TODO: 这个模式再压测下，如果数据不是足够好，可以去除
 type taskMode int
 
 const (
@@ -57,18 +55,17 @@ const (
 )
 
 type task struct {
-	public  chan func() bool
-	windows windows // 滑动窗口计数，用于判断是否需要新增go程
-	taskConfig
-	curGo   int64 // 当前运行协程数
-	curTask int64 // 当前运行任务数
-
-	mu            sync.Mutex
-	allBusinessGo allBusinessGo
-	// 窃取id
-	stealID         uint32
-	taskMode        taskMode
-	businessChanNum int
+	mu              sync.Mutex       // 锁
+	public          chan func() bool // TODO: 公共任务chan，本来是想作为任务平衡的作用，目前没有启用，是否使用还要根据压测结果调整.
+	windows         windows          // 滑动窗口计数，用于判断是否需要新增go程
+	taskConfig                       // task的最配置，比如初始化启多少协程，动态扩容时最小协程数和最大协程数
+	curGo           int64            // 当前运行协程数
+	curTask         int64            // 当前运行任务数
+	allBusinessGo   allBusinessGo    // task的业务协程， 目前是最小堆
+	stealID         uint32           // 窃取id
+	taskMode        taskMode         // task的模式， 目前有三种
+	businessChanNum int              // 各自go程收取任务数的chan的空量
+	startOk         chan struct{}    // 至少有一个go程起来
 }
 
 func (t *task) nextStealID() uint32 {
@@ -79,6 +76,7 @@ func (t *task) nextStealID() uint32 {
 func (t *task) initInner() {
 	t.public = make(chan func() bool, runtime.NumCPU())
 	t.allBusinessGo = make([]*businessGo, 0, t.initCount)
+	t.startOk = make(chan struct{}, 1)
 	t.windows.init()
 	go t.manageGo()
 	go t.runConsumerLoop()
@@ -90,6 +88,7 @@ func (t *task) init() {
 		t.businessChanNum = 1024
 	}
 	t.initInner()
+	<-t.startOk // 等待至少有一个go程起来
 }
 
 // 消费者循环
@@ -120,6 +119,12 @@ func (t *task) consumer(steal *businessGo) {
 			}
 		}
 	next:
+	}
+
+	// 防止初始化太快，go程没有起来
+	select {
+	case t.startOk <- struct{}{}:
+	default:
 	}
 
 	var f func() bool

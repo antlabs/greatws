@@ -56,10 +56,6 @@ func (e *EventLoop) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (el *EventLoop) StartLoop() {
-	go el.Loop()
-}
-
 func (el *EventLoop) Loop() {
 	for !el.shutdown {
 		_, err := el.apiPoll(time.Duration(time.Second * 100))

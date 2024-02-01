@@ -80,6 +80,11 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 	return c
 }
 
+// 这是一个空函数，兼容下quickws的接口
+func (c *Conn) StartReadLoop() {
+
+}
+
 func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
 }

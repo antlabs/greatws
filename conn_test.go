@@ -98,7 +98,7 @@ func (t *testMessageHandler) OnClose(c *Conn, err error) {
 }
 
 func newServrEcho(t *testing.T, data []byte, output bool) *httptest.Server {
-	m := NewMultiEventLoopAndStartMust(WithLogLevel(slog.LevelError), WithBusinessGoNum(1, 1, 1), WithEventLoops(256))
+	m := NewMultiEventLoopAndStartMust(WithLogLevel(slog.LevelError), WithBusinessGoNum(1, 1, 1), WithEventLoops(1))
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, err := Upgrade(w, r,
 			WithServerCallback(&testMessageHandler{t: t, need: data, server: true, count: -1, output: true, callbedChan: make(chan bool, 1)}),
@@ -118,7 +118,7 @@ func newServrEcho(t *testing.T, data []byte, output bool) *httptest.Server {
 // 测试read message
 func Test_ReadMessage(t *testing.T) {
 
-	m := NewMultiEventLoopAndStartMust(WithEventLoops(10), WithLogLevel(slog.LevelDebug), WithBusinessGoNum(10, 10, 10))
+	m := NewMultiEventLoopAndStartMust(WithEventLoops(1), WithLogLevel(slog.LevelDebug), WithBusinessGoNum(1, 1, 1))
 	t.Run("ReadMessage10", func(t *testing.T) {
 		ts := newServrEcho(t, testBinaryMessage10, true)
 		client := &testMessageHandler{t: t, need: append([]byte(nil), testBinaryMessage10...), count: 1, done: make(chan struct{}), output: true}
@@ -325,7 +325,7 @@ func Test_ReadMessage(t *testing.T) {
 // 测试分段frame
 func TestFragmentFrame(t *testing.T) {
 
-	m := NewMultiEventLoopAndStartMust(WithLogLevel(slog.LevelError), WithBusinessGoNum(1, 1, 1), WithEventLoops(256))
+	m := NewMultiEventLoopAndStartMust(WithLogLevel(slog.LevelError), WithBusinessGoNum(1, 1, 1), WithEventLoops(1))
 	t.Run("FragmentFrame10", func(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
@@ -564,7 +564,7 @@ func TestFragmentFrame(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := upgrade.Upgrade(w, r)
 			if err != nil {
-				t.Error(err)
+				t.Error("upgrade", err)
 			}
 
 		}))
@@ -657,7 +657,7 @@ func Test_WriteControl(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := upgrade.Upgrade(w, r)
 			if err != nil {
-				t.Error(err)
+				t.Error("upgrade", err)
 			}
 		}))
 
