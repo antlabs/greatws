@@ -91,6 +91,13 @@ func duplicateSocket(socketFD int) (int, error) {
 
 func (c *Conn) closeInner(err error) {
 	c.closeOnce.Do(func() {
+		if err != nil {
+			err = io.EOF
+		}
+		c.addTask(taskStrategyBind, func() bool {
+			c.Callback.OnClose(c, nil)
+			return false
+		})
 		fd := c.getFd()
 		c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
 		c.parent.del(c)

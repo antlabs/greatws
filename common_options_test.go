@@ -136,7 +136,7 @@ func Test_CommonOption(t *testing.T) {
 		messageDone := make(chan bool, 1)
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
 		clientRun := int32(0)
-		con, err := Dial(url, WithClientCallbackFunc(func(c *Conn) {
+		clientConn, err := Dial(url, WithClientCallbackFunc(func(c *Conn) {
 			atomic.AddInt32(&clientRun, 10)
 		}, func(c *Conn, mt Opcode, payload []byte) {
 			atomic.AddInt32(&clientRun, 100)
@@ -148,14 +148,14 @@ func Test_CommonOption(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		defer con.Close()
+		defer clientConn.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
-		con.StartReadLoop()
+		clientConn.WriteMessage(Binary, []byte("hello"))
+		clientConn.StartReadLoop()
 		for i := 0; i < 2; i++ {
 			select {
 			case <-messageDone:
-				con.Close()
+				clientConn.Close()
 			case <-done:
 			case <-time.After(100 * time.Millisecond):
 			}
@@ -313,7 +313,7 @@ func Test_CommonOption(t *testing.T) {
 	t.Run("3.server.global: WithServerDisableUTF8Check", func(t *testing.T) {
 		run := int32(0)
 		done := make(chan bool, 1)
-		upgrade := NewUpgrade(WithServerEnableUTF8Check(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
+		upgrade := NewUpgrade(WithServerMultiEventLoop(m), WithServerEnableUTF8Check(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
 			c.WriteMessage(op, payload)
 			atomic.AddInt32(&run, int32(1))
 			done <- true
@@ -330,7 +330,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientEnableUTF8Check(), WithClientCallback(&testDefaultCallback{}))
+		con, err := Dial(url, WithClientEnableUTF8Check(), WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
 		}
@@ -355,7 +355,7 @@ func Test_CommonOption(t *testing.T) {
 		// 客户端不检查utf8， 服务端检查utf8
 		run := int32(0)
 		done := make(chan bool, 1)
-		upgrade := NewUpgrade(WithServerEnableUTF8Check(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
+		upgrade := NewUpgrade(WithServerEnableUTF8Check(), WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
 			c.WriteMessage(op, payload)
 			atomic.AddInt32(&run, int32(1))
 			done <- true
@@ -372,7 +372,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}))
+		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
 		}
@@ -396,7 +396,7 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		done := make(chan bool, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c, err := Upgrade(w, r, WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 				atomic.AddInt32(&run, int32(1))
 				done <- true
 			}))
@@ -409,7 +409,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}))
+		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
 		}
@@ -431,7 +431,7 @@ func Test_CommonOption(t *testing.T) {
 		upgrade := NewUpgrade(WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 			atomic.AddInt32(&run, int32(1))
 			done <- true
-		}))
+		}), WithServerMultiEventLoop(m))
 
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := upgrade.Upgrade(w, r)
@@ -444,7 +444,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}))
+		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
 		}
@@ -463,7 +463,7 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		done := make(chan bool, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c, err := Upgrade(w, r, WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 				c.WriteMessage(mt, payload)
 			}))
 			if err != nil {
@@ -475,7 +475,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 			atomic.AddInt32(&run, int32(1))
 			done <- true
 		}))
@@ -498,7 +498,7 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		done := make(chan bool, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c, err := Upgrade(w, r, WithServerReplyPing(), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerReplyPing(), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 			}))
 			if err != nil {
 				t.Error(err)
@@ -509,7 +509,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientOnMessageFunc(func(c *Conn, o Opcode, b []byte) {
+		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, o Opcode, b []byte) {
 			atomic.AddInt32(&run, int32(1))
 			if o != Pong || bytes.Equal(b, []byte("hello")) {
 				t.Error("need Pong")
@@ -534,7 +534,7 @@ func Test_CommonOption(t *testing.T) {
 	t.Run("5.server.global: WithServerReplyPing", func(t *testing.T) {
 		run := int32(0)
 		done := make(chan bool, 1)
-		upgrade := NewUpgrade(WithServerReplyPing(), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+		upgrade := NewUpgrade(WithServerReplyPing(), WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 		}))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := upgrade.Upgrade(w, r)
@@ -547,7 +547,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientOnMessageFunc(func(c *Conn, o Opcode, b []byte) {
+		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, o Opcode, b []byte) {
 			atomic.AddInt32(&run, int32(1))
 			if o != Pong || bytes.Equal(b, []byte("hello")) {
 				t.Error("need Pong")
@@ -576,7 +576,7 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		done := make(chan bool, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c, err := Upgrade(w, r, WithServerReplyPing(), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerReplyPing(), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 				if mt == Text {
 					c.WritePing([]byte("hello"))
 				} else if mt == Pong {
@@ -598,7 +598,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientReplyPing(), WithClientOnMessageFunc(func(c *Conn, o Opcode, b []byte) {
+		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientReplyPing(), WithClientOnMessageFunc(func(c *Conn, o Opcode, b []byte) {
 		}))
 		if err != nil {
 			t.Error(err)
@@ -619,7 +619,7 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c, err := Upgrade(w, r, WithServerIgnorePong(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
+			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerIgnorePong(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
 				c.WriteMessage(op, payload)
 			}))
 			if err != nil {
@@ -631,7 +631,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 			atomic.AddInt32(&run, int32(1))
 			fmt.Printf("opcode:%v\n", mt)
 			data <- string(payload)
@@ -659,7 +659,7 @@ func Test_CommonOption(t *testing.T) {
 	t.Run("6.server.global: WithServerIgnorePong", func(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
-		upgrade := NewUpgrade(WithServerIgnorePong(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
+		upgrade := NewUpgrade(WithServerIgnorePong(), WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
 			c.WriteMessage(op, payload)
 		}))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -673,7 +673,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 			atomic.AddInt32(&run, int32(1))
 			fmt.Printf("opcode:%v\n", mt)
 			data <- string(payload)
@@ -703,7 +703,7 @@ func Test_CommonOption(t *testing.T) {
 		data := make(chan string, 1)
 
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c, err := Upgrade(w, r, WithServerIgnorePong(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
+			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerIgnorePong(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
 				c.WritePong([]byte("hello"))
 				c.WriteMessage(op, payload)
 			}))
@@ -716,7 +716,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientIgnorePong(), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientIgnorePong(), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 			atomic.AddInt32(&run, int32(1))
 			data <- string(payload)
 		}))
@@ -743,7 +743,7 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c, err := Upgrade(w, r, WithServerWindowsMultipleTimesPayloadSize(-1), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
+			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerWindowsMultipleTimesPayloadSize(-1), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
 				c.WriteMessage(op, payload)
 			}))
 			if err != nil {
@@ -755,7 +755,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 			atomic.AddInt32(&run, int32(1))
 			data <- string(payload)
 		}))
@@ -1096,7 +1096,7 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c, err := Upgrade(w, r, WithServerDecompressAndCompress(),
+			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerDecompressAndCompress(),
 				WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
 					c.WriteMessage(op, payload)
 				}))

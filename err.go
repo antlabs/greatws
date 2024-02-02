@@ -46,7 +46,7 @@ var (
 
 var (
 	// 事件循环为空
-	ErrEventLoopEmpty = errors.New("event loop is empty")
+	ErrEventLoopEmpty = errors.New("event loop is empty, Need to call WithServerMultiEventLoop or WithClientMultiEventLoop for configuration")
 	// 事件循环没有启动
 	ErrEventLoopNotStart = errors.New("event loop not start")
 )
