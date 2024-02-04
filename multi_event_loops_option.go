@@ -68,6 +68,13 @@ func WithMaxEventNum(num int) EvOption {
 	}
 }
 
+// 在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
+func WithParseInParseLoop() EvOption {
+	return func(e *MultiEventLoop) {
+		e.parseInParseLoop = true
+	}
+}
+
 // 暂时不可用
 // 是否使用io_uring, 支持linux系统，需要内核版本6.2.0以上(以后只会在>=6.2.0的版本上测试)
 func WithIoUring() EvOption {

@@ -25,6 +25,7 @@ type MultiEventLoop struct {
 	numLoops    int // 每次epoll/kqueue返回时，一次最多处理多少事件
 	maxEventNum int
 	loops       []*EventLoop
+	parseLoop   *taskParse
 	// 只是配置的作用，不是真正的任务池， fd是绑定到某个事件循环上的，
 	// 任务池是绑定到某个事件循环上的，所以这里的任务池也绑定到对应的localTask上
 	// 如果设计全局任务池，那么概念就会很乱，容易出错，也会临界区竞争
@@ -34,8 +35,9 @@ type MultiEventLoop struct {
 	level      slog.Level
 	stat       // 统计信息
 	*slog.Logger
-	taskMode    taskMode
-	evLoopStart uint32
+	taskMode         taskMode
+	evLoopStart      uint32
+	parseInParseLoop bool // 在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
 }
 
 var (
@@ -104,7 +106,9 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m.configTask.taskMode = m.taskMode
 
 	m.configTask.init()
-
+	if m.parseInParseLoop {
+		m.parseLoop = newTaskParse()
+	}
 	m.loops = make([]*EventLoop, m.numLoops)
 
 	for i := 0; i < m.numLoops; i++ {
