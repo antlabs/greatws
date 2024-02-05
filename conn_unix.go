@@ -89,21 +89,38 @@ func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
 }
 
-func (c *Conn) closeInner(err error) {
+func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
+
 	c.closeOnce.Do(func() {
 		if err != nil {
 			err = io.EOF
 		}
-		c.addTask(taskStrategyBind, func() bool {
-			c.Callback.OnClose(c, nil)
-			return false
-		})
+		switch c.Config.runInGoStrategy {
+		case taskStrategyBind:
+			if c.getCurrBindGo() != nil {
+				c.currBindGo.subBinConnCount()
+			}
+		case taskStrategyStream:
+			c.streamGo.close()
+
+		}
 		fd := c.getFd()
 		c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
 		c.parent.del(c)
 		atomic.StoreInt64(&c.fd, -1)
-		atomic.StoreInt32(&c.closed, 1)
+		atomic.AddInt32(&c.closed, 1)
 	})
+
+	// 这个必须要放在后面
+	if onClose {
+		c.OnClose(c, err)
+	}
+
+}
+
+func (c *Conn) closeInner(err error) {
+
+	c.closeInnerWithOnClose(err, true)
 }
 
 func (c *Conn) closeWithLock(err error) {
@@ -117,18 +134,19 @@ func (c *Conn) closeWithLock(err error) {
 		return
 	}
 
-	switch c.Config.runInGoStrategy {
-	case taskStrategyBind:
-		if c.getCurrBindGo() != nil {
-			c.currBindGo.subBinConnCount()
-		}
-	case taskStrategyStream:
-		c.streamGo.close()
-
+	if err == nil {
+		err = io.EOF
 	}
+	c.closeInnerWithOnClose(err, false)
 
-	c.closeInner(err)
+	c.mu.Unlock()
 
+	// 这个必须要放在后面， 不然会死锁，因为Close会调用用户的OnClose
+	// 用户的OnClose也有可能调用Close， 所以使用flags来判断是否已经关闭
+	c.mu.Lock()
+	if atomic.LoadInt32(&c.closed) == 1 {
+		c.OnClose(c, err)
+	}
 	c.mu.Unlock()
 }
 
