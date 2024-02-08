@@ -53,13 +53,14 @@ func (s writeState) String() string {
 type Conn struct {
 	conn
 
-	wbuf       *[]byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	mu         sync.Mutex  // 锁
-	*Config                // 配置
-	parent     *EventLoop  // event loop
-	currBindGo *businessGo // 绑定模式下，当前绑定的go程
-	streamGo   *taskStream // stream模式下，当前绑定的go程
-	closeOnce  sync.Once   // 关闭一次
+	wbuf          *[]byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	mu            sync.Mutex  // 锁
+	*Config                   // 配置
+	parent        *EventLoop  // event loop
+	currBindGo    *businessGo // 绑定模式下，当前绑定的go程
+	streamGo      *taskStream // stream模式下，当前绑定的go程
+	closeConnOnce sync.Once   // 关闭一次
+	onCloseOnce   sync.Once   // 保证只调用一次OnClose函数
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
@@ -91,7 +92,7 @@ func duplicateSocket(socketFD int) (int, error) {
 
 func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
 
-	c.closeOnce.Do(func() {
+	c.closeConnOnce.Do(func() {
 		if err != nil {
 			err = io.EOF
 		}
@@ -113,7 +114,9 @@ func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
 
 	// 这个必须要放在后面
 	if onClose {
-		c.OnClose(c, err)
+		c.onCloseOnce.Do(func() {
+			c.OnClose(c, err)
+		})
 	}
 
 }
@@ -145,7 +148,9 @@ func (c *Conn) closeWithLock(err error) {
 	// 用户的OnClose也有可能调用Close， 所以使用flags来判断是否已经关闭
 	c.mu.Lock()
 	if atomic.LoadInt32(&c.closed) == 1 {
-		c.OnClose(c, err)
+		c.onCloseOnce.Do(func() {
+			c.OnClose(c, err)
+		})
 	}
 	c.mu.Unlock()
 }
@@ -345,7 +350,9 @@ func (c *Conn) processWebsocketFrame() (err error) {
 		// 读到eof，直接关闭
 		if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
 			c.closeWithLock(io.EOF)
-			c.OnClose(c, io.EOF)
+			c.onCloseOnce.Do(func() {
+				c.OnClose(c, io.EOF)
+			})
 			err = io.EOF
 			goto fail
 		}

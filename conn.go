@@ -328,6 +328,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	needMask := c.rh.Mask
 
 	fin := f.GetFin()
+	// 分段的frame
 	if c.fragmentFrameHeader != nil && !f.Opcode.IsControl() {
 		if f.Opcode == 0 {
 			// TODO 优化, 需要放到单独的业务go程, 目前为了保证时序性，先放到io go程里面
@@ -370,7 +371,9 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
 					// TODO c.utf8Check 修改成流式解析
 					if fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(*fragmentFramePayload) {
-						c.Callback.OnClose(c, ErrTextNotUTF8)
+						c.onCloseOnce.Do(func() {
+							c.Callback.OnClose(c, ErrTextNotUTF8)
+						})
 						// return ErrTextNotUTF8
 						c.closeWithLock(nil)
 						return false
@@ -435,7 +438,9 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			if f.Opcode == opcode.Text {
 				if !c.utf8Check(decodePayload) {
 					c.closeWithLock(nil)
-					c.Callback.OnClose(c, ErrTextNotUTF8)
+					c.onCloseOnce.Do(func() {
+						c.Callback.OnClose(c, ErrTextNotUTF8)
+					})
 					return false
 				}
 			}
@@ -489,7 +494,9 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			}
 
 			err = bytesToCloseErrMsg(*f.Payload)
-			c.Callback.OnClose(c, err)
+			c.onCloseOnce.Do(func() {
+				c.Callback.OnClose(c, err)
+			})
 			return err
 		}
 
@@ -497,7 +504,9 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			// 回一个pong包
 			if c.replyPing {
 				if err := c.WriteTimeout(Pong, *f.Payload, 2*time.Second); err != nil {
-					c.Callback.OnClose(c, err)
+					c.onCloseOnce.Do(func() {
+						c.Callback.OnClose(c, err)
+					})
 					return err
 				}
 				// 进入业务协程执行
@@ -528,7 +537,12 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 }
 
 func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
-	defer c.Callback.OnClose(c, userErr)
+	defer func() {
+		c.onCloseOnce.Do(func() {
+			c.Callback.OnClose(c, userErr)
+		})
+	}()
+
 	if err := c.WriteTimeout(opcode.Close, statusCodeToBytes(code), 2*time.Second); err != nil {
 		return err
 	}

@@ -727,7 +727,10 @@ func TestPingPongClose(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Close, bytes.Repeat([]byte("a"), maxControlFrameSize+3))
+		err = con.WriteMessage(Close, bytes.Repeat([]byte("a"), maxControlFrameSize+3))
+		if err != nil {
+			t.Error(err)
+		}
 
 		select {
 		case d := <-shandler.data:
@@ -737,7 +740,7 @@ func TestPingPongClose(t *testing.T) {
 		case <-time.After(1000 * time.Millisecond):
 		}
 		if atomic.LoadInt32(&shandler.run) != 1 {
-			t.Error("not run server:method fail")
+			t.Errorf("not run server:method fail:%d", atomic.LoadInt32(&shandler.run))
 		}
 	})
 
@@ -925,7 +928,7 @@ func TestPingPongClose(t *testing.T) {
 			3000,
 		}
 
-		for _, st := range statusCodes {
+		for scindex, st := range statusCodes {
 			var shandler testPingPongCloseHandler
 			shandler.data = make(chan string, 1)
 			upgrade := NewUpgrade(WithServerEnableUTF8Check(), WithServerMultiEventLoop(m), WithServerCallback(&shandler))
@@ -962,7 +965,7 @@ func TestPingPongClose(t *testing.T) {
 			case <-time.After(1000 * time.Millisecond):
 			}
 			if atomic.LoadInt32(&shandler.run) != 1 {
-				t.Error("not run server:method fail")
+				t.Errorf("not run server:method fail, status code index:%d", scindex)
 			}
 		}
 	})
@@ -1008,7 +1011,7 @@ func TestPingPongClose(t *testing.T) {
 		}
 
 		if atomic.LoadInt32(&run) != 1 {
-			t.Error("not run server:method fail")
+			t.Errorf("not run server:method fail:%d\n", atomic.LoadInt32(&run))
 		}
 	})
 }
