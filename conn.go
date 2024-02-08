@@ -418,36 +418,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 
 		// 进入业务协程执行
 		c.addTask(c.runInGoStrategy, func() bool {
-			// payload := payloadPtr.Load()
-
-			if needMask {
-				mask.Mask(*payload, maskKey)
-			}
-			decodePayload := *payload
-			if rsv1 && decompression {
-				// 不分段的解压缩
-				decodePayload, err = decode(*payload)
-				if err != nil {
-					c.closeWithLock(err)
-					PutPayloadBytes(payload)
-					return false
-				}
-				defer PutPayloadBytes(&decodePayload)
-			}
-
-			if f.Opcode == opcode.Text {
-				if !c.utf8Check(decodePayload) {
-					c.closeWithLock(nil)
-					c.onCloseOnce.Do(func() {
-						c.Callback.OnClose(c, ErrTextNotUTF8)
-					})
-					return false
-				}
-			}
-
-			c.Callback.OnMessage(c, f.Opcode, decodePayload)
-			PutPayloadBytes(payload)
-			return false
+			return c.processCallback2(f, payload, rsv1, decompression, needMask, maskKey)
 		})
 
 		return
@@ -534,6 +505,38 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	// 检查Opcode
 	c.writeErrAndOnClose(ProtocolError, ErrOpcode)
 	return ErrOpcode
+}
+
+func (c *Conn) processCallback2(f frame.Frame2, payload *[]byte, rsv1 bool, decompression bool, needMask bool, maskKey uint32) (ok bool) {
+	var err error
+	if needMask {
+		mask.Mask(*payload, maskKey)
+	}
+	decodePayload := *payload
+	if rsv1 && decompression {
+		// 不分段的解压缩
+		decodePayload, err = decode(*payload)
+		if err != nil {
+			c.closeWithLock(err)
+			PutPayloadBytes(payload)
+			return false
+		}
+		defer PutPayloadBytes(&decodePayload)
+	}
+
+	if f.Opcode == opcode.Text {
+		if !c.utf8Check(decodePayload) {
+			c.closeWithLock(nil)
+			c.onCloseOnce.Do(func() {
+				c.Callback.OnClose(c, ErrTextNotUTF8)
+			})
+			return false
+		}
+	}
+
+	c.Callback.OnMessage(c, f.Opcode, decodePayload)
+	PutPayloadBytes(payload)
+	return false
 }
 
 func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
