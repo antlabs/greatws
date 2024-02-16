@@ -59,6 +59,7 @@ const (
 )
 
 // 内部的conn, 只包含fd, 读缓冲区, 写缓冲区, 状态机, 分段帧缓冲区
+// 这一层本来是和epoll/kqueue 等系统调用打交道的
 type conn struct {
 	fd                   int64              // 文件描述符fd
 	rbuf                 *[]byte            // 读缓冲区
@@ -691,7 +692,11 @@ func (c *Conn) writeFragment(op Opcode, writeBuf []byte, maxFragment int /*单�
 
 // TODO
 func (c *Conn) WriteTimeout(op Opcode, data []byte, t time.Duration) (err error) {
-	// TODO 超时时间
+	if err = c.setWriteDeadline(time.Now().Add(t)); err != nil {
+		return
+	}
+
+	defer func() { _ = c.setWriteDeadline(time.Time{}) }()
 	return c.WriteMessage(op, data)
 }
 

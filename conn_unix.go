@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/antlabs/wsutil/bytespool"
@@ -50,6 +51,14 @@ func (s writeState) String() string {
 	}
 }
 
+var (
+	ErrInvalidDeadline = errors.New("invalid deadline")
+	// 读超时
+	ErrReadTimeout = errors.New("read timeout")
+	// 写超时
+	ErrWriteTimeout = errors.New("write timeout")
+)
+
 type Conn struct {
 	conn
 
@@ -59,8 +68,11 @@ type Conn struct {
 	parent        *EventLoop  // event loop
 	currBindGo    *businessGo // 绑定模式下，当前绑定的go程
 	streamGo      *taskStream // stream模式下，当前绑定的go程
+	rtime         *time.Timer // 控制读超时
+	wtime         *time.Timer // 控制写超时
 	closeConnOnce sync.Once   // 关闭一次
 	onCloseOnce   sync.Once   // 保证只调用一次OnClose函数
+
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
@@ -77,6 +89,10 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 
 	if conf.runInGoStrategy == taskStrategyStream {
 		c.streamGo = newTaskStream()
+	}
+
+	if conf.readTimeout > 0 {
+		c.setReadDeadline(time.Now().Add(conf.readTimeout))
 	}
 	return c
 }
@@ -324,6 +340,11 @@ func (c *Conn) processWebsocketFrame() (err error) {
 		c.rbuf = bytespool.GetBytes(int(float32(c.rh.PayloadLen+enum.MaxFrameHeaderSize) * c.windowsMultipleTimesPayloadSize))
 	}
 
+	if c.readTimeout > 0 {
+		if err = c.setReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
+			return err
+		}
+	}
 	n := 0
 	var success bool
 	// 不使用io_uring的直接调用read获取buffer数据
@@ -415,6 +436,43 @@ fail:
 	return err
 }
 
+func (c *Conn) setDeadlineInner(t **time.Timer, tm time.Time, err error) error {
+	if t == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if tm.IsZero() {
+		if *t != nil {
+			(*t).Stop()
+			*t = nil
+		}
+		return nil
+	}
+
+	d := time.Until(tm)
+	if d < 0 {
+		return ErrInvalidDeadline
+	}
+
+	if *t == nil {
+		*t = afterFunc(d, func() {
+			c.closeWithLock(err)
+		})
+	} else {
+		(*t).Reset(d)
+	}
+	return nil
+}
+
+func (c *Conn) setReadDeadline(t time.Time) error {
+	return c.setDeadlineInner(&c.rtime, t, ErrReadTimeout)
+}
+
+func (c *Conn) setWriteDeadline(t time.Time) error {
+	return c.setDeadlineInner(&c.wtime, t, ErrWriteTimeout)
+
+}
 func closeFd(fd int) {
 	unix.Close(int(fd))
 }

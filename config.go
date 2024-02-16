@@ -29,7 +29,7 @@ type Config struct {
 	ignorePong                      bool              // 忽略pong消息
 	disableBufioClearHack           bool              // 关闭bufio的clear hack优化
 	utf8Check                       func([]byte) bool // utf8检查
-	readTimeout                     time.Duration     // TODO: 加下这个功能
+	readTimeout                     time.Duration     // 加下这个功能
 	windowsMultipleTimesPayloadSize float32           // 设置几倍(1024+14)的payload大小
 	maxDelayWriteNum                int32             // 最大延迟包的个数, 默认值为10
 	delayWriteInitBufferSize        int32             // 延迟写入的初始缓冲区大小, 默认值是8k
