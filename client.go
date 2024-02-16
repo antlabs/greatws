@@ -176,6 +176,13 @@ func (d *DialOption) tlsConn(c net.Conn) net.Conn {
 }
 
 func (d *DialOption) Dial() (c *Conn, err error) {
+	if d.Config.multiEventLoop == nil {
+		return nil, ErrEventLoopEmpty
+	}
+
+	if !d.Config.multiEventLoop.isStart() {
+		return nil, ErrEventLoopNotStart
+	}
 	req, secWebSocket, err := d.handshake()
 	if err != nil {
 		return nil, err
@@ -203,12 +210,10 @@ func (d *DialOption) Dial() (c *Conn, err error) {
 			return
 		}
 	}
-
-	defer func() {
-		if err == nil {
-			err = conn.SetDeadline(time.Time{})
-		}
-	}()
+	err = conn.SetDeadline(time.Time{})
+	if err != nil {
+		return nil, err
+	}
 
 	if err = req.Write(conn); err != nil {
 		return
@@ -236,5 +241,19 @@ func (d *DialOption) Dial() (c *Conn, err error) {
 		return
 	}
 
-	return nil, nil
+	fd, err := getFdFromConn(conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	// 已经dup了一份fd，所以这里可以关闭
+	if err = conn.Close(); err != nil {
+		return nil, err
+	}
+	c = newConn(int64(fd), true, &d.Config)
+	d.Callback.OnOpen(c)
+	if err = d.Config.multiEventLoop.add(c); err != nil {
+		return nil, err
+	}
+	return c, nil
 }

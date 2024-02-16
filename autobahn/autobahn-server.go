@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"runtime"
 	"time"
 
@@ -49,7 +50,8 @@ func (e *echoHandler) OnClose(c *greatws.Conn, err error) {
 }
 
 type handler struct {
-	m *greatws.MultiEventLoop
+	m         *greatws.MultiEventLoop
+	parseLoop *greatws.MultiEventLoop
 }
 
 // 运行在业务线程
@@ -124,10 +126,39 @@ func (h *handler) echoRunStream(w http.ResponseWriter, r *http.Request) {
 	_ = c
 }
 
+// 使用parse loop模式运行， 一个websocket一个go程
+func (h *handler) echoRunInParseLoop(w http.ResponseWriter, r *http.Request) {
+	opts := []greatws.ServerOption{
+		greatws.WithServerReplyPing(),
+		greatws.WithServerDecompression(),
+		greatws.WithServerIgnorePong(),
+		greatws.WithServerCallback(&echoHandler{}),
+		greatws.WithServerEnableUTF8Check(),
+		greatws.WithServerReadTimeout(5 * time.Second),
+		greatws.WithServerMultiEventLoop(h.parseLoop),
+		greatws.WithServerStreamMode(),
+		greatws.WithServerCallbackInEventLoop(),
+	}
+
+	if *runInEventLoop {
+		opts = append(opts, greatws.WithServerCallbackInEventLoop())
+	}
+
+	c, err := greatws.Upgrade(w, r, opts...)
+	if err != nil {
+		slog.Error("Upgrade fail:", "err", err.Error())
+	}
+	_ = c
+}
 func main() {
 	flag.Parse()
 
 	var h handler
+	runtime.SetBlockProfileRate(1)
+
+	go func() {
+		log.Println(http.ListenAndServe(":6060", nil))
+	}()
 
 	// debug io-uring
 	// h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(1000), greatws.WithIoUring(), greatws.WithLogLevel(slog.LevelDebug))
@@ -137,6 +168,15 @@ func main() {
 		greatws.WithMaxEventNum(1000),
 		greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
+
+	h.parseLoop = greatws.NewMultiEventLoopMust(
+		greatws.WithEventLoops(runtime.NumCPU()/2),
+		greatws.WithBusinessGoNum(50, 10, 10000),
+		greatws.WithMaxEventNum(1000),
+		greatws.WithParseInParseLoop(),
+		greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+	h.parseLoop.Start()
+
 	fmt.Printf("apiname:%s\n", h.m.GetApiName())
 
 	go func() {
@@ -149,6 +189,7 @@ func main() {
 	mux.HandleFunc("/autobahn", h.echo)
 	mux.HandleFunc("/autobahn-io", h.echoRunInIo)
 	mux.HandleFunc("/autobahn-stream", h.echoRunStream)
+	mux.HandleFunc("/autobahn-parse-loop", h.echoRunInParseLoop)
 
 	rawTCP, err := net.Listen("tcp", ":9001")
 	if err != nil {

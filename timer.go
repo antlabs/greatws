@@ -1,4 +1,4 @@
-// Copyright 2021-2024 antlabs. All rights reserved.
+// Copyright 2023-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,26 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package greatws
 
-import (
-	"slices"
-	"testing"
-)
+import "time"
 
-func Test_Windows(t *testing.T) {
-	t.Run("test_windows.0", func(t *testing.T) {
-		var w windows
-		w.init()
-		w.add(1)
-		if !slices.Equal(w.historyGo[:3], []int64{1, 0, 0}) {
-			// 报错
-			t.Errorf("w.historyGo is fail")
-		}
-
-		if w.avg() > 0.5 {
-			t.Errorf("w.avg > 0.5")
-		}
-	})
+func afterFunc(d time.Duration, cb func()) *time.Timer {
+	if true {
+		return time.AfterFunc(d, cb)
+	}
+	panic("unreachable")
 }

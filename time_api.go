@@ -1,4 +1,4 @@
-// Copyright 2021-2024 antlabs. All rights reserved.
+// Copyright 2023-2024 antlabs. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,25 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// 抽象出timer定时器接口，
+// 包含reset和stop两个方法
 package greatws
 
-import (
-	"slices"
-	"testing"
-)
+import "time"
 
-func Test_Windows(t *testing.T) {
-	t.Run("test_windows.0", func(t *testing.T) {
-		var w windows
-		w.init()
-		w.add(1)
-		if !slices.Equal(w.historyGo[:3], []int64{1, 0, 0}) {
-			// 报错
-			t.Errorf("w.historyGo is fail")
-		}
-
-		if w.avg() > 0.5 {
-			t.Errorf("w.avg > 0.5")
-		}
-	})
+type Timer interface {
+	Reset(d time.Duration) bool
+	Stop() bool
 }

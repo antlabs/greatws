@@ -37,11 +37,14 @@ const (
 	etDelWrite  = uint32(0)
 	etResetRead = uint32(0)
 
-	// 一次性触发
+	// 一次性触发, TODO: 这里要看下是否需要，还是垂直触发+overflow fd记录
 	etReadOneShot      = uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | unix.EPOLLET | unix.EPOLLONESHOT)
 	etWriteOneShot     = uint32(etReadOneShot)
 	etDelWriteOneShot  = uint32(0)
 	etResetReadOneShot = uint32(etReadOneShot)
+
+	processWrite = uint32(unix.EPOLLOUT)
+	processRead  = uint32(unix.EPOLLIN | unix.EPOLLRDHUP | unix.EPOLLHUP | unix.EPOLLERR)
 )
 
 type epollState struct {
@@ -54,6 +57,10 @@ type epollState struct {
 	wev     uint32
 	dwEv    uint32 // delete write event
 	resetEv uint32
+}
+
+func (e *epollState) getMultiEventLoop() *MultiEventLoop {
+	return e.parent.parent
 }
 
 func getReadWriteDeleteReset(oneShot bool, et bool) (uint32, uint32, uint32, uint32) {
@@ -155,7 +162,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 	}
 
 	retVal, err = unix.EpollWait(e.epfd, e.events, msec)
-	e.parent.parent.addPollEvNum()
+	e.getMultiEventLoop().addPollEvNum()
 	if err != nil {
 		if errors.Is(err, unix.EINTR) {
 			return 0, nil
@@ -179,8 +186,29 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				continue
 			}
 
-			if ev.Events&(unix.EPOLLIN|unix.EPOLLRDHUP|unix.EPOLLHUP|unix.EPOLLERR) > 0 {
-				e.parent.parent.addReadEvNum()
+			if e.getMultiEventLoop().parseInParseLoop {
+				isRead := ev.Events&processRead > 0
+				isWrite := ev.Events&processWrite > 0
+				e.getMultiEventLoop().parseLoop.addTask(int(ev.Fd), func() bool {
+					if isRead {
+						err = conn.processWebsocketFrame()
+						if err != nil {
+							conn.closeWithLock(err)
+							return true
+						}
+					}
+
+					if isWrite {
+						// 刷新下直接写入失败的数据
+						conn.flushOrClose()
+					}
+
+					return true
+				})
+				continue
+			}
+			if ev.Events&processRead > 0 {
+				e.getMultiEventLoop().addReadEvNum()
 
 				// 读取数据，这里要发行下websocket的解析变成流式解析
 				err = conn.processWebsocketFrame()
@@ -188,13 +216,14 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 					conn.closeWithLock(err)
 				}
 			}
-			if ev.Events&unix.EPOLLOUT > 0 {
-				e.parent.parent.addWriteEvNum()
+			if ev.Events&processWrite > 0 {
+				e.getMultiEventLoop().addWriteEvNum()
 				// 刷新下直接写入失败的数据
 				conn.flushOrClose()
 			}
 			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
 				conn.closeWithLock(io.EOF)
+				continue
 			}
 		}
 

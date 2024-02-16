@@ -104,6 +104,31 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 				continue
 			}
 
+			if e.parent.parseInParseLoop {
+				if ev.Flags&unix.EV_EOF != 0 {
+					conn.closeWithLock(io.EOF)
+					continue
+				}
+				isRead := ev.Filter == unix.EVFILT_READ
+				isWrite := ev.Filter == unix.EVFILT_WRITE
+				e.parent.parseLoop.addTask(fd, func() bool {
+					if isRead {
+						err = conn.processWebsocketFrame()
+						if err != nil {
+							conn.closeWithLock(err)
+							return true
+						}
+					}
+
+					if isWrite {
+						// 刷新下直接写入失败的数据
+						conn.flushOrClose()
+					}
+
+					return true
+				})
+				continue
+			}
 			if ev.Filter == unix.EVFILT_READ {
 				if ev.Flags&unix.EV_EOF != 0 {
 					conn.closeWithLock(io.EOF)

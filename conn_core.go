@@ -38,7 +38,7 @@ const (
 	maxControlFrameSize = 125
 )
 
-type frameState int
+type frameState int8
 
 func (f frameState) String() string {
 	switch f {
@@ -59,18 +59,20 @@ const (
 )
 
 // 内部的conn, 只包含fd, 读缓冲区, 写缓冲区, 状态机, 分段帧缓冲区
+// 这一层本来是和epoll/kqueue 等系统调用打交道的
 type conn struct {
-	fd             int64      // 文件描述符fd
-	rbuf           *[]byte    // 读缓冲区
-	lastPayloadLen int64      // 上一次读取的payload长度
-	rr             int        // rbuf读索引
-	rw             int        // rbuf写索引
-	curState       frameState // 保存当前状态机的状态
-	lenAndMaskSize int        // payload长度和掩码的长度
-	rh             frame.FrameHeader
-
-	fragmentFramePayload *[]byte // 存放分片帧的缓冲区
-	fragmentFrameHeader  *frame.FrameHeader
+	fd                   int64              // 文件描述符fd
+	rbuf                 *[]byte            // 读缓冲区
+	rr                   int                // rbuf读索引
+	rw                   int                // rbuf写索引
+	lenAndMaskSize       int                // payload长度和掩码的长度
+	lastPayloadLen       int64              // 上一次读取的payload长度
+	rh                   frame.FrameHeader  // frame头部
+	fragmentFramePayload *[]byte            // 存放分片帧的缓冲区
+	fragmentFrameHeader  *frame.FrameHeader // 存放分段帧的头部
+	closed               int32              // 是否关闭
+	curState             frameState         // 保存当前状态机的状态
+	client               bool               // 客户端为true，服务端为false
 }
 
 func (c *Conn) getLogger() *slog.Logger {
@@ -82,9 +84,12 @@ func (c *Conn) getCurrBindGo() *businessGo {
 	return (*businessGo)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo))))
 }
 
+// 设置当前绑定的go程
 func (c *Conn) setCurrBindGo(b *businessGo) {
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo)), unsafe.Pointer(b))
 }
+
+// addTask 进行任务调度， 任务调试分为三种模式， 1. stream模式， 2. go模式， 3. io模式
 func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 	if c.isClosed() {
 		return
@@ -327,6 +332,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	needMask := c.rh.Mask
 
 	fin := f.GetFin()
+	// 分段的frame
 	if c.fragmentFrameHeader != nil && !f.Opcode.IsControl() {
 		if f.Opcode == 0 {
 			// TODO 优化, 需要放到单独的业务go程, 目前为了保证时序性，先放到io go程里面
@@ -369,7 +375,9 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
 					// TODO c.utf8Check 修改成流式解析
 					if fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(*fragmentFramePayload) {
-						c.Callback.OnClose(c, ErrTextNotUTF8)
+						c.onCloseOnce.Do(func() {
+							c.Callback.OnClose(c, ErrTextNotUTF8)
+						})
 						// return ErrTextNotUTF8
 						c.closeWithLock(nil)
 						return false
@@ -412,36 +420,9 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		f.Payload = nil
 		// payloadPtr.Store(f.Payload)
 
-		// 进入业务协程执行
+		// text或者binary进入业务协程执行
 		c.addTask(c.runInGoStrategy, func() bool {
-			// payload := payloadPtr.Load()
-
-			if needMask {
-				mask.Mask(*payload, maskKey)
-			}
-			decodePayload := *payload
-			if rsv1 && decompression {
-				// 不分段的解压缩
-				decodePayload, err = decode(*payload)
-				if err != nil {
-					c.closeWithLock(err)
-					PutPayloadBytes(payload)
-					return false
-				}
-				defer PutPayloadBytes(&decodePayload)
-			}
-
-			if f.Opcode == opcode.Text {
-				if !c.utf8Check(decodePayload) {
-					c.closeWithLock(nil)
-					c.Callback.OnClose(c, ErrTextNotUTF8)
-					return false
-				}
-			}
-
-			c.Callback.OnMessage(c, f.Opcode, decodePayload)
-			PutPayloadBytes(payload)
-			return false
+			return c.processCallbackData(f, payload, rsv1, decompression, needMask, maskKey)
 		})
 
 		return
@@ -488,7 +469,9 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			}
 
 			err = bytesToCloseErrMsg(*f.Payload)
-			c.Callback.OnClose(c, err)
+			c.onCloseOnce.Do(func() {
+				c.Callback.OnClose(c, err)
+			})
 			return err
 		}
 
@@ -496,15 +479,17 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			// 回一个pong包
 			if c.replyPing {
 				if err := c.WriteTimeout(Pong, *f.Payload, 2*time.Second); err != nil {
-					c.Callback.OnClose(c, err)
+					c.onCloseOnce.Do(func() {
+						c.Callback.OnClose(c, err)
+					})
 					return err
 				}
 				// 进入业务协程执行
 				payload := f.Payload
+				// here
 				c.addTask(c.runInGoStrategy, func() bool {
-					c.Callback.OnMessage(c, f.Opcode, *payload)
-					PutPayloadBytes(payload)
-					return false
+
+					return c.processPing(f, payload)
 				})
 				return
 			}
@@ -526,8 +511,52 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	return ErrOpcode
 }
 
+func (c *Conn) processPing(f frame.Frame2, payload *[]byte) bool {
+	c.Callback.OnMessage(c, f.Opcode, *payload)
+	PutPayloadBytes(payload)
+	return false
+}
+
+// 如果是text或者binary的消息， 在这里调用OnMessage函数
+func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, decompression bool, needMask bool, maskKey uint32) (ok bool) {
+	var err error
+	if needMask {
+		mask.Mask(*payload, maskKey)
+	}
+	decodePayload := *payload
+	if rsv1 && decompression {
+		// 不分段的解压缩
+		decodePayload, err = decode(*payload)
+		if err != nil {
+			c.closeWithLock(err)
+			PutPayloadBytes(payload)
+			return false
+		}
+		defer PutPayloadBytes(&decodePayload)
+	}
+
+	if f.Opcode == opcode.Text {
+		if !c.utf8Check(decodePayload) {
+			c.closeWithLock(nil)
+			c.onCloseOnce.Do(func() {
+				c.Callback.OnClose(c, ErrTextNotUTF8)
+			})
+			return false
+		}
+	}
+
+	c.Callback.OnMessage(c, f.Opcode, decodePayload)
+	PutPayloadBytes(payload)
+	return false
+}
+
 func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
-	defer c.Callback.OnClose(c, userErr)
+	defer func() {
+		c.onCloseOnce.Do(func() {
+			c.Callback.OnClose(c, userErr)
+		})
+	}()
+
 	if err := c.WriteTimeout(opcode.Close, statusCodeToBytes(code), 2*time.Second); err != nil {
 		return err
 	}
@@ -535,9 +564,10 @@ func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
 	return userErr
 }
 
-func (c *Conn) WriteTimeout(op Opcode, data []byte, t time.Duration) (err error) {
-	// TODO 超时时间
-	return c.WriteMessage(op, data)
+// TODO:
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	// return c.c.SetWriteDeadline(t)
+	return nil
 }
 
 func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
@@ -610,6 +640,86 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 	c.mu.Unlock()
 
 	return err
+}
+
+// 写分段数据, 目前主要是单元测试使用
+func (c *Conn) writeFragment(op Opcode, writeBuf []byte, maxFragment int /*单个段最大size*/) (err error) {
+	if len(writeBuf) < maxFragment {
+		return c.WriteMessage(op, writeBuf)
+	}
+
+	if op == opcode.Text {
+		if !c.utf8Check(writeBuf) {
+			return ErrTextNotUTF8
+		}
+	}
+
+	rsv1 := c.compression && (op == opcode.Text || op == opcode.Binary)
+	if rsv1 {
+		var out wrapBuffer
+		w := compressNoContextTakeover(&out, defaultCompressionLevel)
+		if _, err = io.Copy(w, bytes.NewReader(writeBuf)); err != nil {
+			return
+		}
+
+		if err = w.Close(); err != nil {
+			return
+		}
+		writeBuf = out.Bytes()
+	}
+
+	// f.Opcode = op
+	// f.PayloadLen = int64(len(writeBuf))
+	maskValue := uint32(0)
+	if c.client {
+		maskValue = rand.Uint32()
+	}
+
+	var fw fixedwriter.FixedWriter
+	for len(writeBuf) > 0 {
+		if len(writeBuf) > maxFragment {
+			if err := frame.WriteFrame(&fw, c, writeBuf[:maxFragment], false, rsv1, c.client, op, maskValue); err != nil {
+				return err
+			}
+			writeBuf = writeBuf[maxFragment:]
+			op = Continuation
+			continue
+		}
+		return frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
+	}
+	return nil
+}
+
+// TODO
+func (c *Conn) WriteTimeout(op Opcode, data []byte, t time.Duration) (err error) {
+	if err = c.setWriteDeadline(time.Now().Add(t)); err != nil {
+		return
+	}
+
+	defer func() { _ = c.setWriteDeadline(time.Time{}) }()
+	return c.WriteMessage(op, data)
+}
+
+func (c *Conn) WriteControl(op Opcode, data []byte) (err error) {
+	if len(data) > maxControlFrameSize {
+		return ErrMaxControlFrameSize
+	}
+	return c.WriteMessage(op, data)
+}
+
+func (c *Conn) WriteCloseTimeout(sc StatusCode, t time.Duration) (err error) {
+	buf := statusCodeToBytes(sc)
+	return c.WriteTimeout(opcode.Close, buf, t)
+}
+
+// data 不能超过125字节
+func (c *Conn) WritePing(data []byte) (err error) {
+	return c.WriteControl(Ping, data[:])
+}
+
+// data 不能超过125字节
+func (c *Conn) WritePong(data []byte) (err error) {
+	return c.WriteControl(Pong, data[:])
 }
 
 func (c *Conn) Close() {

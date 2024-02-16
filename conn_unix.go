@@ -24,34 +24,13 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/enum"
 	"golang.org/x/sys/unix"
 )
-
-type ioUringOpState uint32
-
-const (
-	connInvalid ioUringOpState = 1 << iota
-	opRead
-	opWrite
-	opClose
-)
-
-func (s ioUringOpState) String() string {
-	switch s {
-	case opRead:
-		return "read"
-	case opWrite:
-		return "write"
-	case opClose:
-		return "close"
-	default:
-		return "invalid"
-	}
-}
 
 type writeState int32
 
@@ -72,49 +51,96 @@ func (s writeState) String() string {
 	}
 }
 
+var (
+	ErrInvalidDeadline = errors.New("invalid deadline")
+	// 读超时
+	ErrReadTimeout = errors.New("read timeout")
+	// 写超时
+	ErrWriteTimeout = errors.New("write timeout")
+)
+
 type Conn struct {
 	conn
 
-	wbuf       *[]byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	mu         sync.Mutex  // 锁
-	*Config                // 配置
-	parent     *EventLoop  // event loop
-	currBindGo *businessGo // 绑定模式下，当前绑定的go程
-	streamGo   *taskStream // stream模式下，当前绑定的go程
-	closeOnce  sync.Once   // 关闭一次
-	closed     int32       // 是否关闭
-	client     bool        // 客户端为true，服务端为false
+	wbuf          *[]byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	mu            sync.Mutex  // 锁
+	*Config                   // 配置
+	parent        *EventLoop  // event loop
+	currBindGo    *businessGo // 绑定模式下，当前绑定的go程
+	streamGo      *taskStream // stream模式下，当前绑定的go程
+	rtime         *time.Timer // 控制读超时
+	wtime         *time.Timer // 控制写超时
+	closeConnOnce sync.Once   // 关闭一次
+	onCloseOnce   Once        // 保证只调用一次OnClose函数
+
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
 	c := &Conn{
 		conn: conn{
-			fd: fd,
+			fd:     fd,
+			client: client,
 		},
 		// 初始化不分配内存，只有在需要的时候才分配
 		Config: conf,
-		client: client,
+
 		parent: conf.multiEventLoop.getEventLoop(int(fd)),
 	}
 
 	if conf.runInGoStrategy == taskStrategyStream {
 		c.streamGo = newTaskStream()
 	}
+
+	if conf.readTimeout > 0 {
+		c.setReadDeadline(time.Now().Add(conf.readTimeout))
+	}
 	return c
+}
+
+// 这是一个空函数，兼容下quickws的接口
+func (c *Conn) StartReadLoop() {
+
 }
 
 func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
 }
 
-func (c *Conn) closeInner(err error) {
-	c.closeOnce.Do(func() {
+// 没有加锁的版本，有外层已经有锁保护，所以不需要加锁
+func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
+
+	c.closeConnOnce.Do(func() {
+		if err != nil {
+			err = io.EOF
+		}
+		switch c.Config.runInGoStrategy {
+		case taskStrategyBind:
+			if c.getCurrBindGo() != nil {
+				c.currBindGo.subBinConnCount()
+			}
+		case taskStrategyStream:
+			c.streamGo.close()
+
+		}
 		fd := c.getFd()
 		c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
 		c.parent.del(c)
 		atomic.StoreInt64(&c.fd, -1)
-		atomic.StoreInt32(&c.closed, 1)
+		atomic.AddInt32(&c.closed, 1)
 	})
+
+	// 这个必须要放在后面
+	if onClose {
+		c.onCloseOnce.Do(func() {
+			c.OnClose(c, err)
+		})
+	}
+
+}
+
+func (c *Conn) closeInner(err error) {
+
+	c.closeInnerWithOnClose(err, true)
 }
 
 func (c *Conn) closeWithLock(err error) {
@@ -128,18 +154,21 @@ func (c *Conn) closeWithLock(err error) {
 		return
 	}
 
-	switch c.Config.runInGoStrategy {
-	case taskStrategyBind:
-		if c.getCurrBindGo() != nil {
-			c.currBindGo.subBinConnCount()
-		}
-	case taskStrategyStream:
-		c.streamGo.close()
-
+	if err == nil {
+		err = io.EOF
 	}
+	c.closeInnerWithOnClose(err, false)
 
-	c.closeInner(err)
+	c.mu.Unlock()
 
+	// 这个必须要放在后面， 不然会死锁，因为Close会调用用户的OnClose
+	// 用户的OnClose也有可能调用Close， 所以使用flags来判断是否已经关闭
+	c.mu.Lock()
+	if atomic.LoadInt32(&c.closed) == 1 {
+		c.onCloseOnce.Do(func() {
+			c.OnClose(c, err)
+		})
+	}
 	c.mu.Unlock()
 }
 
@@ -312,6 +341,11 @@ func (c *Conn) processWebsocketFrame() (err error) {
 		c.rbuf = bytespool.GetBytes(int(float32(c.rh.PayloadLen+enum.MaxFrameHeaderSize) * c.windowsMultipleTimesPayloadSize))
 	}
 
+	if c.readTimeout > 0 {
+		if err = c.setReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
+			return err
+		}
+	}
 	n := 0
 	var success bool
 	// 不使用io_uring的直接调用read获取buffer数据
@@ -338,7 +372,9 @@ func (c *Conn) processWebsocketFrame() (err error) {
 		// 读到eof，直接关闭
 		if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
 			c.closeWithLock(io.EOF)
-			c.OnClose(c, io.EOF)
+			c.onCloseOnce.Do(func() {
+				c.OnClose(c, io.EOF)
+			})
 			err = io.EOF
 			goto fail
 		}
@@ -401,6 +437,43 @@ fail:
 	return err
 }
 
+func (c *Conn) setDeadlineInner(t **time.Timer, tm time.Time, err error) error {
+	if t == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if tm.IsZero() {
+		if *t != nil {
+			(*t).Stop()
+			*t = nil
+		}
+		return nil
+	}
+
+	d := time.Until(tm)
+	if d < 0 {
+		return ErrInvalidDeadline
+	}
+
+	if *t == nil {
+		*t = afterFunc(d, func() {
+			c.closeWithLock(err)
+		})
+	} else {
+		(*t).Reset(d)
+	}
+	return nil
+}
+
+func (c *Conn) setReadDeadline(t time.Time) error {
+	return c.setDeadlineInner(&c.rtime, t, ErrReadTimeout)
+}
+
+func (c *Conn) setWriteDeadline(t time.Time) error {
+	return c.setDeadlineInner(&c.wtime, t, ErrWriteTimeout)
+
+}
 func closeFd(fd int) {
 	unix.Close(int(fd))
 }

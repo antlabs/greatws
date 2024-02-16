@@ -28,11 +28,10 @@ const (
 )
 
 type EventLoop struct {
-	mu        sync.Mutex
-	conns     sync.Map
-	maxFd     int // highest file descriptor currently registered
-	setSize   int // max number of file descriptors tracked
-	*apiState     // 每个平台对应的异步io接口/epoll/kqueue/iouring
+	conns     sync.Map // TODO 优化，后面换成b-tree
+	maxFd     int      // highest file descriptor currently registered
+	setSize   int      // max number of file descriptors tracked
+	*apiState          // 每个平台对应的异步io接口/epoll/kqueue/iouring(暂时不加，除非io-uring性能超过epoll才加回来)
 	shutdown  bool
 	parent    *MultiEventLoop
 	localTask task
@@ -55,10 +54,6 @@ func CreateEventLoop(setSize int, flag evFlag, parent *MultiEventLoop) (e *Event
 // 柔性关闭所有的连接
 func (e *EventLoop) Shutdown(ctx context.Context) error {
 	return nil
-}
-
-func (el *EventLoop) StartLoop() {
-	go el.Loop()
 }
 
 func (el *EventLoop) Loop() {

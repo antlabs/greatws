@@ -54,8 +54,8 @@ func (t *taskStream) addTask(ts taskStrategy, f func() bool) {
 		}
 	}()
 	t.streamChan <- f
-	// TODO阻塞的情况如何处理?
-	// 默认启动oneshot模式
+	// TODO: 阻塞的情况如何处理?
+	// greatws 处理overflow的fd
 }
 
 func (t *taskStream) close() {
