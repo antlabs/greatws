@@ -83,9 +83,12 @@ func (c *Conn) getCurrBindGo() *businessGo {
 	return (*businessGo)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo))))
 }
 
+// 设置当前绑定的go程
 func (c *Conn) setCurrBindGo(b *businessGo) {
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo)), unsafe.Pointer(b))
 }
+
+// addTask 进行任务调度， 任务调试分为三种模式， 1. stream模式， 2. go模式， 3. io模式
 func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 	if c.isClosed() {
 		return
@@ -416,9 +419,9 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		f.Payload = nil
 		// payloadPtr.Store(f.Payload)
 
-		// 进入业务协程执行
+		// text或者binary进入业务协程执行
 		c.addTask(c.runInGoStrategy, func() bool {
-			return c.processCallback2(f, payload, rsv1, decompression, needMask, maskKey)
+			return c.processCallbackData(f, payload, rsv1, decompression, needMask, maskKey)
 		})
 
 		return
@@ -482,10 +485,10 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				}
 				// 进入业务协程执行
 				payload := f.Payload
+				// here
 				c.addTask(c.runInGoStrategy, func() bool {
-					c.Callback.OnMessage(c, f.Opcode, *payload)
-					PutPayloadBytes(payload)
-					return false
+
+					return c.processPing(f, payload)
 				})
 				return
 			}
@@ -507,7 +510,14 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	return ErrOpcode
 }
 
-func (c *Conn) processCallback2(f frame.Frame2, payload *[]byte, rsv1 bool, decompression bool, needMask bool, maskKey uint32) (ok bool) {
+func (c *Conn) processPing(f frame.Frame2, payload *[]byte) bool {
+	c.Callback.OnMessage(c, f.Opcode, *payload)
+	PutPayloadBytes(payload)
+	return false
+}
+
+// 如果是text或者binary的消息， 在这里调用OnMessage函数
+func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, decompression bool, needMask bool, maskKey uint32) (ok bool) {
 	var err error
 	if needMask {
 		mask.Mask(*payload, maskKey)
