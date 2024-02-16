@@ -71,7 +71,7 @@ type Conn struct {
 	rtime         *time.Timer // 控制读超时
 	wtime         *time.Timer // 控制写超时
 	closeConnOnce sync.Once   // 关闭一次
-	onCloseOnce   sync.Once   // 保证只调用一次OnClose函数
+	onCloseOnce   Once        // 保证只调用一次OnClose函数
 
 }
 
@@ -106,6 +106,7 @@ func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
 }
 
+// 没有加锁的版本，有外层已经有锁保护，所以不需要加锁
 func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
 
 	c.closeConnOnce.Do(func() {
