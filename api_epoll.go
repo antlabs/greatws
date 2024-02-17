@@ -194,20 +194,21 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				isRead := ev.Events&processRead > 0
 				isWrite := ev.Events&processWrite > 0
 				e.getMultiEventLoop().parseLoop.addTask(int(ev.Fd), func() bool {
-					if isRead {
-						err = conn.processWebsocketFrame()
-						if err != nil {
-							conn.closeWithLock(err)
-							return true
+					return func(c *Conn) bool {
+						if isRead {
+							err = conn.processWebsocketFrame()
+							if err != nil {
+								conn.closeWithLock(err)
+								return true
+							}
 						}
-					}
 
-					if isWrite {
-						// 刷新下直接写入失败的数据
-						conn.flushOrClose()
-					}
-
-					return true
+						if isWrite {
+							// 刷新下直接写入失败的数据
+							conn.flushOrClose()
+						}
+						return true
+					}(conn)
 				})
 				continue
 			}
