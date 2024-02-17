@@ -21,23 +21,31 @@ import (
 	"time"
 )
 
-type MultiEventLoop struct {
-	numLoops    int // 每次epoll/kqueue返回时，一次最多处理多少事件
-	maxEventNum int
-	loops       []*EventLoop
-	parseLoop   *taskParse
+type multiEventLoopOption struct {
+	numLoops int //起多少个event loop
 	// 只是配置的作用，不是真正的任务池， fd是绑定到某个事件循环上的，
 	// 任务池是绑定到某个事件循环上的，所以这里的任务池也绑定到对应的localTask上
 	// 如果设计全局任务池，那么概念就会很乱，容易出错，也会临界区竞争
-	configTask task
-	runInIo    taskIo
-	flag       evFlag // 是否使用io_uring
-	level      slog.Level
-	stat       // 统计信息
-	*slog.Logger
+	configTask       task
 	taskMode         taskMode
-	evLoopStart      uint32
-	parseInParseLoop bool // 在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
+	level            slog.Level //控制日志等级
+	maxEventNum      int        //每次epoll/kqueue返回时，一次最多处理多少事件
+	parseInParseLoop *bool      //在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
+}
+
+type MultiEventLoop struct {
+	multiEventLoopOption //配置选项
+
+	loops     []*EventLoop
+	parseLoop *taskParse
+
+	runInIo taskIo
+	flag    evFlag // 是否使用io_uring，目前没有使用
+
+	stat // 统计信息
+	*slog.Logger
+
+	evLoopStart uint32
 }
 
 var (
@@ -49,10 +57,22 @@ var (
 )
 
 // 这个函数会被调用两次
+// 默认 1个event loop分发io事件， 多个parse loop解析websocket包
 func (m *MultiEventLoop) initDefaultSetting() {
-	m.level = slog.LevelError // 默认打印error级别的日志
+	if m.parseInParseLoop == nil {
+		m.parseInParseLoop = new(bool)
+		*m.parseInParseLoop = true
+	}
+
+	if m.level == 0 {
+		m.level = slog.LevelError //
+	}
 	if m.numLoops == 0 {
-		m.numLoops = max(defNumLoops, 1)
+		if *m.parseInParseLoop {
+			m.numLoops = 1
+		} else {
+			m.numLoops = max(defNumLoops, 1)
+		}
 	}
 
 	if m.maxEventNum == 0 {
@@ -95,7 +115,6 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 // 创建一个多路事件循环
 func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m := &MultiEventLoop{}
-
 	m.initDefaultSetting()
 	for _, o := range opts {
 		o(m)
@@ -106,7 +125,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m.configTask.taskMode = m.taskMode
 
 	m.configTask.init()
-	if m.parseInParseLoop {
+	if *m.parseInParseLoop {
 		m.parseLoop = newTaskParse()
 	}
 	m.loops = make([]*EventLoop, m.numLoops)

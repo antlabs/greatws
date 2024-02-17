@@ -185,8 +185,12 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				conn.closeWithLock(io.EOF)
 				continue
 			}
-
-			if e.getMultiEventLoop().parseInParseLoop {
+			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
+				conn.closeWithLock(io.EOF)
+				continue
+			}
+			// 默认是io线程只做事件的分发，websocket包的读取和解析在parse loop里面做
+			if *e.getMultiEventLoop().parseInParseLoop {
 				isRead := ev.Events&processRead > 0
 				isWrite := ev.Events&processWrite > 0
 				e.getMultiEventLoop().parseLoop.addTask(int(ev.Fd), func() bool {
@@ -221,10 +225,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				// 刷新下直接写入失败的数据
 				conn.flushOrClose()
 			}
-			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
-				conn.closeWithLock(io.EOF)
-				continue
-			}
+
 		}
 
 	}

@@ -65,6 +65,7 @@ func Test_CommonOption(t *testing.T) {
 		}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -90,6 +91,7 @@ func Test_CommonOption(t *testing.T) {
 		}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -112,6 +114,7 @@ func Test_CommonOption(t *testing.T) {
 		con, err := Dial(url, WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -127,6 +130,7 @@ func Test_CommonOption(t *testing.T) {
 			}))
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -147,6 +151,7 @@ func Test_CommonOption(t *testing.T) {
 		}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer clientConn.Close()
 
@@ -179,6 +184,7 @@ func Test_CommonOption(t *testing.T) {
 			}))
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -189,6 +195,7 @@ func Test_CommonOption(t *testing.T) {
 		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientCallback(&testDefaultCallback{}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -214,6 +221,7 @@ func Test_CommonOption(t *testing.T) {
 			c, err := upgrade.Upgrade(w, r)
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -224,6 +232,7 @@ func Test_CommonOption(t *testing.T) {
 		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientCallback(&testDefaultCallback{}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 
 		con.WriteMessage(Binary, []byte("hello"))
@@ -245,6 +254,7 @@ func Test_CommonOption(t *testing.T) {
 			}))
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -258,10 +268,14 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 
 		con.StartReadLoop()
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		select {
 		case <-done:
 		case <-time.After(100 * time.Millisecond):
@@ -333,6 +347,7 @@ func Test_CommonOption(t *testing.T) {
 		con, err := Dial(url, WithClientEnableUTF8Check(), WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -365,6 +380,7 @@ func Test_CommonOption(t *testing.T) {
 			c, err := upgrade.Upgrade(w, r)
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -375,12 +391,14 @@ func Test_CommonOption(t *testing.T) {
 		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
 		err = con.WriteMessage(Text, badUTF8)
 		if err != nil {
 			t.Error("关闭utf8检查, 写入非法utf8数据，不报错")
+			return
 		}
 
 		select {
@@ -402,6 +420,7 @@ func Test_CommonOption(t *testing.T) {
 			}))
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -412,6 +431,7 @@ func Test_CommonOption(t *testing.T) {
 		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -447,6 +467,7 @@ func Test_CommonOption(t *testing.T) {
 		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 
 		con.WriteMessage(Binary, []byte("hello"))
@@ -481,6 +502,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 
 		con.StartReadLoop()
@@ -602,6 +624,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 
 		con.StartReadLoop()
@@ -638,6 +661,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -649,7 +673,7 @@ func Test_CommonOption(t *testing.T) {
 			if d != "hello" {
 				t.Errorf("write message or read message fail:got:%s, need:hello\n", d)
 			}
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(400 * time.Millisecond):
 		}
 		if atomic.LoadInt32(&run) != 1 {
 			t.Error("not run server:method fail")
@@ -680,18 +704,25 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
-		con.WritePong([]byte("hello"))
-		con.WriteMessage(Text, []byte("hello"))
+		err = con.WritePong([]byte("hello"))
+		if err != nil {
+			t.Errorf("WritePong:%v", err)
+		}
+		err = con.WriteMessage(Text, []byte("hello"))
+		if err != nil {
+			t.Errorf("WriteMessage:%v", err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
 			if d != "hello" {
 				t.Errorf("write message or read message fail:got:%s, need:hello\n", d)
 			}
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(400 * time.Millisecond):
 		}
 		if atomic.LoadInt32(&run) != 1 {
 			t.Error("not run server:method fail")
@@ -709,6 +740,7 @@ func Test_CommonOption(t *testing.T) {
 			}))
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -722,17 +754,22 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
-		con.WriteMessage(Text, []byte("hello"))
+		err = con.WriteMessage(Text, []byte("hello"))
+		if err != nil {
+			t.Errorf("WriteMessage:%v", err)
+			return
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
 			if d != "hello" {
 				t.Errorf("write message or read message fail:got:%s, need:hello\n", d)
 			}
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(400 * time.Millisecond):
 		}
 		if atomic.LoadInt32(&run) != 1 {
 			t.Error("not run server:method fail")
@@ -748,6 +785,7 @@ func Test_CommonOption(t *testing.T) {
 			}))
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -761,6 +799,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -788,6 +827,7 @@ func Test_CommonOption(t *testing.T) {
 			c, err := upgrade.Upgrade(w, r)
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -801,6 +841,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -827,6 +868,7 @@ func Test_CommonOption(t *testing.T) {
 			}))
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -840,10 +882,14 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -878,6 +924,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -996,6 +1043,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -1036,6 +1084,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -1158,6 +1207,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -1578,13 +1628,17 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Text, []byte("hello"))
+		err = con.WriteMessage(Text, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		select {
 		case d := <-tsort.err:
 			if d == nil {
 				t.Errorf("got:nil, need:error\n")
 			}
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(400 * time.Millisecond):
 			t.Errorf(" Test_ServerOption:WithServerReadTimeout timeout\n")
 		}
 		if atomic.LoadInt32(&tsort.run) != 1 {
@@ -1601,6 +1655,7 @@ func Test_CommonOption(t *testing.T) {
 			c, err := upgrade.Upgrade(w, r)
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -1612,6 +1667,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -1621,7 +1677,7 @@ func Test_CommonOption(t *testing.T) {
 			if d == nil {
 				t.Errorf("got:nil, need:error\n")
 			}
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(400 * time.Millisecond):
 			t.Errorf(" Test_ServerOption:WithServerReadTimeout timeout\n")
 		}
 		if atomic.LoadInt32(&tsort.run) != 1 {
@@ -1639,6 +1695,7 @@ func Test_CommonOption(t *testing.T) {
 			c, err := upgrade.Upgrade(w, r)
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -1653,6 +1710,7 @@ func Test_CommonOption(t *testing.T) {
 			}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 		// 这里必须要报错

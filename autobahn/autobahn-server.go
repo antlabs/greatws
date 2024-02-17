@@ -166,15 +166,20 @@ func main() {
 		greatws.WithEventLoops(runtime.NumCPU()/2),
 		greatws.WithBusinessGoNum(50, 10, 10000),
 		greatws.WithMaxEventNum(1000),
+		greatws.WithDisableParseInParseLoop(),
 		greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
 
-	h.parseLoop = greatws.NewMultiEventLoopMust(
-		greatws.WithEventLoops(runtime.NumCPU()/2),
+	parseLoopOpt := []greatws.EvOption{
 		greatws.WithBusinessGoNum(50, 10, 10000),
 		greatws.WithMaxEventNum(1000),
-		greatws.WithParseInParseLoop(),
-		greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+		greatws.WithLogLevel(slog.LevelError),
+	}
+	if runtime.GOOS == "darwin" {
+		parseLoopOpt = append(parseLoopOpt, greatws.WithParseInParseLoop())
+	}
+
+	h.parseLoop = greatws.NewMultiEventLoopMust(parseLoopOpt...) // epoll, kqueue
 	h.parseLoop.Start()
 
 	fmt.Printf("apiname:%s\n", h.m.GetApiName())

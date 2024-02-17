@@ -13,7 +13,10 @@
 // limitations under the License.
 package greatws
 
-import "log/slog"
+import (
+	"log/slog"
+	"runtime"
+)
 
 type EvOption func(e *MultiEventLoop)
 
@@ -68,17 +71,34 @@ func WithMaxEventNum(num int) EvOption {
 	}
 }
 
-// 在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
+// 关闭: 在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
+func WithDisableParseInParseLoop() EvOption {
+	return func(e *MultiEventLoop) {
+		if e.parseInParseLoop == nil {
+			e.parseInParseLoop = new(bool)
+		}
+		*e.parseInParseLoop = false
+		if runtime.GOOS == "linux" {
+			*e.parseInParseLoop = true
+		}
+
+	}
+}
+
+// 默认行为: 在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
 func WithParseInParseLoop() EvOption {
 	return func(e *MultiEventLoop) {
-		e.parseInParseLoop = true
+		if e.parseInParseLoop == nil {
+			e.parseInParseLoop = new(bool)
+		}
+		*e.parseInParseLoop = true
 	}
 }
 
 // 暂时不可用
 // 是否使用io_uring, 支持linux系统，需要内核版本6.2.0以上(以后只会在>=6.2.0的版本上测试)
-func WithIoUring() EvOption {
-	return func(e *MultiEventLoop) {
-		e.flag |= EVENT_IOURING
-	}
-}
+// func WithIoUring() EvOption {
+// 	return func(e *MultiEventLoop) {
+// 		e.flag |= EVENT_IOURING
+// 	}
+// }

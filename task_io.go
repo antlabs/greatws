@@ -15,6 +15,7 @@ package greatws
 
 type taskIo struct{}
 
+// 任务运行在io goroutine中
 func (t *taskIo) addTask(ts taskStrategy, f func() bool) {
 	f()
 }

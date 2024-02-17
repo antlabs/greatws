@@ -103,12 +103,13 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 				e.parent.Logger.Debug("conn is nil", "fd", fd)
 				continue
 			}
+			if ev.Flags&unix.EV_EOF != 0 {
+				conn.closeWithLock(io.EOF)
+				continue
+			}
+			// 默认是io线程只做事件的分发，websocket包的读取和解析在parse loop里面做
+			if *e.parent.parseInParseLoop {
 
-			if e.parent.parseInParseLoop {
-				if ev.Flags&unix.EV_EOF != 0 {
-					conn.closeWithLock(io.EOF)
-					continue
-				}
 				isRead := ev.Filter == unix.EVFILT_READ
 				isWrite := ev.Filter == unix.EVFILT_WRITE
 				e.parent.parseLoop.addTask(fd, func() bool {
@@ -130,10 +131,6 @@ func (e *EventLoop) apiPoll(tv time.Duration) (retVal int, err error) {
 				continue
 			}
 			if ev.Filter == unix.EVFILT_READ {
-				if ev.Flags&unix.EV_EOF != 0 {
-					conn.closeWithLock(io.EOF)
-					continue
-				}
 				// 读取数据，这里要发行下websocket的解析变成流式解析
 				err = conn.processWebsocketFrame()
 				if err != nil {
