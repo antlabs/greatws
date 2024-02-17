@@ -37,7 +37,7 @@ const (
 	etDelWrite  = uint32(0)
 	etResetRead = uint32(0)
 
-	// 一次性触发, TODO: 这里要看下是否需要，还是垂直触发+overflow fd记录
+	// 一次性触发, TODO: 这里要看下是否需要，还是垂直触发+overflow fd记录，目前没有使用
 	etReadOneShot      = uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | unix.EPOLLET | unix.EPOLLONESHOT)
 	etWriteOneShot     = uint32(etReadOneShot)
 	etDelWriteOneShot  = uint32(0)
