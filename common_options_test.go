@@ -46,7 +46,7 @@ func (defcallback *testServerOptionReadTimeout) OnClose(c *Conn, err error) {
 
 // 测试客户端和服务端都有的配置项
 func Test_CommonOption(t *testing.T) {
-	m := NewMultiEventLoopAndStartMust(WithEventLoops(1), WithBusinessGoNum(1, 1, 1), WithLogLevel(slog.LevelDebug))
+	m := NewMultiEventLoopAndStartMust(WithEventLoops(1), WithBusinessGoNum(1, 1, 1), WithLogLevel(slog.LevelError))
 	t.Run("0.server.local: Without setting WithClientCallbackFunc", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerTCPDelay(), WithServerMultiEventLoop(m))

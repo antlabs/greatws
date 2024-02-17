@@ -193,22 +193,10 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 			if *e.getMultiEventLoop().parseInParseLoop {
 				isRead := ev.Events&processRead > 0
 				isWrite := ev.Events&processWrite > 0
-				e.getMultiEventLoop().parseLoop.addTask(int(ev.Fd), func() bool {
-					return func(c *Conn) bool {
-						if isRead {
-							err = c.processWebsocketFrame()
-							if err != nil {
-								c.closeWithLock(err)
-								return true
-							}
-						}
 
-						if isWrite {
-							// 刷新下直接写入失败的数据
-							c.flushOrClose()
-						}
-						return true
-					}(conn)
+				e.getMultiEventLoop().parseLoop.addTask(int(ev.Fd), func() bool {
+					// 如果这里直接贴逻辑go test -race有时候会报错，使用函数则没大这个问题
+					return e.process(conn, isRead, isWrite)
 				})
 				continue
 			}
@@ -234,6 +222,21 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 	return numEvents, nil
 }
 
+func (e *epollState) process(conn *Conn, isRead, isWrite bool) bool {
+	if isRead {
+		err := conn.processWebsocketFrame()
+		if err != nil {
+			conn.closeWithLock(err)
+			return true
+		}
+	}
+
+	if isWrite {
+		// 刷新下直接写入失败的数据
+		conn.flushOrClose()
+	}
+	return true
+}
 func (e *epollState) apiName() string {
 	return "epoll"
 }
