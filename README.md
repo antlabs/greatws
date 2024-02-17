@@ -68,7 +68,7 @@ func main() {
 
 	var h handler
 
-	h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(1000), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+	h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(256), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
 	fmt.Printf("apiname:%s\n", h.m.GetApiName())
 

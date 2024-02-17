@@ -37,7 +37,7 @@ const (
 	etDelWrite  = uint32(0)
 	etResetRead = uint32(0)
 
-	// 一次性触发, TODO: 这里要看下是否需要，还是垂直触发+overflow fd记录
+	// 一次性触发, TODO: 这里要看下是否需要，还是垂直触发+overflow fd记录，目前没有使用
 	etReadOneShot      = uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP | unix.EPOLLPRI | unix.EPOLLIN | unix.EPOLLOUT | unix.EPOLLET | unix.EPOLLONESHOT)
 	etWriteOneShot     = uint32(etReadOneShot)
 	etDelWriteOneShot  = uint32(0)
@@ -185,25 +185,18 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				conn.closeWithLock(io.EOF)
 				continue
 			}
-
-			if e.getMultiEventLoop().parseInParseLoop {
+			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
+				conn.closeWithLock(io.EOF)
+				continue
+			}
+			// 默认是io线程只做事件的分发，websocket包的读取和解析在parse loop里面做
+			if *e.getMultiEventLoop().parseInParseLoop {
 				isRead := ev.Events&processRead > 0
 				isWrite := ev.Events&processWrite > 0
+
 				e.getMultiEventLoop().parseLoop.addTask(int(ev.Fd), func() bool {
-					if isRead {
-						err = conn.processWebsocketFrame()
-						if err != nil {
-							conn.closeWithLock(err)
-							return true
-						}
-					}
-
-					if isWrite {
-						// 刷新下直接写入失败的数据
-						conn.flushOrClose()
-					}
-
-					return true
+					// 如果这里直接贴逻辑go test -race有时候会报错，使用函数则没大这个问题
+					return e.process(conn, isRead, isWrite)
 				})
 				continue
 			}
@@ -221,10 +214,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				// 刷新下直接写入失败的数据
 				conn.flushOrClose()
 			}
-			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
-				conn.closeWithLock(io.EOF)
-				continue
-			}
+
 		}
 
 	}
@@ -232,6 +222,21 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 	return numEvents, nil
 }
 
+func (e *epollState) process(conn *Conn, isRead, isWrite bool) bool {
+	if isRead {
+		err := conn.processWebsocketFrame()
+		if err != nil {
+			conn.closeWithLock(err)
+			return true
+		}
+	}
+
+	if isWrite {
+		// 刷新下直接写入失败的数据
+		conn.flushOrClose()
+	}
+	return true
+}
 func (e *epollState) apiName() string {
 	return "epoll"
 }
