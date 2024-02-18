@@ -83,6 +83,7 @@ func main() {
 		fmt.Println("Listen fail:", err)
 		return
 	}
+	log.Println("non-tls server exit:", http.Serve(rawTCP, mux))
 }
 ```
 ## 100w websocket长链接测试
