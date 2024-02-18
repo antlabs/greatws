@@ -5,6 +5,9 @@
 [![codecov](https://codecov.io/gh/antlabs/greatws/branch/master/graph/badge.svg)](https://codecov.io/gh/antlabs/greatws)
 [![Go Report Card](https://goreportcard.com/badge/github.com/antlabs/greatws)](https://goreportcard.com/report/github.com/antlabs/greatws)
 
+## 处理流程
+![greatws.png](https://github.com/antlabs/images/blob/main/greatws/greatws.png?raw=true)
+
 # 特性
 * 支持 epoll/kqueue
 * 低内存占用
