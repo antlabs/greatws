@@ -62,6 +62,9 @@ func (m *MultiEventLoop) initDefaultSetting() {
 	if m.parseInParseLoop == nil {
 		m.parseInParseLoop = new(bool)
 		*m.parseInParseLoop = true
+		if runtime.GOOS == "darwin" {
+			*m.parseInParseLoop = false
+		}
 	}
 
 	if m.level == 0 {

@@ -1004,6 +1004,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 
@@ -1030,6 +1031,7 @@ func Test_CommonOption(t *testing.T) {
 			}))
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -1124,6 +1126,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+      return
 		}
 		defer con.Close()
 
@@ -1164,6 +1167,7 @@ func Test_CommonOption(t *testing.T) {
 		}))
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		defer con.Close()
 

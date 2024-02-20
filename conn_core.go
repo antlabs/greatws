@@ -63,14 +63,14 @@ const (
 type conn struct {
 	fd                   int64              // 文件描述符fd
 	rbuf                 *[]byte            // 读缓冲区
-	rr                   int                // rbuf读索引
-	rw                   int                // rbuf写索引
+	rr                   int                // rbuf读索引，rfc标准里面有超过4个字节的大包，所以索引只能用int类型
+	rw                   int                // rbuf写索引，rfc标准里面有超过4个字节的大包，所以索引只能用int类型
+	wbuf                 *[]byte            // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
 	lenAndMaskSize       int                // payload长度和掩码的长度
-	lastPayloadLen       int64              // 上一次读取的payload长度
 	rh                   frame.FrameHeader  // frame头部
 	fragmentFramePayload *[]byte            // 存放分片帧的缓冲区
 	fragmentFrameHeader  *frame.FrameHeader // 存放分段帧的头部
-	closed               int32              // 是否关闭
+	lastPayloadLen       int32              // 上一次读取的payload长度, TODO启用
 	curState             frameState         // 保存当前状态机的状态
 	client               bool               // 客户端为true，服务端为false
 }
@@ -130,7 +130,6 @@ func (c *Conn) addTask(ts taskStrategy, f func() bool) {
 		// 负载低走公共chan, TODO， 需要找一个判断高/低雷负载的条件
 		// c.parent.localTask.public <- f
 	}
-
 }
 
 func (c *Conn) getFd() int {
@@ -298,7 +297,7 @@ func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 	if needRead > 0 {
 		return
 	}
-	c.lastPayloadLen = c.rh.PayloadLen
+	c.lastPayloadLen = int32(c.rh.PayloadLen)
 	// 普通frame
 	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
 	copy(*newBuf, (*c.rbuf)[c.rr:c.rr+int(c.rh.PayloadLen)])
@@ -375,7 +374,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
 					// TODO c.utf8Check 修改成流式解析
 					if fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(*fragmentFramePayload) {
-						c.onCloseOnce.Do(func() {
+						Do2(&c.onCloseOnce, &c.mu, func() {
 							c.Callback.OnClose(c, ErrTextNotUTF8)
 						})
 						// return ErrTextNotUTF8
@@ -469,7 +468,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			}
 
 			err = bytesToCloseErrMsg(*f.Payload)
-			c.onCloseOnce.Do(func() {
+			Do2(&c.onCloseOnce, &c.mu, func() {
 				c.Callback.OnClose(c, err)
 			})
 			return err
@@ -479,7 +478,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			// 回一个pong包
 			if c.replyPing {
 				if err := c.WriteTimeout(Pong, *f.Payload, 2*time.Second); err != nil {
-					c.onCloseOnce.Do(func() {
+					Do2(&c.onCloseOnce, &c.mu, func() {
 						c.Callback.OnClose(c, err)
 					})
 					return err
@@ -488,7 +487,6 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				payload := f.Payload
 				// here
 				c.addTask(c.runInGoStrategy, func() bool {
-
 					return c.processPing(f, payload)
 				})
 				return
@@ -538,7 +536,7 @@ func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, d
 	if f.Opcode == opcode.Text {
 		if !c.utf8Check(decodePayload) {
 			c.closeWithLock(nil)
-			c.onCloseOnce.Do(func() {
+			Do2(&c.onCloseOnce, &c.mu, func() {
 				c.Callback.OnClose(c, ErrTextNotUTF8)
 			})
 			return false
@@ -552,7 +550,7 @@ func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, d
 
 func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
 	defer func() {
-		c.onCloseOnce.Do(func() {
+		Do2(&c.onCloseOnce, &c.mu, func() {
 			c.Callback.OnClose(c, userErr)
 		})
 	}()
@@ -600,7 +598,7 @@ func (w *wrapBuffer) Close() error {
 }
 
 func (c *Conn) isClosed() bool {
-	return atomic.LoadInt32(&c.closed) == 1
+	return atomic.LoadUint32(&c.closed) == 1
 }
 
 func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
@@ -723,5 +721,8 @@ func (c *Conn) WritePong(data []byte) (err error) {
 }
 
 func (c *Conn) Close() {
+	if c == nil {
+		return
+	}
 	c.closeWithLock(nil)
 }

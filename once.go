@@ -5,16 +5,11 @@ import (
 	"sync/atomic"
 )
 
-type Once struct {
-	done uint32
-	m    sync.Mutex
-}
+func Do2(done *uint32, m *sync.Mutex, f func()) {
 
-func (o *Once) Do(f func()) {
-
-	if atomic.LoadUint32(&o.done) == 0 {
-
-		o.doSlow(f)
+	if atomic.LoadUint32(done) == 0 {
+		// Outlined slow-path to allow inlining of the fast-path.
+		doSlow2(done, m, f)
 	}
 }
 
@@ -24,11 +19,40 @@ func (o *Once) Do(f func()) {
 // 试想下这个场景;
 // 出错会调用用户的OnClose函数，这个函数会被包在sync.Once里面，而OnClose函数中又会调用Close函数，这个函数里面也会有调用OnClose的逻辑，这样就会死锁
 // 如果前置设置done为1，那么就不会有这个问题
-func (o *Once) doSlow(f func()) {
-	o.m.Lock()
-	defer o.m.Unlock()
-	if o.done == 0 {
-		atomic.StoreUint32(&o.done, 1)
+func doSlow2(done *uint32, m *sync.Mutex, f func()) {
+	if m != nil {
+		m.Lock()
+	}
+	defer func() {
+		if m != nil {
+			m.Unlock()
+		}
+	}()
+	if *done == 0 {
+		atomic.StoreUint32(done, 1)
+		f()
+	}
+}
+
+func Do(done *uint32, m *sync.Mutex, f func()) {
+
+	if atomic.LoadUint32(done) == 0 {
+		// Outlined slow-path to allow inlining of the fast-path.
+		doSlow(done, m, f)
+	}
+}
+
+func doSlow(done *uint32, m *sync.Mutex, f func()) {
+	if m != nil {
+		m.Lock()
+	}
+	defer func() {
+		if m != nil {
+			m.Unlock()
+		}
+	}()
+	if *done == 0 {
+		defer atomic.StoreUint32(done, 1)
 		f()
 	}
 }

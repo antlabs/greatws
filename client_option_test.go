@@ -24,14 +24,16 @@ import (
 	"time"
 )
 
+var m = NewMultiEventLoopAndStartMust(WithEventLoops(1), WithLogLevel(slog.LevelDebug), WithBusinessGoNum(1, 1, 1))
+
 func Test_ClientOption(t *testing.T) {
-	m := NewMultiEventLoopAndStartMust(WithEventLoops(1), WithLogLevel(slog.LevelDebug), WithBusinessGoNum(1, 1, 1))
+
 	t.Run("ClientOption.WithClientHTTPHeader", func(t *testing.T) {
 		done := make(chan string, 1)
 		run := int32(0)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			v := r.Header.Get("A")
-			done <- v
+
 			con, err := Upgrade(w, r, WithServerMultiEventLoop(m))
 			if err != nil {
 				t.Error(err)
@@ -39,7 +41,9 @@ func Test_ClientOption(t *testing.T) {
 			}
 
 			defer con.Close()
+
 			atomic.AddInt32(&run, 1)
+			done <- v
 		}))
 
 		defer ts.Close()
