@@ -297,14 +297,32 @@ func WithClientCallbackInEventLoop() ClientOption {
 // 19.1 配置服务端使用stream模式处理请求，该模式一个连接会独占一个go程，如果你的请求对时序有要求，可以使用这个模式
 func WithServerStreamMode() ServerOption {
 	return func(o *ConnOption) {
-		o.runInGoStrategy = taskStrategyStream
+		o.runInGoTask = "stream"
 	}
 }
 
 // 19.2 配置客户端使用stream模式处理请求，该模式一个连接会独占一个go程，如果你的请求对时序有要求，可以使用这个模式
 func WithClientStreamMode() ClientOption {
 	return func(o *DialOption) {
-		o.runInGoStrategy = taskStrategyStream
+		o.runInGoTask = "stream"
+	}
+}
+
+// 20.1 配置自定义task, 需要确保传入的值是有效的，不然会panic
+func WithServerCustomTaskMode(taskName string) ServerOption {
+	return func(o *ConnOption) {
+		if len(taskName) > 0 {
+			o.runInGoTask = taskName
+		}
+	}
+}
+
+// 20.2 配置自定义task, 需要确保传入的值是有效的，不然会panic
+func WithClientCustomTaskMode(taskName string) ClientOption {
+	return func(o *DialOption) {
+		if len(taskName) > 0 {
+			o.runInGoTask = taskName
+		}
 	}
 }
 

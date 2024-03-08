@@ -13,9 +13,34 @@
 // limitations under the License.
 package greatws
 
+import "github.com/antlabs/greatws/task/driver"
+
+func init() {
+	driver.Register("io", &taskIo{})
+}
+
+var _ driver.TaskExecutor = (*taskIo)(nil)
+var _ driver.TaskDriver = (*taskIo)(nil)
+var _ driver.Tasker = (*taskIo)(nil)
+
 type taskIo struct{}
 
+func (t *taskIo) GetGoroutines() int { return 0 } // 获取goroutine数
+
+func (t *taskIo) New(initCount, min, max int) driver.Tasker {
+	return &taskIo{}
+}
+
+func (t *taskIo) NewExecutor() driver.TaskExecutor {
+	return &taskIo{}
+}
+
 // 任务运行在io goroutine中
-func (t *taskIo) addTask(ts taskStrategy, f func() bool) {
+func (t *taskIo) AddTask(f func() bool) error {
 	f()
+	return nil
+}
+
+func (t *taskIo) Close() error {
+	return nil
 }

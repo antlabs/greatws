@@ -13,7 +13,9 @@
 // limitations under the License.
 package greatws
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+)
 
 type businessGo struct {
 	taskChan chan func() bool
@@ -38,7 +40,7 @@ func (b *businessGo) addBinConnCount() {
 }
 
 // 减少绑定的conn数
-func (b *businessGo) subBinConnCount() {
+func (b *businessGo) subBindConnCount() {
 	atomic.AddInt64(&b.bindConnCount, -1)
 }
 
@@ -56,6 +58,30 @@ func newBusinessGo(num int, parent *task) *businessGo {
 		taskChan: make(chan func() bool, num),
 		parent:   parent,
 	}
+}
+
+func (t *businessGo) AddTask(f func() bool) error {
+
+	// 如果任务未满，直接放入任务队列
+	if len(t.taskChan) < cap(t.taskChan) {
+		t.taskChan <- f
+		return nil
+	}
+
+	if len(t.parent.public) < cap(t.parent.public) {
+		t.parent.public <- f
+		return nil
+	}
+	// 判断go程是否增长，如果增长，重新映射
+	t.taskChan <- f
+	return nil
+}
+
+// 一些统计状态和资源的关闭
+func (t *businessGo) Close() error {
+	t.subBindConnCount()
+	atomic.StoreUint32(&t.closed, 1)
+	return nil
 }
 
 type allBusinessGo []*businessGo

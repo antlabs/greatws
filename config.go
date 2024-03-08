@@ -37,7 +37,7 @@ type Config struct {
 	subProtocols                    []string          // 设置支持的子协议
 	multiEventLoop                  *MultiEventLoop   // 事件循环
 	callbackInEventLoop             bool              // 在event loop中运行websocket OnOpen, OnMessage, OnClose 回调函数
-	runInGoStrategy                 taskStrategy      //运行业务OnMessage的策略
+	runInGoTask                     string            // 运行业务OnMessage的策略, 现在greatws集成三种OnMessage运行模式，分别是io, task
 }
 
 // func (c *Config) useIoUring() bool {
@@ -55,8 +55,9 @@ func (c *Config) defaultSetting() {
 	c.windowsMultipleTimesPayloadSize = 1.0
 	c.delayWriteInitBufferSize = 8 * 1024
 	c.maxDelayWriteDuration = 10 * time.Millisecond
-	c.runInGoStrategy = taskStrategyBind
+	// c.runInGoStrategy = taskStrategyBind
 	c.tcpNoDelay = true
 	// 对于text消息，默认不检查text是utf8字符
 	c.utf8Check = func(b []byte) bool { return true }
+	c.runInGoTask = "unstream"
 }

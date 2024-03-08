@@ -12,8 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package greatws
+package driver
 
+// 初始化一个go程池
+type TaskDriver interface {
+	New(initCount, min, max int) Tasker
+}
+
+// 某个池的实例
 type Tasker interface {
-	addTask(fd int, ts taskStrategy, f func() bool)
+	GetGoroutines() int        // 获取goroutine数
+	NewExecutor() TaskExecutor // 生成一个扫行器
+}
+
+// 处理任务的节点
+type TaskExecutor interface {
+	AddTask(f func() bool) error
+	Close() error
 }

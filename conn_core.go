@@ -23,7 +23,6 @@ import (
 	"math/rand"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/enum"
@@ -79,56 +78,14 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
-// 获取当前绑定的go程
-func (c *Conn) getCurrBindGo() *businessGo {
-	return (*businessGo)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo))))
-}
-
-// 设置当前绑定的go程
-func (c *Conn) setCurrBindGo(b *businessGo) {
-	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo)), unsafe.Pointer(b))
-}
-
-// addTask 进行任务调度， 任务调试分为三种模式， 1. stream模式， 2. go模式， 3. io模式
-func (c *Conn) addTask(ts taskStrategy, f func() bool) {
+func (c *Conn) addTask(f func() bool) {
 	if c.isClosed() {
 		return
 	}
 
-	if c.callbackInEventLoop {
-		c.multiEventLoop.runInIo.addTask(ts, f)
-		return
-	}
-	if ts == taskStrategyStream {
-		c.streamGo.addTask(ts, f)
-		return
-	}
-
-	var err error
-	retry := 2
-	if c.parent.localTask.isFull() {
-		retry = 1
-	}
-
-	for i := 0; i < retry; i++ {
-		err = c.parent.localTask.addTask(c, ts, f)
-		if err == nil || retry == 1 {
-			break
-		}
-		if err == ErrTaskQueueFull {
-			if c.parent.localTask.addGoWithSteal(c.getCurrBindGo()) {
-				c.parent.localTask.rebindGo(c)
-			}
-			continue
-		}
-
-	}
-
-	if err == ErrTaskQueueFull {
-		// 负载高走自己专用chan
-		c.getCurrBindGo().taskChan <- f
-		// 负载低走公共chan, TODO， 需要找一个判断高/低雷负载的条件
-		// c.parent.localTask.public <- f
+	err := c.task.AddTask(f)
+	if err != nil {
+		c.getLogger().Error("addTask", "err", err.Error())
 	}
 }
 
@@ -358,7 +315,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				c.fragmentFramePayload = nil
 
 				// 进入业务协程执行
-				c.addTask(c.runInGoStrategy, func() (exit bool) {
+				c.addTask(func() (exit bool) {
 					if fragmentFrameHeader.GetRsv1() && decompression {
 						tempBuf, err := decode(*fragmentFramePayload)
 						if err != nil {
@@ -420,7 +377,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		// payloadPtr.Store(f.Payload)
 
 		// text或者binary进入业务协程执行
-		c.addTask(c.runInGoStrategy, func() bool {
+		c.addTask(func() bool {
 			return c.processCallbackData(f, payload, rsv1, decompression, needMask, maskKey)
 		})
 
@@ -486,7 +443,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				// 进入业务协程执行
 				payload := f.Payload
 				// here
-				c.addTask(c.runInGoStrategy, func() bool {
+				c.addTask(func() bool {
 					return c.processPing(f, payload)
 				})
 				return
@@ -498,7 +455,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		}
 
 		// 进入业务协程执行
-		c.addTask(c.runInGoStrategy, func() bool {
+		c.addTask(func() bool {
 			c.Callback.OnMessage(c, f.Opcode, nil)
 			return false
 		})
