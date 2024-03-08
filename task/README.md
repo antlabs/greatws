@@ -10,5 +10,5 @@ task 运行在io go程里面，适配轻量级任务，比如proxy，或者nginx
 ## stream 模块
 task 会独占一个go程， 适合对数据包的加工有顺序要求的场景，比如asr识别这种
 
-## unordered
+## unstream模块
 task 只管并发执行，不管有序性，比如推送/红点/点赞之类的。
