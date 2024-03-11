@@ -28,6 +28,7 @@ type testDefaultCallback struct {
 }
 
 func Test_DefaultCallback(t *testing.T) {
+
 	m := NewMultiEventLoopAndStartMust(WithEventLoops(1), WithLogLevel(slog.LevelDebug), WithBusinessGoNum(1, 1, 1))
 	t.Run("local: default callback", func(t *testing.T) {
 		run := int32(0)
@@ -54,7 +55,6 @@ func Test_DefaultCallback(t *testing.T) {
 		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
-			return
 		}
 		defer con.Close()
 
@@ -87,7 +87,6 @@ func Test_DefaultCallback(t *testing.T) {
 		con, err := Dial(url, WithClientCallback(&testDefaultCallback{}), WithClientMultiEventLoop(m))
 		if err != nil {
 			t.Error(err)
-			return
 		}
 		defer con.Close()
 

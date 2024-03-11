@@ -63,14 +63,15 @@ var (
 type Conn struct {
 	conn
 
-	mu          sync.Mutex          // 锁
-	*Config                         // 配置
-	parent      *EventLoop          // event loop
-	task        driver.TaskExecutor // 任务，该任务会进协程池里面执行
-	rtime       *time.Timer         // 控制读超时
-	wtime       *time.Timer         // 控制写超时
-	closed      uint32              // 关闭一次
-	onCloseOnce uint32              // 保证只调用一次OnClose函数
+	mu            sync.Mutex          // 锁
+	*Config                           // 配置
+	parent        *EventLoop          // event loop
+	task          driver.TaskExecutor // 任务，该任务会进协程池里面执行
+	rtime         *time.Timer         // 控制读超时
+	wtime         *time.Timer         // 控制写超时
+	closeConnOnce sync.Once           // 关闭一次
+	onCloseOnce   Once                // 保证只调用一次OnClose函数
+	closed        int32               // 是否关闭
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
@@ -93,6 +94,7 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 
 // 这是一个空函数，兼容下quickws的接口
 func (c *Conn) StartReadLoop() {
+
 }
 
 func duplicateSocket(socketFD int) (int, error) {
@@ -100,12 +102,9 @@ func duplicateSocket(socketFD int) (int, error) {
 }
 
 // 没有加锁的版本，有外层已经有锁保护，所以不需要加锁
-func (c *Conn) closeInnerWithOnClose(err error, onClose bool, inLock bool) {
-	var mu *sync.Mutex
-	if !inLock {
-		mu = &c.mu
-	}
-	Do(&c.closed, mu, func() {
+func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
+
+	c.closeConnOnce.Do(func() {
 		if err != nil {
 			err = io.EOF
 		}
@@ -122,14 +121,21 @@ func (c *Conn) closeInnerWithOnClose(err error, onClose bool, inLock bool) {
 		c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
 		c.parent.del(c)
 		atomic.StoreInt64(&c.fd, -1)
+		atomic.AddInt32(&c.closed, 1)
 	})
 
 	// 这个必须要放在后面
 	if onClose {
-		Do2(&c.onCloseOnce, mu, func() {
+		c.onCloseOnce.Do(func() {
 			c.OnClose(c, err)
 		})
 	}
+
+}
+
+func (c *Conn) closeInner(err error) {
+
+	c.closeInnerWithOnClose(err, true)
 }
 
 func (c *Conn) closeWithLock(err error) {
@@ -146,18 +152,18 @@ func (c *Conn) closeWithLock(err error) {
 	if err == nil {
 		err = io.EOF
 	}
-	c.closeInnerWithOnClose(err, false, true)
+	c.closeInnerWithOnClose(err, false)
 
 	c.mu.Unlock()
 
 	// 这个必须要放在后面， 不然会死锁，因为Close会调用用户的OnClose
 	// 用户的OnClose也有可能调用Close， 所以使用flags来判断是否已经关闭
 	c.mu.Lock()
-
-	Do2(&c.onCloseOnce, nil, func() {
-		c.OnClose(c, err)
-	})
-
+	if atomic.LoadInt32(&c.closed) == 1 {
+		c.onCloseOnce.Do(func() {
+			c.OnClose(c, err)
+		})
+	}
 	c.mu.Unlock()
 }
 
@@ -239,9 +245,8 @@ func (c *Conn) maybeWriteAll(b []byte) (total int, ws writeState, err error) {
 				return total + n, writeEagain, nil
 			}
 
-			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", int64(c.getFd())), slog.Int("b.len", len(b)))
-			c.closeInnerWithOnClose(err, true, true)
-
+			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
+			c.closeInner(err)
 			return total, writeDefault, err
 		}
 
@@ -362,7 +367,7 @@ func (c *Conn) processWebsocketFrame() (err error) {
 		// 读到eof，直接关闭
 		if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
 			c.closeWithLock(io.EOF)
-			Do2(&c.onCloseOnce, &c.mu, func() {
+			c.onCloseOnce.Do(func() {
 				c.OnClose(c, io.EOF)
 			})
 			err = io.EOF
@@ -462,8 +467,8 @@ func (c *Conn) setReadDeadline(t time.Time) error {
 
 func (c *Conn) setWriteDeadline(t time.Time) error {
 	return c.setDeadlineInner(&c.wtime, t, ErrWriteTimeout)
-}
 
+}
 func closeFd(fd int) {
 	unix.Close(int(fd))
 }

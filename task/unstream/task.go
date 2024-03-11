@@ -31,18 +31,6 @@ func init() {
 	driver.Register("unstream", &task{})
 }
 
-// 运行task的策略
-type taskStrategy int
-
-const (
-	// 送入全局队列，存在的意义主要是用于测试
-	taskStrategyRandom taskStrategy = iota
-	// 绑定映射, 从一个go程中取一个conn绑定，后面的请求都会在这个go程中处理
-	taskStrategyBind
-	// 流式映射，一个conntion绑定一个go程(独占)
-	taskStrategyStream
-)
-
 var exitFunc = func() bool { return true }
 
 type taskConfig struct {
@@ -299,10 +287,6 @@ func (t *task) runConsumerLoop() {
 	for i := 0; i < t.initCount; i++ {
 		go t.consumer(nil)
 	}
-}
-
-func (t *task) getCurTask() int64 {
-	return atomic.LoadInt64(&t.curTask)
 }
 
 // func (t *task) rebindGoFast(c *Conn) {

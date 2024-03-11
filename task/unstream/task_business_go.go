@@ -21,13 +21,9 @@ type businessGo struct {
 	taskChan chan func() bool
 	// 被多少conn绑定
 	bindConnCount int64
-	closed        uint32
 	index         int // 在min heap中的索引，方便删除或者重新推入堆中
 	parent        *task
-}
-
-func (b *businessGo) getBindConnCount() int64 {
-	return atomic.LoadInt64(&b.bindConnCount)
+	closed        uint32
 }
 
 func (b *businessGo) isClose() bool {
@@ -79,6 +75,9 @@ func (t *businessGo) AddTask(f func() bool) error {
 
 // 一些统计状态和资源的关闭
 func (t *businessGo) Close() error {
+	if t.isClose() {
+		return nil
+	}
 	t.subBindConnCount()
 	atomic.StoreUint32(&t.closed, 1)
 	return nil

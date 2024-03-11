@@ -46,14 +46,14 @@ func (t *taskStream) loop() {
 
 // 这里构造了一个新的实例
 func (t *taskStream) New(initCount, min, max int) driver.Tasker {
-	var t2 taskStream
-	t2.init()
-	return &t2
+	return t
 }
 
 // 创建一个执行器，由于没有node的概念，这里直接返回自己
 func (t *taskStream) NewExecutor() driver.TaskExecutor {
-	return t
+	var t2 taskStream
+	t2.init()
+	return &t2
 }
 
 func (t *taskStream) GetGoroutines() int {

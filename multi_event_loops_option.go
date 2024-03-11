@@ -78,6 +78,9 @@ func WithDisableParseInParseLoop() EvOption {
 			e.parseInParseLoop = new(bool)
 		}
 		*e.parseInParseLoop = false
+		if runtime.GOOS == "linux" {
+			*e.parseInParseLoop = true
+		}
 
 	}
 }
@@ -89,12 +92,6 @@ func WithParseInParseLoop() EvOption {
 			e.parseInParseLoop = new(bool)
 		}
 		*e.parseInParseLoop = true
-		if runtime.GOOS == "linux" {
-			*e.parseInParseLoop = true
-		} else {
-			*e.parseInParseLoop = false
-		}
-
 	}
 }
 

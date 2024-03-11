@@ -28,11 +28,11 @@ type taskIo struct{}
 func (t *taskIo) GetGoroutines() int { return 0 } // 获取goroutine数
 
 func (t *taskIo) New(initCount, min, max int) driver.Tasker {
-	return &taskIo{}
+	return t
 }
 
 func (t *taskIo) NewExecutor() driver.TaskExecutor {
-	return &taskIo{}
+	return t
 }
 
 // 任务运行在io goroutine中

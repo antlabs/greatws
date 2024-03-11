@@ -87,6 +87,7 @@ func (c *Conn) addTask(f func() bool) {
 	if err != nil {
 		c.getLogger().Error("addTask", "err", err.Error())
 	}
+
 }
 
 func (c *Conn) getFd() int {
@@ -331,7 +332,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
 					// TODO c.utf8Check 修改成流式解析
 					if fragmentFrameHeader.Opcode == opcode.Text && !c.utf8Check(*fragmentFramePayload) {
-						Do2(&c.onCloseOnce, &c.mu, func() {
+						c.onCloseOnce.Do(func() {
 							c.Callback.OnClose(c, ErrTextNotUTF8)
 						})
 						// return ErrTextNotUTF8
@@ -425,7 +426,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			}
 
 			err = bytesToCloseErrMsg(*f.Payload)
-			Do2(&c.onCloseOnce, &c.mu, func() {
+			c.onCloseOnce.Do(func() {
 				c.Callback.OnClose(c, err)
 			})
 			return err
@@ -435,7 +436,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 			// 回一个pong包
 			if c.replyPing {
 				if err := c.WriteTimeout(Pong, *f.Payload, 2*time.Second); err != nil {
-					Do2(&c.onCloseOnce, &c.mu, func() {
+					c.onCloseOnce.Do(func() {
 						c.Callback.OnClose(c, err)
 					})
 					return err
@@ -493,7 +494,7 @@ func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, d
 	if f.Opcode == opcode.Text {
 		if !c.utf8Check(decodePayload) {
 			c.closeWithLock(nil)
-			Do2(&c.onCloseOnce, &c.mu, func() {
+			c.onCloseOnce.Do(func() {
 				c.Callback.OnClose(c, ErrTextNotUTF8)
 			})
 			return false
@@ -507,7 +508,7 @@ func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, d
 
 func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
 	defer func() {
-		Do2(&c.onCloseOnce, &c.mu, func() {
+		c.onCloseOnce.Do(func() {
 			c.Callback.OnClose(c, userErr)
 		})
 	}()
@@ -555,7 +556,7 @@ func (w *wrapBuffer) Close() error {
 }
 
 func (c *Conn) isClosed() bool {
-	return atomic.LoadUint32(&c.closed) == 1
+	return atomic.LoadInt32(&c.closed) == 1
 }
 
 func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
@@ -678,8 +679,5 @@ func (c *Conn) WritePong(data []byte) (err error) {
 }
 
 func (c *Conn) Close() {
-	if c == nil {
-		return
-	}
 	c.closeWithLock(nil)
 }
