@@ -15,6 +15,7 @@ package greatws
 
 import (
 	"sync/atomic"
+	"unsafe"
 )
 
 type businessGo struct {
@@ -24,6 +25,7 @@ type businessGo struct {
 	index         int // 在min heap中的索引，方便删除或者重新推入堆中
 	parent        *task
 	closed        uint32
+	count         uint32
 }
 
 func (b *businessGo) isClose() bool {
@@ -58,13 +60,20 @@ func newBusinessGo(num int, parent *task) *businessGo {
 
 func (t *businessGo) AddTask(f func() bool) error {
 
+	newCount := atomic.AddUint32(&t.count, 1)
 	// 如果任务未满，直接放入任务队列
 	if len(t.taskChan) < cap(t.taskChan) {
 		t.taskChan <- f
 		return nil
 	}
 
-	if len(t.parent.public) < cap(t.parent.public) {
+	node := t.parent.getGoBusiness(uintptr(unsafe.Pointer(t)))
+	if len(node.taskChan) < cap(node.taskChan) {
+		node.taskChan <- f
+		return nil
+	}
+
+	if newCount%63 == 0 && len(t.parent.public) < cap(t.parent.public) {
 		t.parent.public <- f
 		return nil
 	}

@@ -184,7 +184,6 @@ func (t *task) NewExecutor() driver.TaskExecutor {
 // 是否满了
 func (t *task) isFull() bool {
 	return atomic.LoadInt64(&t.curGo) >= int64(t.max)
-
 }
 
 func (t *task) addGoWithSteal(g *businessGo) bool {
@@ -279,6 +278,13 @@ func (t *task) manageGo() {
 			t.addGoNum(newSize - int(curGo))
 		}
 	}
+}
+
+func (t *task) getGoBusiness(addr uintptr) *businessGo {
+	t.mu.Lock()
+	node := t.allBusinessGo[int(addr)%len(t.allBusinessGo)]
+	t.mu.Unlock()
+	return node
 }
 
 // 运行任务

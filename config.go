@@ -36,7 +36,6 @@ type Config struct {
 	maxDelayWriteDuration           time.Duration     // 最大延迟时间, 默认值是10ms
 	subProtocols                    []string          // 设置支持的子协议
 	multiEventLoop                  *MultiEventLoop   // 事件循环
-	callbackInEventLoop             bool              // 在event loop中运行websocket OnOpen, OnMessage, OnClose 回调函数
 	runInGoTask                     string            // 运行业务OnMessage的策略, 现在greatws集成三种OnMessage运行模式，分别是io, task
 }
 
