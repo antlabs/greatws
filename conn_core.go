@@ -23,7 +23,6 @@ import (
 	"math/rand"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/enum"
@@ -63,14 +62,14 @@ const (
 type conn struct {
 	fd                   int64              // 文件描述符fd
 	rbuf                 *[]byte            // 读缓冲区
-	rr                   int                // rbuf读索引
-	rw                   int                // rbuf写索引
+	rr                   int                // rbuf读索引，rfc标准里面有超过4个字节的大包，所以索引只能用int类型
+	rw                   int                // rbuf写索引，rfc标准里面有超过4个字节的大包，所以索引只能用int类型
+	wbuf                 *[]byte            // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
 	lenAndMaskSize       int                // payload长度和掩码的长度
-	lastPayloadLen       int64              // 上一次读取的payload长度
 	rh                   frame.FrameHeader  // frame头部
 	fragmentFramePayload *[]byte            // 存放分片帧的缓冲区
 	fragmentFrameHeader  *frame.FrameHeader // 存放分段帧的头部
-	closed               int32              // 是否关闭
+	lastPayloadLen       int32              // 上一次读取的payload长度, TODO启用
 	curState             frameState         // 保存当前状态机的状态
 	client               bool               // 客户端为true，服务端为false
 }
@@ -79,56 +78,14 @@ func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
-// 获取当前绑定的go程
-func (c *Conn) getCurrBindGo() *businessGo {
-	return (*businessGo)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo))))
-}
-
-// 设置当前绑定的go程
-func (c *Conn) setCurrBindGo(b *businessGo) {
-	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&c.currBindGo)), unsafe.Pointer(b))
-}
-
-// addTask 进行任务调度， 任务调试分为三种模式， 1. stream模式， 2. go模式， 3. io模式
-func (c *Conn) addTask(ts taskStrategy, f func() bool) {
+func (c *Conn) addTask(f func() bool) {
 	if c.isClosed() {
 		return
 	}
 
-	if c.callbackInEventLoop {
-		c.multiEventLoop.runInIo.addTask(ts, f)
-		return
-	}
-	if ts == taskStrategyStream {
-		c.streamGo.addTask(ts, f)
-		return
-	}
-
-	var err error
-	retry := 2
-	if c.parent.localTask.isFull() {
-		retry = 1
-	}
-
-	for i := 0; i < retry; i++ {
-		err = c.parent.localTask.addTask(c, ts, f)
-		if err == nil || retry == 1 {
-			break
-		}
-		if err == ErrTaskQueueFull {
-			if c.parent.localTask.addGoWithSteal(c.getCurrBindGo()) {
-				c.parent.localTask.rebindGo(c)
-			}
-			continue
-		}
-
-	}
-
-	if err == ErrTaskQueueFull {
-		// 负载高走自己专用chan
-		c.getCurrBindGo().taskChan <- f
-		// 负载低走公共chan, TODO， 需要找一个判断高/低雷负载的条件
-		// c.parent.localTask.public <- f
+	err := c.task.AddTask(f)
+	if err != nil {
+		c.getLogger().Error("addTask", "err", err.Error())
 	}
 
 }
@@ -298,7 +255,7 @@ func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 	if needRead > 0 {
 		return
 	}
-	c.lastPayloadLen = c.rh.PayloadLen
+	c.lastPayloadLen = int32(c.rh.PayloadLen)
 	// 普通frame
 	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
 	copy(*newBuf, (*c.rbuf)[c.rr:c.rr+int(c.rh.PayloadLen)])
@@ -359,7 +316,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				c.fragmentFramePayload = nil
 
 				// 进入业务协程执行
-				c.addTask(c.runInGoStrategy, func() (exit bool) {
+				c.addTask(func() (exit bool) {
 					if fragmentFrameHeader.GetRsv1() && decompression {
 						tempBuf, err := decode(*fragmentFramePayload)
 						if err != nil {
@@ -421,7 +378,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		// payloadPtr.Store(f.Payload)
 
 		// text或者binary进入业务协程执行
-		c.addTask(c.runInGoStrategy, func() bool {
+		c.addTask(func() bool {
 			return c.processCallbackData(f, payload, rsv1, decompression, needMask, maskKey)
 		})
 
@@ -487,8 +444,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				// 进入业务协程执行
 				payload := f.Payload
 				// here
-				c.addTask(c.runInGoStrategy, func() bool {
-
+				c.addTask(func() bool {
 					return c.processPing(f, payload)
 				})
 				return
@@ -500,7 +456,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		}
 
 		// 进入业务协程执行
-		c.addTask(c.runInGoStrategy, func() bool {
+		c.addTask(func() bool {
 			c.Callback.OnMessage(c, f.Opcode, nil)
 			return false
 		})

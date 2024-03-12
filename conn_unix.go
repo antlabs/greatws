@@ -27,6 +27,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/antlabs/greatws/task/driver"
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/enum"
 	"golang.org/x/sys/unix"
@@ -62,17 +63,15 @@ var (
 type Conn struct {
 	conn
 
-	wbuf          *[]byte     // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
-	mu            sync.Mutex  // 锁
-	*Config                   // 配置
-	parent        *EventLoop  // event loop
-	currBindGo    *businessGo // 绑定模式下，当前绑定的go程
-	streamGo      *taskStream // stream模式下，当前绑定的go程
-	rtime         *time.Timer // 控制读超时
-	wtime         *time.Timer // 控制写超时
-	closeConnOnce sync.Once   // 关闭一次
-	onCloseOnce   Once        // 保证只调用一次OnClose函数
-
+	mu            sync.Mutex          // 锁
+	*Config                           // 配置
+	parent        *EventLoop          // event loop
+	task          driver.TaskExecutor // 任务，该任务会进协程池里面执行
+	rtime         *time.Timer         // 控制读超时
+	wtime         *time.Timer         // 控制写超时
+	closeConnOnce sync.Once           // 关闭一次
+	onCloseOnce   Once                // 保证只调用一次OnClose函数
+	closed        int32               // 是否关闭
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
@@ -83,14 +82,10 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 		},
 		// 初始化不分配内存，只有在需要的时候才分配
 		Config: conf,
-
 		parent: conf.multiEventLoop.getEventLoop(int(fd)),
 	}
 
-	if conf.runInGoStrategy == taskStrategyStream {
-		c.streamGo = newTaskStream()
-	}
-
+	c.task = c.parent.localTask.newTask(conf.runInGoTask)
 	if conf.readTimeout > 0 {
 		c.setReadDeadline(time.Now().Add(conf.readTimeout))
 	}
@@ -113,15 +108,15 @@ func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
 		if err != nil {
 			err = io.EOF
 		}
-		switch c.Config.runInGoStrategy {
-		case taskStrategyBind:
-			if c.getCurrBindGo() != nil {
-				c.currBindGo.subBinConnCount()
-			}
-		case taskStrategyStream:
-			c.streamGo.close()
+		// switch c.Config.runInGoStrategy {
+		// case taskStrategyBind:
+		// 	if c.getCurrBindGo() != nil {
+		// 		c.currBindGo.subBinConnCount()
+		// 	}
+		// case taskStrategyStream:
+		// 	c.streamGo.close()
 
-		}
+		// }
 		fd := c.getFd()
 		c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
 		c.parent.del(c)

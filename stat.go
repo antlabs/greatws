@@ -31,7 +31,7 @@ type stat struct {
 func (m *MultiEventLoop) GetCurGoNum() (total int) {
 	for _, v := range m.loops {
 		// 本地任务数
-		total += int(v.localTask.getCurGo())
+		total += int(v.localTask.GetGoroutines())
 	}
 	return
 }
@@ -40,7 +40,7 @@ func (m *MultiEventLoop) GetCurGoNum() (total int) {
 func (m *MultiEventLoop) GetCurTaskNum() (total int64) {
 	for _, v := range m.loops {
 		// 本地任务数
-		total += v.localTask.getCurTask()
+		total += int64(v.localTask.GetGoroutines())
 	}
 	return
 }

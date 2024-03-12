@@ -13,19 +13,19 @@
 // limitations under the License.
 package greatws
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+	"unsafe"
+)
 
 type businessGo struct {
 	taskChan chan func() bool
 	// 被多少conn绑定
 	bindConnCount int64
-	closed        uint32
 	index         int // 在min heap中的索引，方便删除或者重新推入堆中
 	parent        *task
-}
-
-func (b *businessGo) getBindConnCount() int64 {
-	return atomic.LoadInt64(&b.bindConnCount)
+	closed        uint32
+	count         uint32
 }
 
 func (b *businessGo) isClose() bool {
@@ -38,7 +38,7 @@ func (b *businessGo) addBinConnCount() {
 }
 
 // 减少绑定的conn数
-func (b *businessGo) subBinConnCount() {
+func (b *businessGo) subBindConnCount() {
 	atomic.AddInt64(&b.bindConnCount, -1)
 }
 
@@ -56,6 +56,40 @@ func newBusinessGo(num int, parent *task) *businessGo {
 		taskChan: make(chan func() bool, num),
 		parent:   parent,
 	}
+}
+
+func (t *businessGo) AddTask(f func() bool) error {
+
+	newCount := atomic.AddUint32(&t.count, 1)
+	// 如果任务未满，直接放入任务队列
+	if len(t.taskChan) < cap(t.taskChan) {
+		t.taskChan <- f
+		return nil
+	}
+
+	node := t.parent.getGoBusiness(uintptr(unsafe.Pointer(t)))
+	if len(node.taskChan) < cap(node.taskChan) {
+		node.taskChan <- f
+		return nil
+	}
+
+	if newCount%63 == 0 && len(t.parent.public) < cap(t.parent.public) {
+		t.parent.public <- f
+		return nil
+	}
+	// 判断go程是否增长，如果增长，重新映射
+	t.taskChan <- f
+	return nil
+}
+
+// 一些统计状态和资源的关闭
+func (t *businessGo) Close() error {
+	if t.isClose() {
+		return nil
+	}
+	t.subBindConnCount()
+	atomic.StoreUint32(&t.closed, 1)
+	return nil
 }
 
 type allBusinessGo []*businessGo

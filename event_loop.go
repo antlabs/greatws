@@ -34,7 +34,7 @@ type EventLoop struct {
 	*apiState          // 每个平台对应的异步io接口/epoll/kqueue/iouring(暂时不加，除非io-uring性能超过epoll才加回来)
 	shutdown  bool
 	parent    *MultiEventLoop
-	localTask task
+	localTask selectTasks
 }
 
 // 初始化函数
@@ -44,9 +44,14 @@ func CreateEventLoop(setSize int, flag evFlag, parent *MultiEventLoop) (e *Event
 		maxFd:   -1,
 		parent:  parent,
 	}
-	e.localTask.taskConfig = e.parent.configTask.taskConfig
-	e.localTask.taskMode = e.parent.configTask.taskMode
-	e.localTask.init()
+
+	// 初始化任务池
+	e.localTask = newSelectTask(parent.configTask.initCount, parent.configTask.min, parent.configTask.max)
+
+	// TODO+
+	// e.localTask.taskConfig = e.parent.configTask.taskConfig
+	// e.localTask.taskMode = e.parent.configTask.taskMode
+	// e.localTask.init()
 	err = e.apiCreate(flag)
 	return e, err
 }

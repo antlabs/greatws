@@ -15,26 +15,21 @@ package greatws
 
 import (
 	"container/heap"
-	"errors"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/antlabs/greatws/task/driver"
 )
 
-// 运行task的策略
-type taskStrategy int
+var _ driver.TaskExecutor = (*businessGo)(nil)
+var _ driver.TaskDriver = (*task)(nil)
+var _ driver.Tasker = (*task)(nil)
 
-const (
-	// 送入全局队列，存在的意义主要是用于测试
-	taskStrategyRandom taskStrategy = iota
-	// 绑定映射, 从一个go程中取一个conn绑定，后面的请求都会在这个go程中处理
-	taskStrategyBind
-	// 流式映射，一个conntion绑定一个go程(独占)
-	taskStrategyStream
-)
-
-var ErrTaskQueueFull = errors.New("task queue full")
+func init() {
+	driver.Register("unstream", &task{})
+}
 
 var exitFunc = func() bool { return true }
 
@@ -68,12 +63,30 @@ type task struct {
 	startOk         chan struct{}    // 至少有一个go程起来
 }
 
+func (t *task) New(initCount, min, max int) driver.Tasker {
+	var t2 task
+	t2.initCount = initCount
+	t2.min = min
+	t2.max = max
+	t2.initInner()
+	return &t2
+}
+
+// 获取当前go程数
+func (t *task) GetGoroutines() int {
+	return int(atomic.LoadInt64(&t.curGo))
+}
+
 func (t *task) nextStealID() uint32 {
 	return (atomic.AddUint32(&t.stealID, 1) - 1) % uint32(len(t.allBusinessGo))
 }
 
 // 初始化
 func (t *task) initInner() {
+	if t.initCount == 0 {
+		panic("initCount must be greater than 0")
+	}
+
 	t.public = make(chan func() bool, runtime.NumCPU())
 	t.allBusinessGo = make([]*businessGo, 0, t.initCount)
 	t.startOk = make(chan struct{}, 1)
@@ -159,7 +172,7 @@ func (t *task) runWork(currBusinessGo *businessGo, f func() bool) (exit bool) {
 }
 
 // 获取一个go程，如果是slice的话，最小连接数的方式
-func (t *task) getGo() *businessGo {
+func (t *task) NewExecutor() driver.TaskExecutor {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	v := t.allBusinessGo[0]
@@ -168,55 +181,9 @@ func (t *task) getGo() *businessGo {
 	return v
 }
 
-func (t *task) addTask(c *Conn, ts taskStrategy, f func() bool) error {
-	if ts == taskStrategyBind {
-		if c.getCurrBindGo() == nil {
-			c.setCurrBindGo(t.getGo())
-		}
-		currChan := c.getCurrBindGo().taskChan
-		// 如果任务未满，直接放入任务队列
-		if len(currChan) < cap(currChan) {
-			currChan <- f
-			return nil
-		}
-
-	}
-	// 如果任务未满，直接放入公共队列
-	if len(t.public) >= cap(t.public) {
-		return ErrTaskQueueFull
-	}
-	t.public <- f
-	return nil
-}
-
-func (t *task) rebindGoFast(c *Conn) {
-	t.mu.Lock()
-	minTask := t.allBusinessGo[0]
-	src := c.getCurrBindGo()
-	if src.bindConnCount > minTask.bindConnCount {
-		src.subBinConnCount()
-		minTask.addBinConnCount()
-		c.setCurrBindGo(minTask)
-		heap.Fix(&t.allBusinessGo, src.index)
-		heap.Fix(&t.allBusinessGo, minTask.index)
-	}
-	t.mu.Unlock()
-}
-
-// 重新绑定
-func (t *task) rebindGo(c *Conn) {
-	if t == c.currBindGo.parent {
-		t.rebindGoFast(c)
-		return
-	}
-	panic("not support")
-	// t.rebindGoSlow(c)
-}
-
 // 是否满了
 func (t *task) isFull() bool {
 	return atomic.LoadInt64(&t.curGo) >= int64(t.max)
-
 }
 
 func (t *task) addGoWithSteal(g *businessGo) bool {
@@ -313,6 +280,13 @@ func (t *task) manageGo() {
 	}
 }
 
+func (t *task) getGoBusiness(addr uintptr) *businessGo {
+	t.mu.Lock()
+	node := t.allBusinessGo[int(addr)%len(t.allBusinessGo)]
+	t.mu.Unlock()
+	return node
+}
+
 // 运行任务
 func (t *task) runConsumerLoop() {
 	atomic.AddInt64(&t.curGo, int64(t.initCount))
@@ -321,10 +295,26 @@ func (t *task) runConsumerLoop() {
 	}
 }
 
-func (t *task) getCurGo() int64 {
-	return atomic.LoadInt64(&t.curGo)
-}
+// func (t *task) rebindGoFast(c *Conn) {
+// 	t.mu.Lock()
+// 	minTask := t.allBusinessGo[0]
+// 	src := c.getCurrBindGo()
+// 	if src.bindConnCount > minTask.bindConnCount {
+// 		src.subBinConnCount()
+// 		minTask.addBinConnCount()
+// 		c.setCurrBindGo(minTask)
+// 		heap.Fix(&t.allBusinessGo, src.index)
+// 		heap.Fix(&t.allBusinessGo, minTask.index)
+// 	}
+// 	t.mu.Unlock()
+// }
 
-func (t *task) getCurTask() int64 {
-	return atomic.LoadInt64(&t.curTask)
-}
+// 重新绑定
+// func (t *task) rebindGo(c *Conn) {
+// 	if t == c.currBindGo.parent {
+// 		t.rebindGoFast(c)
+// 		return
+// 	}
+// 	panic("not support")
+// 	// t.rebindGoSlow(c)
+// }

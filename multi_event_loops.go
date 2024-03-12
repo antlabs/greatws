@@ -19,18 +19,32 @@ import (
 	"runtime"
 	"sync/atomic"
 	"time"
+
+	_ "github.com/antlabs/greatws/task/io"
+	_ "github.com/antlabs/greatws/task/stream"
+	_ "github.com/antlabs/greatws/task/unstream"
 )
+
+type taskConfig struct {
+	initCount int // 初始化的协程数
+	min       int // 最小协程数
+	max       int // 最大协程数
+}
 
 type multiEventLoopOption struct {
 	numLoops int //起多少个event loop
-	// 只是配置的作用，不是真正的任务池， fd是绑定到某个事件循环上的，
+
+	// 为何不设计全局池, 现在的做法是
+	// fd是绑定到某个事件循环上的，
 	// 任务池是绑定到某个事件循环上的，所以这里的任务池也绑定到对应的localTask上
 	// 如果设计全局任务池，那么概念就会很乱，容易出错，也会临界区竞争
-	configTask       task
-	taskMode         taskMode
+	configTask taskConfig
+	// taskMode         taskMode
 	level            slog.Level //控制日志等级
 	maxEventNum      int        //每次epoll/kqueue返回时，一次最多处理多少事件
 	parseInParseLoop *bool      //在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
+
+	selectTask selectTasks // 任务池
 }
 
 type MultiEventLoop struct {
@@ -39,8 +53,7 @@ type MultiEventLoop struct {
 	loops     []*EventLoop
 	parseLoop *taskParse
 
-	runInIo taskIo
-	flag    evFlag // 是否使用io_uring，目前没有使用
+	flag evFlag // 是否使用io_uring，目前没有使用
 
 	stat // 统计信息
 	*slog.Logger
@@ -52,7 +65,7 @@ var (
 	defMaxEventNum   = 256
 	defTaskMin       = 50
 	defTaskMax       = 30000
-	defTaskInitCount = 1000
+	defTaskInitCount = 8
 	defNumLoops      = runtime.NumCPU()
 )
 
@@ -120,11 +133,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 		o(m)
 	}
 	m.initDefaultSetting()
-	// m.startOk = make(chan struct{}, 1)
-	// 设置任务池模式(tps, 或者流量模式)
-	m.configTask.taskMode = m.taskMode
 
-	m.configTask.init()
 	if *m.parseInParseLoop {
 		m.parseLoop = newTaskParse()
 	}
