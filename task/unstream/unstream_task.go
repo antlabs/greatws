@@ -11,10 +11,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package greatws
+package unstream
 
 import (
 	"container/heap"
+	"context"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -23,9 +24,9 @@ import (
 	"github.com/antlabs/greatws/task/driver"
 )
 
-var _ driver.TaskExecutor = (*businessGo)(nil)
 var _ driver.TaskDriver = (*task)(nil)
 var _ driver.Tasker = (*task)(nil)
+var _ driver.TaskExecutor = (*businessGo)(nil)
 
 func init() {
 	driver.Register("unstream", &task{})
@@ -61,13 +62,15 @@ type task struct {
 	taskMode        taskMode         // task的模式， 目前有三种
 	businessChanNum int              // 各自go程收取任务数的chan的空量
 	startOk         chan struct{}    // 至少有一个go程起来
+	c               *driver.Conf
 }
 
-func (t *task) New(initCount, min, max int) driver.Tasker {
+func (t *task) New(ctx context.Context, initCount, min, max int, c *driver.Conf) driver.Tasker {
 	var t2 task
 	t2.initCount = initCount
 	t2.min = min
 	t2.max = max
+	t2.c = c
 	t2.initInner()
 	return &t2
 }

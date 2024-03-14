@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,23 +14,8 @@
 
 package driver
 
-import (
-	"context"
-)
+import "log/slog"
 
-// 初始化一个go程池
-type TaskDriver interface {
-	New(ctx context.Context, initCount, min, max int, c *Conf) Tasker
-}
-
-// 某个池的实例
-type Tasker interface {
-	GetGoroutines() int        // 获取goroutine数
-	NewExecutor() TaskExecutor // 生成一个扫行器
-}
-
-// 处理任务的节点
-type TaskExecutor interface {
-	AddTask(f func() bool) error
-	Close() error
+type Conf struct {
+	Log *slog.Logger
 }
