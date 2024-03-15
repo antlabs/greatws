@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package greatws
+package stream
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"sync"
@@ -27,15 +28,16 @@ func init() {
 	driver.Register("stream", &taskStream{})
 }
 
-var _ driver.TaskExecutor = (*taskStream)(nil)
 var _ driver.TaskDriver = (*taskStream)(nil)
 var _ driver.Tasker = (*taskStream)(nil)
+var _ driver.TaskExecutor = (*taskStream)(nil)
 
 type taskStream struct {
 	streamChan chan func() bool
 	sync.Once
 	closed   uint32
 	currency int64
+	parent   *taskStream
 }
 
 func (t *taskStream) loop() {
@@ -45,14 +47,16 @@ func (t *taskStream) loop() {
 }
 
 // 这里构造了一个新的实例
-func (t *taskStream) New(initCount, min, max int) driver.Tasker {
+func (t *taskStream) New(ctx context.Context, initCount, min, max int, c *driver.Conf) driver.Tasker {
 	return t
 }
 
 // 创建一个执行器，由于没有node的概念，这里直接返回自己
 func (t *taskStream) NewExecutor() driver.TaskExecutor {
 	var t2 taskStream
+	atomic.AddInt64(&t.currency, 1)
 	t2.init()
+	t2.parent = t
 	return &t2
 }
 
@@ -85,6 +89,7 @@ func (t *taskStream) AddTask(f func() bool) (err error) {
 func (t *taskStream) Close() error {
 	t.Do(func() {
 		close(t.streamChan)
+		atomic.AddInt64(&t.parent.currency, -1)
 		atomic.StoreUint32(&t.closed, 1)
 	})
 

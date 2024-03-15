@@ -58,5 +58,5 @@ func (c *Config) defaultSetting() {
 	c.tcpNoDelay = true
 	// 对于text消息，默认不检查text是utf8字符
 	c.utf8Check = func(b []byte) bool { return true }
-	c.runInGoTask = "unstream"
+	c.runInGoTask = "stream2" //默认使用stream2模块
 }

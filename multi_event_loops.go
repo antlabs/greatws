@@ -14,6 +14,7 @@
 package greatws
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"runtime"
@@ -22,6 +23,7 @@ import (
 
 	_ "github.com/antlabs/greatws/task/io"
 	_ "github.com/antlabs/greatws/task/stream"
+	_ "github.com/antlabs/greatws/task/stream2"
 	_ "github.com/antlabs/greatws/task/unstream"
 )
 
@@ -59,6 +61,8 @@ type MultiEventLoop struct {
 	*slog.Logger
 
 	evLoopStart uint32
+
+	ctx context.Context
 }
 
 var (
@@ -121,13 +125,13 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 		panic(err)
 	}
 
-	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: m.level}))
 	return m
 }
 
 // 创建一个多路事件循环
 func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m := &MultiEventLoop{}
+	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: m.level}))
 	m.initDefaultSetting()
 	for _, o := range opts {
 		o(m)
@@ -137,6 +141,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	if *m.parseInParseLoop {
 		m.parseLoop = newTaskParse()
 	}
+	m.ctx = context.Background()
 	m.loops = make([]*EventLoop, m.numLoops)
 
 	for i := 0; i < m.numLoops; i++ {

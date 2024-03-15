@@ -18,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/antlabs/greatws/task/driver"
 )
 
 type evFlag int
@@ -45,8 +47,10 @@ func CreateEventLoop(setSize int, flag evFlag, parent *MultiEventLoop) (e *Event
 		parent:  parent,
 	}
 
+	var c driver.Conf
+	c.Log = parent.Logger
 	// 初始化任务池
-	e.localTask = newSelectTask(parent.configTask.initCount, parent.configTask.min, parent.configTask.max)
+	e.localTask = newSelectTask(parent.ctx, parent.configTask.initCount, parent.configTask.min, parent.configTask.max, &c)
 
 	// TODO+
 	// e.localTask.taskConfig = e.parent.configTask.taskConfig

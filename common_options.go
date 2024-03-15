@@ -294,17 +294,19 @@ func WithClientCallbackInEventLoop() ClientOption {
 	}
 }
 
-// 19.1 配置服务端使用stream模式处理请求，该模式一个连接会独占一个go程，如果你的请求对时序有要求，可以使用这个模式
+// 默认模式
+// 19.1 配置服务端使用stream模式处理请求，go程会复用，保证OnMessage的处理是有序的
 func WithServerStreamMode() ServerOption {
 	return func(o *ConnOption) {
-		o.runInGoTask = "stream"
+		o.runInGoTask = "stream2"
 	}
 }
 
-// 19.2 配置客户端使用stream模式处理请求，该模式一个连接会独占一个go程，如果你的请求对时序有要求，可以使用这个模式
+// 默认模式
+// 19.2 配置客户端使用stream模式处理请求，go程会复用，保证OnMessage的处理是有序的
 func WithClientStreamMode() ClientOption {
 	return func(o *DialOption) {
-		o.runInGoTask = "stream"
+		o.runInGoTask = "stream2"
 	}
 }
 
@@ -323,6 +325,21 @@ func WithClientCustomTaskMode(taskName string) ClientOption {
 		if len(taskName) > 0 {
 			o.runInGoTask = taskName
 		}
+	}
+}
+
+// 20.1 配置服务端使用unstream模式处理请求，go程会复用, 但是不保证顺序性，如果你的请求对时序有要求，请不要使用这个模式,
+func WithServerUnstreamMode() ServerOption {
+	return func(o *ConnOption) {
+		o.runInGoTask = "unstream"
+	}
+}
+
+// 默认stream2，忽略这个API
+// 19.2 配置客户端使用stream模式处理请求，go程会复用，但是不保证顺序性，如果你的请求对时序有要求，请不要使用这个模式，
+func WithClientUnstreamMode() ClientOption {
+	return func(o *DialOption) {
+		o.runInGoTask = "unstream"
 	}
 }
 

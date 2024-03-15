@@ -2,6 +2,13 @@
 	"outdir": "./report/",
 	"servers": [
 		{
+			"agent": "non-tls-stream2",
+			"url": "ws://127.0.0.1:9001/autobahn-stream2",
+			"options": {
+				"version": 18
+			}
+		},
+		{
 			"agent": "non-tls-parseloop",
 			"url": "ws://127.0.0.1:9001/autobahn-parse-loop",
 			"options": {
@@ -10,7 +17,7 @@
 		},
 		{
 			"agent": "non-tls-taskbind",
-			"url": "ws://127.0.0.1:9001/autobahn",
+			"url": "ws://127.0.0.1:9001/autobahn-unstream",
 			"options": {
 				"version": 18
 			}
@@ -31,11 +38,10 @@
 		}
 	],
 	"cases": [
-    "*"
+		"*"
 	],
 	"exclude-cases": [
 		""
 	],
 	"exclude-agent-cases": {}
 }
-

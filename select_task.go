@@ -13,7 +13,11 @@
 // limitations under the License.
 package greatws
 
-import "github.com/antlabs/greatws/task/driver"
+import (
+	"context"
+
+	"github.com/antlabs/greatws/task/driver"
+)
 
 type selectTask struct {
 	taskDriverName string
@@ -21,12 +25,12 @@ type selectTask struct {
 }
 type selectTasks []selectTask
 
-func newSelectTask(initCount, min, max int) []selectTask {
+func newSelectTask(ctx context.Context, initCount, min, max int, c *driver.Conf) []selectTask {
 
 	all := driver.GetAllRegister()
 	rv := make([]selectTask, 0, len(all))
 	for _, val := range all {
-		task := val.Driver.New(initCount, min, max)
+		task := val.Driver.New(ctx, initCount, min, max, c)
 		rv = append(rv, selectTask{
 			taskDriverName: val.Name,
 			task:           task,
