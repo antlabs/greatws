@@ -22,10 +22,10 @@ import (
 )
 
 type stream2Executor struct {
-	list   []func() bool
 	mu     sync.Mutex
-	closed uint32
+	list   []func() bool
 	parent *stream2
+	closed uint32
 }
 
 func (s *stream2Executor) AddTask(f func() bool) error {
@@ -45,6 +45,10 @@ func (s *stream2Executor) AddTask(f func() bool) error {
 
 	if process {
 		s.parent.fn <- s.run
+		select {
+		case s.parent.haveData <- struct{}{}:
+		default:
+		}
 	}
 
 	return nil

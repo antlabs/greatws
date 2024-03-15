@@ -55,12 +55,13 @@ type handler struct {
 }
 
 // 运行在业务线程
-func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
+func (h *handler) echoUnstream(w http.ResponseWriter, r *http.Request) {
 	opts := []greatws.ServerOption{
 		greatws.WithServerReplyPing(),
 		greatws.WithServerDecompression(),
 		greatws.WithServerIgnorePong(),
 		greatws.WithServerCallback(&echoHandler{}),
+		greatws.WithServerUnstreamMode(),
 		greatws.WithServerEnableUTF8Check(),
 		greatws.WithServerReadTimeout(5 * time.Second),
 		greatws.WithServerMultiEventLoop(h.m),
@@ -103,6 +104,29 @@ func (h *handler) echoRunInIo(w http.ResponseWriter, r *http.Request) {
 
 // 使用stream模式运行， 一个websocket一个go程
 func (h *handler) echoRunStream(w http.ResponseWriter, r *http.Request) {
+	opts := []greatws.ServerOption{
+		greatws.WithServerReplyPing(),
+		greatws.WithServerDecompression(),
+		greatws.WithServerIgnorePong(),
+		greatws.WithServerCallback(&echoHandler{}),
+		greatws.WithServerEnableUTF8Check(),
+		greatws.WithServerReadTimeout(5 * time.Second),
+		greatws.WithServerMultiEventLoop(h.m),
+		greatws.WithServerCallbackInEventLoop(),
+	}
+
+	if *runInEventLoop {
+		opts = append(opts, greatws.WithServerCallbackInEventLoop())
+	}
+
+	c, err := greatws.Upgrade(w, r, opts...)
+	if err != nil {
+		slog.Error("Upgrade fail:", "err", err.Error())
+	}
+	_ = c
+}
+
+func (h *handler) echoRunStream2(w http.ResponseWriter, r *http.Request) {
 	opts := []greatws.ServerOption{
 		greatws.WithServerReplyPing(),
 		greatws.WithServerDecompression(),
@@ -191,9 +215,10 @@ func main() {
 		}
 	}()
 	mux := &http.ServeMux{}
-	mux.HandleFunc("/autobahn", h.echo)
+	mux.HandleFunc("/autobahn-unstream", h.echoUnstream)
 	mux.HandleFunc("/autobahn-io", h.echoRunInIo)
 	mux.HandleFunc("/autobahn-stream", h.echoRunStream)
+	mux.HandleFunc("/autobahn-stream2", h.echoRunStream2)
 	mux.HandleFunc("/autobahn-parse-loop", h.echoRunInParseLoop)
 
 	rawTCP, err := net.Listen("tcp", ":9001")
