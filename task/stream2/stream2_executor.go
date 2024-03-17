@@ -45,9 +45,11 @@ func (s *stream2Executor) AddTask(f func() bool) error {
 
 	if process {
 		s.parent.fn <- s.run
-		select {
-		case s.parent.haveData <- struct{}{}:
-		default:
+		if len(s.parent.haveData) < cap(s.parent.haveData) {
+			select {
+			case s.parent.haveData <- struct{}{}:
+			default:
+			}
 		}
 	}
 
