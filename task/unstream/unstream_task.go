@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/antlabs/greatws/task/driver"
+	"github.com/antlabs/greatws/window"
 )
 
 var _ driver.TaskDriver = (*task)(nil)
@@ -53,7 +54,7 @@ const (
 type task struct {
 	mu              sync.Mutex       // 锁
 	public          chan func() bool // TODO: 公共任务chan，本来是想作为任务平衡的作用，目前没有启用，是否使用还要根据压测结果调整.
-	windows         windows          // 滑动窗口计数，用于判断是否需要新增go程
+	window          window.Window    // 滑动窗口计数，用于判断是否需要新增go程
 	taskConfig                       // task的最配置，比如初始化启多少协程，动态扩容时最小协程数和最大协程数
 	curGo           int64            // 当前运行协程数
 	curTask         int64            // 当前运行任务数
@@ -93,7 +94,7 @@ func (t *task) initInner() {
 	t.public = make(chan func() bool, runtime.NumCPU())
 	t.allBusinessGo = make([]*businessGo, 0, t.initCount)
 	t.startOk = make(chan struct{}, 1)
-	t.windows.init()
+	t.window.Init()
 	go t.manageGo()
 	go t.runConsumerLoop()
 }
@@ -233,7 +234,7 @@ func (t *task) needGrow() (bool, int) {
 
 	curTask := atomic.LoadInt64(&t.curTask)
 	curGo := atomic.LoadInt64(&t.curGo)
-	avg := t.windows.avg()
+	avg := t.window.Avg()
 	need := (float64(curTask)/float64(curGo)) > 0.8 && curGo > int64(avg)
 
 	if need {
@@ -261,7 +262,7 @@ func (t *task) needShrink() (bool, int) {
 	curTask := atomic.LoadInt64(&t.curTask)
 	curGo := atomic.LoadInt64(&t.curGo)
 
-	need := (float64(curTask)/float64(curGo)) < 0.25 && curGo < int64(t.windows.avg())
+	need := (float64(curTask)/float64(curGo)) < 0.25 && curGo < int64(t.window.Avg())
 	return need, int(float64(t.curGo) * 0.75)
 }
 
@@ -272,7 +273,7 @@ func (t *task) manageGo() {
 		// 当前运行的go程数
 		curGo := atomic.LoadInt64(&t.curGo)
 		// 记录当前运行的任务数
-		t.windows.add(curGo)
+		t.window.Add(curGo)
 
 		// 1分钟内不考虑收缩go程
 		if need, shrinkSize := t.needShrink(); need {

@@ -11,34 +11,26 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package unstream
 
-import "sync/atomic"
+package window
 
-// 滑动窗口记录历史go程数
-type windows struct {
-	// 历史go程数
-	historyGo []int64
-	sum       int64
-	w         int64
-}
+import (
+	"slices"
+	"testing"
+)
 
-func (w *windows) init() {
-	w.historyGo = make([]int64, 10)
-}
+func Test_Windows(t *testing.T) {
+	t.Run("test_windows.0", func(t *testing.T) {
+		var w Window
+		w.Init()
+		w.Add(1)
+		if !slices.Equal(w.historyGo[:3], []int64{1, 0, 0}) {
+			// 报错
+			t.Errorf("w.historyGo is fail")
+		}
 
-func (w *windows) add(goNum int64) {
-	if len(w.historyGo) == 0 {
-		return
-	}
-
-	needAdd := goNum - w.historyGo[w.w]
-
-	atomic.AddInt64(&w.sum, needAdd)
-	w.historyGo[w.w] = goNum
-	w.w = (w.w + 1) % int64(len(w.historyGo))
-}
-
-func (w *windows) avg() float64 {
-	return float64(atomic.LoadInt64(&w.sum)) / float64(len(w.historyGo))
+		if w.Avg() > 0.5 {
+			t.Errorf("w.avg > 0.5")
+		}
+	})
 }
