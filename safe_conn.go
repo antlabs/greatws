@@ -100,8 +100,8 @@ func (s *safeConns) delConn(c *Conn) {
 }
 
 func (s *safeConns) getConn(fd int) *Conn {
-	return *(**Conn)(
+	return (*Conn)(atomic.LoadPointer((*unsafe.Pointer)(
 		add(
 			atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&s.connsPtr))),
-			uintptr(fd)))
+			uintptr(fd)))))
 }
