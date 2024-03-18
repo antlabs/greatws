@@ -16,10 +16,16 @@ package stream2
 
 import (
 	"context"
+	"os"
 	"sync/atomic"
 	"time"
 
 	"github.com/antlabs/greatws/task/driver"
+)
+
+const (
+	envLoopKey        = "GREATWS_STREAM2_LOOP"
+	envLoopShortValue = "short"
 )
 
 func init() {
@@ -33,39 +39,61 @@ var _ driver.TaskExecutor = (*stream2Executor)(nil)
 type stream2 struct {
 	initCount  int
 	min        int
-	max        int
+	max        int64
 	goroutines int32
 	fn         chan func() bool //数据
 	haveData   chan struct{}    //控制
 	ctx        context.Context
 	conf       *driver.Conf
+	loopInner  func()
 }
 
 func (s *stream2) New(ctx context.Context, initCount, min, max int, c *driver.Conf) driver.Tasker {
 	s2 := &stream2{initCount: initCount,
 		min:      min,
-		max:      max,
+		max:      int64(max),
 		fn:       make(chan func() bool, max),
 		haveData: make(chan struct{}, max),
 		ctx:      ctx,
 		conf:     c,
 	}
+
+	s2.loopInner = s2.loopLong
+	if os.Getenv(envLoopKey) == envLoopShortValue {
+		s2.loopInner = s2.loopShort
+	}
+
 	go s2.loop()
 	return s2
 }
 
-func (s *stream2) loop2() {
+func (s *stream2) loopLong() {
+	defer func() {
+		atomic.AddInt32(&s.goroutines, -1)
+	}()
+
+	for f := range s.fn {
+		if f() {
+			return
+		}
+	}
+}
+
+func (s *stream2) loopShort() {
 	defer func() {
 		atomic.AddInt32(&s.goroutines, -1)
 	}()
 
 	for {
 		select {
-		case f := <-s.fn:
+		case f, ok := <-s.fn:
+			if !ok {
+				return
+			}
 			if f() {
 				return
 			}
-		case <-s.ctx.Done():
+		default:
 			return
 		}
 	}
@@ -73,13 +101,21 @@ func (s *stream2) loop2() {
 
 func (s *stream2) loop() {
 	timeout := time.Second * 10
-	tm := time.NewTimer(time.Hour)
+	tm := time.NewTimer(timeout)
+	max := int32(float64(s.max) * 0.1)
 	for {
 		select {
 		case <-s.haveData:
-			if atomic.LoadInt32(&s.goroutines) < int32(s.max) {
+			// <=10%时
+			curGo := atomic.LoadInt32(&s.goroutines)
+			// busy := len(s.fn) > int(float64(cap(s.fn))*0.9)
+			// TODO
+			busy := true
+
+			// s.conf.Log.Debug("stream2 loop", "curGo", curGo, "min", s.min, "max", s.max, "busy", busy, "fn-len", len(s.fn))
+			if (curGo < int32(max) || busy) && curGo < int32(s.max) {
 				atomic.AddInt32(&s.goroutines, 1)
-				go s.loop2()
+				go s.loopInner()
 			}
 			tm.Reset(timeout)
 		case <-tm.C:

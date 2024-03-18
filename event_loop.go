@@ -15,7 +15,6 @@ package greatws
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,10 +29,9 @@ const (
 )
 
 type EventLoop struct {
-	conns     sync.Map // TODO 优化，后面换成b-tree
-	maxFd     int      // highest file descriptor currently registered
-	setSize   int      // max number of file descriptors tracked
-	*apiState          // 每个平台对应的异步io接口/epoll/kqueue/iouring(暂时不加，除非io-uring性能超过epoll才加回来)
+	maxFd     int // highest file descriptor currently registered
+	setSize   int // max number of file descriptors tracked
+	*apiState     // 每个平台对应的异步io接口/epoll/kqueue/iouring(暂时不加，除非io-uring性能超过epoll才加回来)
 	shutdown  bool
 	parent    *MultiEventLoop
 	localTask selectTasks
@@ -77,18 +75,14 @@ func (el *EventLoop) Loop() {
 
 // 获取一个连接
 func (m *EventLoop) getConn(fd int) *Conn {
-
-	v, ok := m.conns.Load(fd)
-	if !ok {
-		return nil
-	}
-	return v.(*Conn)
+	return m.parent.safeConns.getConn(fd)
 }
 
 func (el *EventLoop) del(c *Conn) {
 	fd := c.getFd()
 	atomic.AddInt64(&el.parent.curConn, -1)
-	el.conns.Delete(fd)
+	el.parent.safeConns.delConn(c)
+	// el.conns.Delete(fd)
 	closeFd(fd)
 }
 func (el *EventLoop) GetApiName() string {

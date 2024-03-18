@@ -45,12 +45,12 @@ type multiEventLoopOption struct {
 	level            slog.Level //控制日志等级
 	maxEventNum      int        //每次epoll/kqueue返回时，一次最多处理多少事件
 	parseInParseLoop *bool      //在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
-
-	selectTask selectTasks // 任务池
 }
 
 type MultiEventLoop struct {
 	multiEventLoopOption //配置选项
+
+	safeConns safeConns
 
 	loops     []*EventLoop
 	parseLoop *taskParse
@@ -131,6 +131,7 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 // 创建一个多路事件循环
 func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m := &MultiEventLoop{}
+	m.safeConns.init()
 	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: m.level}))
 	m.initDefaultSetting()
 	for _, o := range opts {
@@ -181,7 +182,8 @@ func (m *MultiEventLoop) getEventLoop(fd int) *EventLoop {
 func (m *MultiEventLoop) add(c *Conn) error {
 	fd := c.getFd()
 	index := fd % len(m.loops)
-	m.loops[index].conns.Store(fd, c)
+	m.safeConns.addConn(c)
+	// m.loops[index].conns.Store(fd, c)
 	if err := m.loops[index].addRead(c); err != nil {
 		m.loops[index].del(c)
 		return err
