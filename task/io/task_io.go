@@ -15,6 +15,7 @@ package io
 
 import (
 	"context"
+	"sync"
 
 	"github.com/antlabs/greatws/task/driver"
 )
@@ -40,11 +41,11 @@ func (t *taskIo) NewExecutor() driver.TaskExecutor {
 }
 
 // 任务运行在io goroutine中
-func (t *taskIo) AddTask(f func() bool) error {
+func (t *taskIo) AddTask(mu *sync.Mutex, f func() bool) error {
 	f()
 	return nil
 }
 
-func (t *taskIo) Close() error {
+func (t *taskIo) Close(mu *sync.Mutex) error {
 	return nil
 }

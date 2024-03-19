@@ -69,7 +69,7 @@ func (t *taskStream) init() {
 	go t.loop()
 }
 
-func (t *taskStream) AddTask(f func() bool) (err error) {
+func (t *taskStream) AddTask(mu *sync.Mutex, f func() bool) (err error) {
 	if atomic.LoadUint32(&t.closed) == 1 {
 		return nil
 	}
@@ -86,7 +86,7 @@ func (t *taskStream) AddTask(f func() bool) (err error) {
 	return nil
 }
 
-func (t *taskStream) Close() error {
+func (t *taskStream) Close(mu *sync.Mutex) error {
 	t.Do(func() {
 		close(t.streamChan)
 		atomic.AddInt64(&t.parent.currency, -1)

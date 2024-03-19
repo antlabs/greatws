@@ -14,6 +14,7 @@
 package unstream
 
 import (
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
@@ -58,7 +59,7 @@ func newBusinessGo(num int, parent *task) *businessGo {
 	}
 }
 
-func (t *businessGo) AddTask(f func() bool) error {
+func (t *businessGo) AddTask(mu *sync.Mutex, f func() bool) error {
 
 	newCount := atomic.AddUint32(&t.count, 1)
 	// 如果任务未满，直接放入任务队列
@@ -83,7 +84,7 @@ func (t *businessGo) AddTask(f func() bool) error {
 }
 
 // 一些统计状态和资源的关闭
-func (t *businessGo) Close() error {
+func (t *businessGo) Close(mu *sync.Mutex) error {
 	if t.isClose() {
 		return nil
 	}

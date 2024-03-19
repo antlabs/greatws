@@ -17,34 +17,32 @@ package stream2
 import (
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 )
 
 type stream2Executor struct {
-	mu     sync.Mutex
 	list   []func() bool
 	parent *stream2
-	closed uint32
 }
 
-func (s *stream2Executor) AddTask(f func() bool) error {
-	if s.isClose() {
-		return nil
-	}
+func (s *stream2Executor) AddTask(mu *sync.Mutex, f func() bool) error {
 
-	s.mu.Lock()
-	if s.isClose() {
-		s.mu.Unlock()
-		return nil
+	if mu != nil {
+		mu.Lock()
 	}
 
 	process := len(s.list) == 0
 	s.list = append(s.list, f)
-	s.mu.Unlock()
+	if mu != nil {
+		mu.Unlock()
+	}
 
 	if process {
-		s.parent.fn <- s.run
+		s.parent.fn <- func() bool {
+			s.run(mu)
+			return false
+		}
+
 		if len(s.parent.haveData) < cap(s.parent.haveData) {
 			select {
 			case s.parent.haveData <- struct{}{}:
@@ -56,20 +54,33 @@ func (s *stream2Executor) AddTask(f func() bool) error {
 	return nil
 }
 
-func (s *stream2Executor) run() bool {
+func (s *stream2Executor) run(mu *sync.Mutex) bool {
 	var f func() bool
 	for i := 0; ; i++ {
-		s.mu.Lock()
+		if mu != nil {
+			mu.Lock()
+		}
+
+		if len(s.list) == 0 {
+			if mu != nil {
+				mu.Unlock()
+			}
+			return false
+		}
 
 		if len(s.list) == i {
 			s.list = s.list[0:0]
-			s.mu.Unlock()
+			if mu != nil {
+				mu.Unlock()
+			}
 			return false
 		}
 
 		f = s.list[i]
 		s.list[i] = nil
-		s.mu.Unlock()
+		if mu != nil {
+			mu.Unlock()
+		}
 
 		func() {
 			defer func() {
@@ -85,11 +96,14 @@ func (s *stream2Executor) run() bool {
 	}
 }
 
-func (s *stream2Executor) isClose() bool {
-	return atomic.LoadUint32(&s.closed) == 1
-}
+func (s *stream2Executor) Close(mu *sync.Mutex) error {
+	if mu != nil {
+		mu.Lock()
+	}
 
-func (s *stream2Executor) Close() error {
-	atomic.StoreUint32(&s.closed, 1)
+	s.list = nil
+	if mu != nil {
+		mu.Unlock()
+	}
 	return nil
 }
