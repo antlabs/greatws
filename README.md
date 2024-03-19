@@ -136,27 +136,27 @@ MEM Max    : 626.47M
 ```
 BenchType  : BenchEcho
 Framework  : greatws
-TPS        : 111807
-EER        : 403.31
-Min        : 29.64us
-Avg        : 89.30ms
-Max        : 1.49s
-TP50       : 56.58ms
-TP75       : 59.78ms
-TP90       : 63.41ms
-TP95       : 66.99ms
-TP99       : 184.26ms
-Used       : 39.16s
+TPS        : 103544
+EER        : 397.07
+Min        : 26.51us
+Avg        : 95.79ms
+Max        : 1.34s
+TP50       : 58.26ms
+TP75       : 60.94ms
+TP90       : 62.50ms
+TP95       : 63.04ms
+TP99       : 63.47ms
+Used       : 40.76s
 Total      : 5000000
-Success    : 4378924
-Failed     : 621076
+Success    : 4220634
+Failed     : 779366
 Conns      : 1000000
 Concurrency: 10000
 Payload    : 1024
-CPU Min    : 0.00%
-CPU Avg    : 277.22%
-CPU Max    : 389.82%
-MEM Min    : 505.36M
-MEM Avg    : 519.20M
-MEM Max    : 539.86M
+CPU Min    : 30.54%
+CPU Avg    : 260.77%
+CPU Max    : 335.88%
+MEM Min    : 432.25M
+MEM Avg    : 439.71M
+MEM Max    : 449.62M
 ```
