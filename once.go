@@ -5,16 +5,15 @@ import (
 	"sync/atomic"
 )
 
-type Once struct {
+type myOnce struct {
 	done uint32
-	m    sync.Mutex
 }
 
-func (o *Once) Do(f func()) {
+func (o *myOnce) Do(mu *sync.Mutex, f func()) {
 
 	if atomic.LoadUint32(&o.done) == 0 {
 
-		o.doSlow(f)
+		o.doSlow(mu, f)
 	}
 }
 
@@ -24,9 +23,9 @@ func (o *Once) Do(f func()) {
 // 试想下这个场景;
 // 出错会调用用户的OnClose函数，这个函数会被包在sync.Once里面，而OnClose函数中又会调用Close函数，这个函数里面也会有调用OnClose的逻辑，这样就会死锁
 // 如果前置设置done为1，那么就不会有这个问题
-func (o *Once) doSlow(f func()) {
-	o.m.Lock()
-	defer o.m.Unlock()
+func (o *myOnce) doSlow(mu *sync.Mutex, f func()) {
+	mu.Lock()
+	defer mu.Unlock()
 	if o.done == 0 {
 		atomic.StoreUint32(&o.done, 1)
 		f()

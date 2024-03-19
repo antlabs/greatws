@@ -63,15 +63,19 @@ var (
 type Conn struct {
 	conn
 
-	mu            sync.Mutex          // 锁
-	*Config                           // 配置
-	parent        *EventLoop          // event loop
-	task          driver.TaskExecutor // 任务，该任务会进协程池里面执行
-	rtime         *time.Timer         // 控制读超时
-	wtime         *time.Timer         // 控制写超时
-	closeConnOnce sync.Once           // 关闭一次
-	onCloseOnce   Once                // 保证只调用一次OnClose函数
-	closed        int32               // 是否关闭
+	mu      sync.Mutex          // 锁
+	*Config                     // 配置
+	parent  *EventLoop          // event loop
+	task    driver.TaskExecutor // 任务，该任务会进协程池里面执行
+	rtime   *time.Timer         // 控制读超时
+	wtime   *time.Timer         // 控制写超时
+
+	// mu2由 onCloseOnce使用, 这里使用新锁只是为了简化维护的难度
+	// 也可以共用mu，区别 优点:节约内存，缺点:容易出现死锁和需要精心调试代码
+	// 这里选择维护简单
+	mu2         sync.Mutex
+	onCloseOnce myOnce // 保证只调用一次OnClose函数
+	closed      int32  // 是否关闭
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
@@ -104,29 +108,25 @@ func duplicateSocket(socketFD int) (int, error) {
 // 没有加锁的版本，有外层已经有锁保护，所以不需要加锁
 func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
 
-	c.closeConnOnce.Do(func() {
+	if c.isClosed() {
+		return
+	}
+
+	if !c.isClosed() {
+
 		if err != nil {
 			err = io.EOF
 		}
-		// switch c.Config.runInGoStrategy {
-		// case taskStrategyBind:
-		// 	if c.getCurrBindGo() != nil {
-		// 		c.currBindGo.subBinConnCount()
-		// 	}
-		// case taskStrategyStream:
-		// 	c.streamGo.close()
-
-		// }
 		fd := c.getFd()
 		c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
 		c.parent.del(c)
 		atomic.StoreInt64(&c.fd, -1)
-		atomic.AddInt32(&c.closed, 1)
-	})
+		atomic.StoreInt32(&c.closed, 1)
+	}
 
 	// 这个必须要放在后面
 	if onClose {
-		c.onCloseOnce.Do(func() {
+		c.onCloseOnce.Do(&c.mu2, func() {
 			c.OnClose(c, err)
 		})
 	}
@@ -143,6 +143,8 @@ func (c *Conn) closeWithLock(err error) {
 		return
 	}
 
+	c.task.Close(&c.mu)
+
 	c.mu.Lock()
 	if c.isClosed() {
 		c.mu.Unlock()
@@ -158,13 +160,11 @@ func (c *Conn) closeWithLock(err error) {
 
 	// 这个必须要放在后面， 不然会死锁，因为Close会调用用户的OnClose
 	// 用户的OnClose也有可能调用Close， 所以使用flags来判断是否已经关闭
-	c.mu.Lock()
 	if atomic.LoadInt32(&c.closed) == 1 {
-		c.onCloseOnce.Do(func() {
+		c.onCloseOnce.Do(&c.mu2, func() {
 			c.OnClose(c, err)
 		})
 	}
-	c.mu.Unlock()
 }
 
 func (c *Conn) getPtr() int {
@@ -367,7 +367,7 @@ func (c *Conn) processWebsocketFrame() (err error) {
 		// 读到eof，直接关闭
 		if n == 0 && len((*c.rbuf)[c.rw:]) > 0 {
 			c.closeWithLock(io.EOF)
-			c.onCloseOnce.Do(func() {
+			c.onCloseOnce.Do(&c.mu2, func() {
 				c.OnClose(c, io.EOF)
 			})
 			err = io.EOF

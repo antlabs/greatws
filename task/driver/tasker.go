@@ -16,6 +16,7 @@ package driver
 
 import (
 	"context"
+	"sync"
 )
 
 // 初始化一个go程池
@@ -31,6 +32,6 @@ type Tasker interface {
 
 // 处理任务的节点
 type TaskExecutor interface {
-	AddTask(f func() bool) error
-	Close() error
+	AddTask(mu *sync.Mutex, f func() bool) error
+	Close(mu *sync.Mutex) error
 }
