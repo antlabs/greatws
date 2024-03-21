@@ -58,6 +58,7 @@ func (s *stream2Executor) run(mu *sync.Mutex) bool {
 	var f func() bool
 	for i := 0; ; i++ {
 		if mu != nil {
+			// 加锁
 			mu.Lock()
 		}
 
@@ -69,6 +70,14 @@ func (s *stream2Executor) run(mu *sync.Mutex) bool {
 		}
 
 		if len(s.list) == i {
+			s.list = s.list[0:0]
+			if mu != nil {
+				mu.Unlock()
+			}
+			return false
+		}
+
+		if i >= len(s.list) {
 			s.list = s.list[0:0]
 			if mu != nil {
 				mu.Unlock()
