@@ -18,7 +18,6 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"math/rand"
-	"net/http"
 	"reflect"
 	"time"
 	"unsafe"
@@ -57,30 +56,4 @@ func secWebSocketAcceptVal(val string) string {
 	s.Write(uuid)
 	r := s.Sum(nil)
 	return base64.StdEncoding.EncodeToString(r)
-}
-
-// 是否打开解压缩
-func needDecompression(header http.Header) bool {
-	for _, ext := range parseExtensions(header) {
-		if ext[""] != "permessage-deflate" {
-			continue
-		}
-		return true
-	}
-
-	return false
-}
-
-// 客户端用的函数
-func maybeCompressionDecompression(header http.Header) bool {
-	for _, ext := range parseExtensions(header) {
-		if ext[""] != "permessage-deflate" {
-			continue
-		}
-		_, s := ext["server_no_context_takeover"]
-		_, c := ext["client_no_context_takeover"]
-		return s || c
-	}
-
-	return false
 }

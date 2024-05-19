@@ -24,6 +24,7 @@ import (
 
 	"github.com/antlabs/wsutil/bufio2"
 	"github.com/antlabs/wsutil/bytespool"
+	"github.com/antlabs/wsutil/deflate"
 )
 
 type UpgradeServer struct {
@@ -75,7 +76,7 @@ func getFdFromConn(c net.Conn) (newFd int, err error) {
 	return duplicateSocket(int(newFd))
 }
 
-func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn, err error) {
+func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (wsCon *Conn, err error) {
 	if conf.multiEventLoop == nil {
 		return nil, ErrEventLoopEmpty
 	}
@@ -102,8 +103,12 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 
 	// 是否打开解压缩
 	// 外层接收压缩, 并且客户端发送扩展过来
-	if conf.decompression {
-		conf.decompression = needDecompression(r.Header)
+	var pd deflate.PermessageDeflateConf
+	if conf.Decompression {
+		pd, err = deflate.GetConnPermessageDeflate(r.Header)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	buf := bytespool.GetUpgradeRespBytes()
@@ -135,11 +140,12 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		return nil, err
 	}
 
-	c = newConn(int64(fd), false, conf)
-	conf.Callback.OnOpen(c)
-	if err = conf.multiEventLoop.add(c); err != nil {
+	wsCon = newConn(int64(fd), false, conf)
+	conf.Callback.OnOpen(wsCon)
+	if err = conf.multiEventLoop.add(wsCon); err != nil {
 		return nil, err
 	}
 
-	return c, nil
+	wsCon.pd = pd
+	return wsCon, nil
 }

@@ -182,13 +182,13 @@ func WithClientWindowsMultipleTimesPayloadSize(mt float32) ClientOption {
 // 10 配置解压缩
 func WithClientDecompression() ClientOption {
 	return func(o *DialOption) {
-		o.decompression = true
+		o.Decompression = true
 	}
 }
 
 func WithServerDecompression() ServerOption {
 	return func(o *ConnOption) {
-		o.decompression = true
+		o.Decompression = true
 	}
 }
 
@@ -343,15 +343,80 @@ func WithClientUnstreamMode() ClientOption {
 	}
 }
 
-// last 配置event
+// 20.1 配置event
 func WithServerMultiEventLoop(m *MultiEventLoop) ServerOption {
 	return func(o *ConnOption) {
 		o.multiEventLoop = m
 	}
 }
 
+// 20.2 配置event
 func WithClientMultiEventLoop(m *MultiEventLoop) ClientOption {
 	return func(o *DialOption) {
 		o.multiEventLoop = m
+	}
+}
+
+// 21.1 配置压缩和解压缩
+func WithServerDecompressAndCompress() ServerOption {
+	return func(o *ConnOption) {
+		o.Compression = true
+		o.Decompression = true
+	}
+}
+
+// 21.2 配置压缩和解压缩
+func WithClientDecompressAndCompress() ClientOption {
+	return func(o *DialOption) {
+		o.Compression = true
+		o.Decompression = true
+	}
+}
+
+// 21.1 设置客户端支持上下文接管, 默认不支持上下文接管
+func WithClientContextTakeover() ClientOption {
+	return func(o *DialOption) {
+		o.ClientContextTakeover = true
+	}
+}
+
+// 21.2 设置服务端支持上下文接管, 默认不支持上下文接管
+func WithServerContextTakeover() ServerOption {
+	return func(o *ConnOption) {
+		o.ServerContextTakeover = true
+	}
+}
+
+// 21.1 设置客户端最大窗口位数，使用上下文接管时，这个参数才有效
+func WithClientMaxWindowsBits(bits uint8) ClientOption {
+	return func(o *DialOption) {
+		if bits < 8 || bits > 15 {
+			return
+		}
+		o.ClientMaxWindowBits = bits
+	}
+}
+
+// 22.2 设置服务端最大窗口位数, 使用上下文接管时，这个参数才有效
+func WithServerMaxWindowBits(bits uint8) ServerOption {
+	return func(o *ConnOption) {
+		if bits < 8 || bits > 15 {
+			return
+		}
+		o.ServerMaxWindowBits = bits
+	}
+}
+
+// 22.1 设置客户端最大可以读取的message的大小, 默认没有限制
+func WithClientReadMaxMessage(size int64) ClientOption {
+	return func(o *DialOption) {
+		o.readMaxMessage = size
+	}
+}
+
+// 22.2 设置服务端最大可以读取的message的大小，默认没有限制
+func WithServerReadMaxMessage(size int64) ServerOption {
+	return func(o *ConnOption) {
+		o.readMaxMessage = size
 	}
 }

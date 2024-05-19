@@ -24,12 +24,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/antlabs/wsutil/deflate"
 	"github.com/antlabs/wsutil/hostname"
 )
 
 var (
 	defaultTimeout = time.Minute * 30
-	strExtensions  = "permessage-deflate; server_no_context_takeover; client_no_context_takeover"
 )
 
 type DialOption struct {
@@ -116,8 +116,8 @@ func (d *DialOption) handshake() (*http.Request, string, error) {
 	// 第9点
 	d.Header.Add("Sec-WebSocket-Version", "13")
 
-	if d.decompression && d.compression {
-		d.Header.Add("Sec-WebSocket-Extensions", strExtensions)
+	if d.Decompression && d.Compression {
+		d.Header.Add("Sec-WebSocket-Extensions", deflate.GenSecWebSocketExtensions(d.PermessageDeflateConf))
 	}
 
 	req.Header = d.Header
@@ -175,7 +175,7 @@ func (d *DialOption) tlsConn(c net.Conn) net.Conn {
 	return c
 }
 
-func (d *DialOption) Dial() (c *Conn, err error) {
+func (d *DialOption) Dial() (wsCon *Conn, err error) {
 	if d.Config.multiEventLoop == nil {
 		return nil, ErrEventLoopEmpty
 	}
@@ -229,12 +229,15 @@ func (d *DialOption) Dial() (c *Conn, err error) {
 		*d.bindClientHttpHeader = rsp.Header.Clone()
 	}
 
-	cd := maybeCompressionDecompression(rsp.Header)
-	if d.decompression {
-		d.decompression = cd
+	pd, err := deflate.GetConnPermessageDeflate(rsp.Header)
+	if err != nil {
+		return nil, err
 	}
-	if d.compression {
-		d.compression = cd
+	if d.Decompression {
+		pd.Decompression = pd.Enable && d.Decompression
+	}
+	if d.Compression {
+		pd.Compression = pd.Enable && d.Compression
 	}
 
 	if err = d.validateRsp(rsp, secWebSocket); err != nil {
@@ -250,10 +253,11 @@ func (d *DialOption) Dial() (c *Conn, err error) {
 	if err = conn.Close(); err != nil {
 		return nil, err
 	}
-	c = newConn(int64(fd), true, &d.Config)
-	d.Callback.OnOpen(c)
-	if err = d.Config.multiEventLoop.add(c); err != nil {
+	wsCon = newConn(int64(fd), true, &d.Config)
+	wsCon.pd = pd
+	d.Callback.OnOpen(wsCon)
+	if err = d.Config.multiEventLoop.add(wsCon); err != nil {
 		return nil, err
 	}
-	return c, nil
+	return wsCon, nil
 }
