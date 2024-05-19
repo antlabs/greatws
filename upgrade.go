@@ -141,11 +141,11 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (wsCon *
 	}
 
 	wsCon = newConn(int64(fd), false, conf)
+	wsCon.pd = pd
 	conf.Callback.OnOpen(wsCon)
 	if err = conf.multiEventLoop.add(wsCon); err != nil {
 		return nil, err
 	}
 
-	wsCon.pd = pd
 	return wsCon, nil
 }
