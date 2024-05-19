@@ -126,9 +126,6 @@ func (c *Conn) readHeader() (sucess bool, err error) {
 		switch {
 		// 长度
 		case c.rh.PayloadLen >= 0 && c.rh.PayloadLen <= 125:
-			if c.rh.PayloadLen == 0 && !c.rh.Mask {
-				return
-			}
 		case c.rh.PayloadLen == 126:
 			// 2字节长度
 			have += 2
@@ -393,7 +390,8 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 
 		if f.Opcode == Close {
 			if len(*f.Payload) == 0 {
-				return c.writeErrAndOnClose(NormalClosure, ErrClosePayloadTooSmall)
+				c.writeErrAndOnClose(NormalClosure, &CloseErrMsg{Code: NormalClosure})
+				return nil
 			}
 
 			if len(*f.Payload) < 2 {
@@ -507,12 +505,6 @@ func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
 	}
 
 	return userErr
-}
-
-// TODO:
-func (c *Conn) SetWriteDeadline(t time.Time) error {
-	// return c.c.SetWriteDeadline(t)
-	return nil
 }
 
 func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {

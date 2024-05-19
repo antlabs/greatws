@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/antlabs/greatws"
@@ -23,6 +24,7 @@ type handler struct {
 }
 
 type echoHandler struct {
+	wg   *sync.WaitGroup
 	done chan struct{}
 }
 
@@ -31,7 +33,7 @@ func (e *echoHandler) OnOpen(c *greatws.Conn) {
 }
 
 func (e *echoHandler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
-	fmt.Printf("OnMessage: opcode:%s, msg.size:%d\n", op, len(msg))
+	// fmt.Printf("OnMessage: opcode:%s, msg.size:%d\n", op, len(msg))
 	if op == greatws.Text || op == greatws.Binary {
 		// os.WriteFile("./debug.dat", msg, 0o644)
 		// if err := c.WriteMessage(op, msg); err != nil {
@@ -45,6 +47,7 @@ func (e *echoHandler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) 
 
 func (e *echoHandler) OnClose(c *greatws.Conn, err error) {
 	fmt.Println("OnClose:", c, err)
+	// defer e.wg.Done()
 	close(e.done)
 }
 
@@ -74,7 +77,7 @@ func (h *handler) getCaseCount() int {
 	return count
 }
 
-func (h *handler) runTest(caseNo int) {
+func (h *handler) runTest(caseNo int, wg *sync.WaitGroup) {
 	done := make(chan struct{})
 	c, err := greatws.Dial(fmt.Sprintf("%s/runCase?case=%d&agent=%s", host, caseNo, agent),
 		greatws.WithClientReplyPing(),
@@ -82,7 +85,7 @@ func (h *handler) runTest(caseNo int) {
 		greatws.WithClientDecompressAndCompress(),
 		greatws.WithClientContextTakeover(),
 		greatws.WithClientMaxWindowsBits(10),
-		greatws.WithClientCallback(&echoHandler{done: done}),
+		greatws.WithClientCallback(&echoHandler{done: done, wg: wg}),
 		greatws.WithClientMultiEventLoop(h.m),
 	)
 	if err != nil {
@@ -117,9 +120,12 @@ func main() {
 
 	h.m.Start()
 	total := h.getCaseCount()
+	var wg sync.WaitGroup
+	// wg.Add(total)
 	fmt.Println("total case:", total)
 	for i := 1; i <= total; i++ {
-		h.runTest(i)
+		h.runTest(i, &wg)
 	}
+	// wg.Wait()
 	h.updateReports()
 }
