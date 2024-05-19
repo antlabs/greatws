@@ -20,12 +20,15 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/antlabs/wsutil/deflate"
 )
 
 var (
 	ErrNotFoundHijacker             = errors.New("not found Hijacker")
 	bytesHeaderUpgrade              = []byte("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ")
 	bytesHeaderExtensions           = []byte("Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n")
+	bytesSecWebSocketExtensionsKey  = []byte("Sec-WebSocket-Extensions: ")
 	bytesCRLF                       = []byte("\r\n")
 	bytesPutSecWebSocketProtocolKey = []byte("Sec-WebSocket-Protocol: ")
 	strGetSecWebSocketProtocolKey   = "Sec-WebSocket-Protocol"
@@ -68,7 +71,7 @@ func subProtocol(subProtocol string, cnf *Config) string {
 
 // https://datatracker.ietf.org/doc/html/rfc6455#section-4.2.2
 // 第5小点
-func prepareWriteResponse(r *http.Request, w io.Writer, cnf *Config) (err error) {
+func prepareWriteResponse(r *http.Request, w io.Writer, cnf *Config, pd deflate.PermessageDeflateConf) (err error) {
 	// 写入响应头
 	// 写入Sec-WebSocket-Accept key
 	if _, err = w.Write(bytesHeaderUpgrade); err != nil {
@@ -82,9 +85,15 @@ func prepareWriteResponse(r *http.Request, w io.Writer, cnf *Config) (err error)
 	}
 
 	// 给客户端回个信, 表示支持解压缩模式
-	if cnf.decompression {
-		if _, err = w.Write(bytesHeaderExtensions); err != nil {
-			return
+	if pd.Decompression {
+		if _, err = w.Write(bytesSecWebSocketExtensionsKey); err != nil {
+			return err
+		}
+		if _, err = w.Write([]byte(deflate.GenSecWebSocketExtensions(pd))); err != nil {
+			return err
+		}
+		if _, err = w.Write(bytesCRLF); err != nil {
+			return err
 		}
 	}
 

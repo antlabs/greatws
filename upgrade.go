@@ -24,6 +24,7 @@ import (
 
 	"github.com/antlabs/wsutil/bufio2"
 	"github.com/antlabs/wsutil/bytespool"
+	"github.com/antlabs/wsutil/deflate"
 )
 
 type UpgradeServer struct {
@@ -75,7 +76,7 @@ func getFdFromConn(c net.Conn) (newFd int, err error) {
 	return duplicateSocket(int(newFd))
 }
 
-func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn, err error) {
+func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (wsCon *Conn, err error) {
 	if conf.multiEventLoop == nil {
 		return nil, ErrEventLoopEmpty
 	}
@@ -102,8 +103,12 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 
 	// 是否打开解压缩
 	// 外层接收压缩, 并且客户端发送扩展过来
-	if conf.decompression {
-		conf.decompression = needDecompression(r.Header)
+	var pd deflate.PermessageDeflateConf
+	if conf.Decompression {
+		pd, err = deflate.GetConnPermessageDeflate(r.Header)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	buf := bytespool.GetUpgradeRespBytes()
@@ -113,7 +118,8 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		bytespool.PutUpgradeRespBytes(buf)
 		tmpWriter = nil
 	}()
-	if err = prepareWriteResponse(r, tmpWriter, conf); err != nil {
+	resetPermessageDeflate(&pd, conf)
+	if err = prepareWriteResponse(r, tmpWriter, conf, pd); err != nil {
 		return
 	}
 
@@ -135,11 +141,19 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (c *Conn
 		return nil, err
 	}
 
-	c = newConn(int64(fd), false, conf)
-	conf.Callback.OnOpen(c)
-	if err = conf.multiEventLoop.add(c); err != nil {
+	wsCon = newConn(int64(fd), false, conf)
+	wsCon.pd = pd
+	conf.Callback.OnOpen(wsCon)
+	if err = conf.multiEventLoop.add(wsCon); err != nil {
 		return nil, err
 	}
 
-	return c, nil
+	return wsCon, nil
+}
+
+func resetPermessageDeflate(pd *deflate.PermessageDeflateConf, conf *Config) {
+	pd.Decompression = pd.Enable && conf.Decompression
+	pd.Compression = pd.Enable && conf.Compression
+	pd.ServerContextTakeover = pd.Enable && pd.ServerContextTakeover && conf.ServerContextTakeover
+	pd.ClientContextTakeover = pd.Enable && pd.ClientContextTakeover && conf.ClientContextTakeover
 }

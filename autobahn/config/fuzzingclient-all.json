@@ -1,0 +1,47 @@
+{
+	"outdir": "./report/",
+	"servers": [
+		{
+			"agent": "non-tls-stream2",
+			"url": "ws://127.0.0.1:9001/autobahn-stream2",
+			"options": {
+				"version": 18
+			}
+		},
+		{
+			"agent": "non-tls-parseloop",
+			"url": "ws://127.0.0.1:9001/autobahn-parse-loop",
+			"options": {
+				"version": 18
+			}
+		},
+		{
+			"agent": "non-tls-taskbind",
+			"url": "ws://127.0.0.1:9001/autobahn-unstream",
+			"options": {
+				"version": 18
+			}
+		},
+		{
+			"agent": "non-tls-io",
+			"url": "ws://127.0.0.1:9001/autobahn-io",
+			"options": {
+				"version": 18
+			}
+		},
+		{
+			"agent": "non-tls-stream",
+			"url": "ws://127.0.0.1:9001/autobahn-stream",
+			"options": {
+				"version": 18
+			}
+		}
+	],
+	"cases": [
+		"*"
+	],
+	"exclude-cases": [
+		""
+	],
+	"exclude-agent-cases": {}
+}

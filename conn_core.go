@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/rand"
 	"sync/atomic"
@@ -127,9 +126,6 @@ func (c *Conn) readHeader() (sucess bool, err error) {
 		switch {
 		// 长度
 		case c.rh.PayloadLen >= 0 && c.rh.PayloadLen <= 125:
-			if c.rh.PayloadLen == 0 && !c.rh.Mask {
-				return
-			}
 		case c.rh.PayloadLen == 126:
 			// 2字节长度
 			have += 2
@@ -176,7 +172,7 @@ func (c *Conn) readHeader() (sucess bool, err error) {
 
 func (c *Conn) failRsv1(op opcode.Opcode) bool {
 	// 解压缩没有开启
-	if !c.decompression {
+	if !c.pd.Decompression {
 		return true
 	}
 
@@ -186,17 +182,6 @@ func (c *Conn) failRsv1(op opcode.Opcode) bool {
 	}
 
 	return false
-}
-
-func decode(payload []byte) ([]byte, error) {
-	r := bytes.NewReader(payload)
-	r2 := decompressNoContextTakeover(r)
-	var o bytes.Buffer
-	if _, err := io.Copy(&o, r2); err != nil {
-		return nil, err
-	}
-	r2.Close()
-	return o.Bytes(), nil
 }
 
 func (c *Conn) leftMove() {
@@ -231,7 +216,7 @@ func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 		// 1.取得旧的buf
 		oldBuf := c.rbuf
 		// 2.获取新的buf
-		newBuf := bytespool.GetBytes(int(float32(c.rh.PayloadLen+enum.MaxFrameHeaderSize) * multipletimes))
+		newBuf := bytespool.GetBytes(int(float32(c.rh.PayloadLen)*multipletimes) + enum.MaxFrameHeaderSize)
 		// 把旧的数据拷贝到新的buf里
 		copy(*newBuf, (*oldBuf)[c.rr:c.rw])
 		c.rw -= c.rr
@@ -257,9 +242,9 @@ func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 	}
 	c.lastPayloadLen = int32(c.rh.PayloadLen)
 	// 普通frame
-	newBuf := GetPayloadBytes(int(c.rh.PayloadLen))
+	newBuf := bytespool.GetBytes(int(c.rh.PayloadLen) + enum.MaxFrameHeaderSize)
 	copy(*newBuf, (*c.rbuf)[c.rr:c.rr+int(c.rh.PayloadLen)])
-	newBuf2 := (*newBuf)[:c.rh.PayloadLen]
+	newBuf2 := (*newBuf)[:c.rh.PayloadLen] //修改下len
 	f.Payload = &newBuf2
 
 	f.FrameHeader = c.rh
@@ -281,7 +266,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 	rsv1 := f.GetRsv1()
 	// 检查Rsv1 rsv2 Rfd, errsv3
 	if rsv1 && c.failRsv1(op) || f.GetRsv2() || f.GetRsv3() {
-		err = fmt.Errorf("%w:Rsv1(%t) Rsv2(%t) rsv2(%t) compression:%t", ErrRsv123, rsv1, f.GetRsv2(), f.GetRsv3(), c.compression)
+		err = fmt.Errorf("%w:Rsv1(%t) Rsv2(%t) rsv2(%t) compression:%t", ErrRsv123, rsv1, f.GetRsv2(), f.GetRsv3(), c.pd.Compression)
 		return c.writeErrAndOnClose(ProtocolError, err)
 	}
 
@@ -301,7 +286,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				c.fragmentFramePayload = f.Payload
 			} else {
 				*c.fragmentFramePayload = append(*c.fragmentFramePayload, *f.Payload...)
-				PutPayloadBytes(f.Payload)
+				bytespool.PutBytes(f.Payload)
 			}
 
 			f.Payload = nil
@@ -311,14 +296,14 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				// 解压缩
 				fragmentFrameHeader := c.fragmentFrameHeader
 				fragmentFramePayload := c.fragmentFramePayload
-				decompression := c.decompression
+				decompression := c.pd.Decompression
 				c.fragmentFrameHeader = nil
 				c.fragmentFramePayload = nil
 
 				// 进入业务协程执行
 				c.addTask(func() (exit bool) {
 					if fragmentFrameHeader.GetRsv1() && decompression {
-						tempBuf, err := decode(*fragmentFramePayload)
+						tempBuf, err := c.decode(fragmentFramePayload)
 						if err != nil {
 							// return err
 							c.closeWithLock(err)
@@ -326,8 +311,8 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 						}
 
 						// 回收这块内存到pool里面
-						PutPayloadBytes(fragmentFramePayload)
-						fragmentFramePayload = &tempBuf
+						bytespool.PutBytes(fragmentFramePayload)
+						fragmentFramePayload = tempBuf
 					}
 					// 这里的check按道理应该放到f.Fin前面， 会更符合rfc的标准, 前提是c.utf8Check修改成流式解析
 					// TODO c.utf8Check 修改成流式解析
@@ -341,7 +326,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 					}
 
 					c.Callback.OnMessage(c, fragmentFrameHeader.Opcode, *fragmentFramePayload)
-					PutPayloadBytes(fragmentFramePayload)
+					bytespool.PutBytes(fragmentFramePayload)
 					return false
 				})
 			}
@@ -362,6 +347,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				mask.Mask(*f.Payload, maskKey)
 			}
 			if c.fragmentFramePayload == nil {
+				// greatws和quickws，这时的f.Payload是单独分配出来的，所以转移下变量的所有权就行
 				c.fragmentFramePayload = f.Payload
 				f.Payload = nil
 			}
@@ -372,7 +358,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		}
 
 		// var payloadPtr atomic.Pointer[[]byte]
-		decompression := c.decompression
+		decompression := c.pd.Decompression
 		payload := f.Payload
 		f.Payload = nil
 		// payloadPtr.Store(f.Payload)
@@ -404,7 +390,8 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 
 		if f.Opcode == Close {
 			if len(*f.Payload) == 0 {
-				return c.writeErrAndOnClose(NormalClosure, ErrClosePayloadTooSmall)
+				c.writeErrAndOnClose(NormalClosure, &CloseErrMsg{Code: NormalClosure})
+				return nil
 			}
 
 			if len(*f.Payload) < 2 {
@@ -469,7 +456,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 
 func (c *Conn) processPing(f frame.Frame2, payload *[]byte) bool {
 	c.Callback.OnMessage(c, f.Opcode, *payload)
-	PutPayloadBytes(payload)
+	bytespool.PutBytes(payload)
 	return false
 }
 
@@ -479,20 +466,20 @@ func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, d
 	if needMask {
 		mask.Mask(*payload, maskKey)
 	}
-	decodePayload := *payload
+	decodePayload := payload
 	if rsv1 && decompression {
 		// 不分段的解压缩
-		decodePayload, err = decode(*payload)
+		decodePayload, err = c.decode(payload)
 		if err != nil {
 			c.closeWithLock(err)
-			PutPayloadBytes(payload)
+			bytespool.PutBytes(payload)
 			return false
 		}
-		defer PutPayloadBytes(&decodePayload)
+		defer bytespool.PutBytes(decodePayload)
 	}
 
 	if f.Opcode == opcode.Text {
-		if !c.utf8Check(decodePayload) {
+		if !c.utf8Check(*decodePayload) {
 			c.closeWithLock(nil)
 			c.onCloseOnce.Do(&c.mu2, func() {
 				c.Callback.OnClose(c, ErrTextNotUTF8)
@@ -501,8 +488,8 @@ func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, d
 		}
 	}
 
-	c.Callback.OnMessage(c, f.Opcode, decodePayload)
-	PutPayloadBytes(payload)
+	c.Callback.OnMessage(c, f.Opcode, *decodePayload)
+	bytespool.PutBytes(payload)
 	return false
 }
 
@@ -518,12 +505,6 @@ func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
 	}
 
 	return userErr
-}
-
-// TODO:
-func (c *Conn) SetWriteDeadline(t time.Time) error {
-	// return c.c.SetWriteDeadline(t)
-	return nil
 }
 
 func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
@@ -570,18 +551,15 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 		}
 	}
 
-	rsv1 := c.compression && (op == opcode.Text || op == opcode.Binary)
+	rsv1 := c.pd.Compression && (op == opcode.Text || op == opcode.Binary)
 	if rsv1 {
-		var out wrapBuffer
-		w := compressNoContextTakeover(&out, defaultCompressionLevel)
-		if _, err = io.Copy(w, bytes.NewReader(writeBuf)); err != nil {
-			return
+		writeBufPtr, err := c.encoode(&writeBuf)
+		if err != nil {
+			return err
 		}
 
-		if err = w.Close(); err != nil {
-			return
-		}
-		writeBuf = out.Bytes()
+		defer bytespool.PutBytes(writeBufPtr)
+		writeBuf = *writeBufPtr
 	}
 
 	maskValue := uint32(0)
@@ -610,18 +588,14 @@ func (c *Conn) writeFragment(op Opcode, writeBuf []byte, maxFragment int /*单�
 		}
 	}
 
-	rsv1 := c.compression && (op == opcode.Text || op == opcode.Binary)
+	rsv1 := c.pd.Compression && (op == opcode.Text || op == opcode.Binary)
 	if rsv1 {
-		var out wrapBuffer
-		w := compressNoContextTakeover(&out, defaultCompressionLevel)
-		if _, err = io.Copy(w, bytes.NewReader(writeBuf)); err != nil {
-			return
+		writeBufPtr, err := c.encoode(&writeBuf)
+		if err != nil {
+			return err
 		}
-
-		if err = w.Close(); err != nil {
-			return
-		}
-		writeBuf = out.Bytes()
+		defer bytespool.PutBytes(writeBufPtr)
+		writeBuf = *writeBufPtr
 	}
 
 	// f.Opcode = op

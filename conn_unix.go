@@ -29,6 +29,7 @@ import (
 
 	"github.com/antlabs/greatws/task/driver"
 	"github.com/antlabs/wsutil/bytespool"
+	"github.com/antlabs/wsutil/deflate"
 	"github.com/antlabs/wsutil/enum"
 	"golang.org/x/sys/unix"
 )
@@ -60,15 +61,19 @@ var (
 	ErrWriteTimeout = errors.New("write timeout")
 )
 
+// Conn大小改变历史，增加上下文接管，从<160到184
 type Conn struct {
 	conn
 
-	mu      sync.Mutex          // 锁
-	*Config                     // 配置
-	parent  *EventLoop          // event loop
-	task    driver.TaskExecutor // 任务，该任务会进协程池里面执行
-	rtime   *time.Timer         // 控制读超时
-	wtime   *time.Timer         // 控制写超时
+	pd      deflate.PermessageDeflateConf      // 上下文接管的控制参数, 由于每个comm的配置都可能不一样，所以需要放在Conn里面
+	mu      sync.Mutex                         // 锁
+	*Config                                    // 配置
+	deCtx   *deflate.DeCompressContextTakeover // 解压缩上下文
+	enCtx   *deflate.CompressContextTakeover   // 压缩上下文
+	parent  *EventLoop                         // event loop
+	task    driver.TaskExecutor                // 任务，该任务会进协程池里面执行
+	rtime   *time.Timer                        // 控制读超时
+	wtime   *time.Timer                        // 控制写超时
 
 	// mu2由 onCloseOnce使用, 这里使用新锁只是为了简化维护的难度
 	// 也可以共用mu，区别 优点:节约内存，缺点:容易出现死锁和需要精心调试代码
@@ -99,6 +104,11 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 // 这是一个空函数，兼容下quickws的接口
 func (c *Conn) StartReadLoop() {
 
+}
+
+// 这是一个空函数，兼容下quickws的接口
+func (c *Conn) ReadLoop() error {
+	return nil
 }
 
 func duplicateSocket(socketFD int) (int, error) {
@@ -188,7 +198,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 			*c.wbuf = append(*c.wbuf, b...)
 			c.getLogger().Debug("write message", "wbuf_size", len(*c.wbuf), "newbuf.size", len(b))
 			if old != c.wbuf {
-				PutPayloadBytes(old)
+				bytespool.PutBytes(old)
 			}
 
 			return curN, nil
@@ -203,10 +213,11 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	if total != len(b) {
 		// 记录写入的数据，如果有写入，分配一个新的缓冲区
 		if total > 0 && ws == writeEagain {
-			newBuf := GetPayloadBytes(len(old) - total)
+			newBuf := bytespool.GetBytes(len(old) - total + enum.MaxFrameHeaderSize)
+			*newBuf = (*newBuf)[:len(old)-total]
 			copy(*newBuf, (old)[total:])
 			if c.wbuf != nil {
-				PutPayloadBytes(c.wbuf)
+				bytespool.PutBytes(c.wbuf)
 			}
 			c.wbuf = newBuf
 		}
@@ -279,7 +290,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 
 		if total == len(*old) {
 
-			PutPayloadBytes(old)
+			bytespool.PutBytes(old)
 			c.wbuf = nil
 			if err := c.parent.delWrite(c); err != nil {
 				return err
@@ -288,13 +299,14 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 
 			// 记录写入的数据，如果有写入，分配一个新的缓冲区
 			if total > 0 && ws == writeEagain {
-				newBuf := GetPayloadBytes(len(*old) - total)
+				newBuf := bytespool.GetBytes(len(*old) - total + enum.MaxFrameHeaderSize)
+				*newBuf = (*newBuf)[:len(*old)-total]
 				if len(*newBuf) < len(*old)-total {
 					panic("newBuf is too small")
 				}
 				copy(*newBuf, (*old)[total:])
 				if c.wbuf != nil {
-					PutPayloadBytes(c.wbuf)
+					bytespool.PutBytes(c.wbuf)
 				}
 				c.wbuf = newBuf
 			}
@@ -333,7 +345,7 @@ func (c *Conn) processWebsocketFrame() (err error) {
 	// 1. 处理frame header
 	// if !c.useIoUring() {
 	if c.rbuf == nil {
-		c.rbuf = bytespool.GetBytes(int(float32(c.rh.PayloadLen+enum.MaxFrameHeaderSize) * c.windowsMultipleTimesPayloadSize))
+		c.rbuf = bytespool.GetBytes(int(float32(c.rh.PayloadLen)*c.windowsMultipleTimesPayloadSize) + enum.MaxFrameHeaderSize)
 	}
 
 	if c.readTimeout > 0 {
@@ -421,6 +433,39 @@ func (c *Conn) processWebsocketFrame() (err error) {
 		}
 	}
 
+success:
+fail:
+	// 回收read buffer至内存池中
+	if err != nil || c.rbuf != nil && c.rr == c.rw {
+		c.rr, c.rw = 0, 0
+		bytespool.PutBytes(c.rbuf)
+		c.rbuf = nil
+	}
+	return err
+}
+
+func (c *Conn) processHeaderPayloadCallback() (err error) {
+	var success bool
+	for i := 0; ; i++ {
+		success, err = c.readHeader()
+		if err != nil {
+			err = fmt.Errorf("read header err: %w", err)
+			goto fail
+		}
+
+		if !success {
+			goto success
+		}
+		success, err = c.readPayloadAndCallback()
+		if err != nil {
+			err = fmt.Errorf("read payload err: %w", err)
+			goto fail
+		}
+
+		if !success {
+			goto success
+		}
+	}
 success:
 fail:
 	// 回收read buffer至内存池中

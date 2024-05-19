@@ -17,15 +17,15 @@ package greatws
 import (
 	"time"
 
+	"github.com/antlabs/wsutil/deflate"
 	"github.com/antlabs/wsutil/enum"
 )
 
 type Config struct {
 	Callback
+	deflate.PermessageDeflateConf                     // 静态配置, 从WithXXX函数中获取
 	tcpNoDelay                      bool              //TODO: 加下这个功能
 	replyPing                       bool              // 开启自动回复
-	decompression                   bool              // 开启解压缩功能
-	compression                     bool              // 开启压缩功能
 	ignorePong                      bool              // 忽略pong消息
 	disableBufioClearHack           bool              // 关闭bufio的clear hack优化
 	utf8Check                       func([]byte) bool // utf8检查
@@ -37,6 +37,7 @@ type Config struct {
 	subProtocols                    []string          // 设置支持的子协议
 	multiEventLoop                  *MultiEventLoop   // 事件循环
 	runInGoTask                     string            // 运行业务OnMessage的策略, 现在greatws集成三种OnMessage运行模式，分别是io, task
+	readMaxMessage                  int64             // 最大消息大小
 }
 
 // func (c *Config) useIoUring() bool {
