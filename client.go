@@ -24,7 +24,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/deflate"
+	"github.com/antlabs/wsutil/enum"
 	"github.com/antlabs/wsutil/hostname"
 )
 
@@ -256,6 +258,20 @@ func (d *DialOption) Dial() (wsCon *Conn, err error) {
 	wsCon = newConn(int64(fd), true, &d.Config)
 	wsCon.pd = pd
 	d.Callback.OnOpen(wsCon)
+	if br.Buffered() > 0 {
+		b, err := br.Peek(br.Buffered())
+		if err != nil {
+			return nil, err
+		}
+
+		wsCon.rbuf = bytespool.GetBytes(len(b) + enum.MaxFrameHeaderSize)
+
+		copy(*wsCon.rbuf, b)
+		wsCon.rw = len(b)
+		if err = wsCon.processHeaderPayloadCallback(); err != nil {
+			return nil, err
+		}
+	}
 	if err = d.Config.multiEventLoop.add(wsCon); err != nil {
 		return nil, err
 	}

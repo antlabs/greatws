@@ -54,12 +54,12 @@ func (h *handler) getCaseCount() int {
 	c, err := greatws.Dial(fmt.Sprintf("%s/getCaseCount", host), greatws.WithClientMultiEventLoop(h.m), greatws.WithClientOnMessageFunc(func() greatws.OnMessageFunc {
 		return func(c *greatws.Conn, op greatws.Opcode, msg []byte) {
 			var err error
-			fmt.Printf("msg(%s)\n", msg)
 			count, err = strconv.Atoi(string(msg))
 			if err != nil {
 				panic(err)
 			}
-			<-done
+			done <- true
+			fmt.Printf("msg(%s)\n", msg)
 			c.Close()
 		}
 	}()))

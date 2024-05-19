@@ -444,6 +444,39 @@ fail:
 	return err
 }
 
+func (c *Conn) processHeaderPayloadCallback() (err error) {
+	var success bool
+	for i := 0; ; i++ {
+		success, err = c.readHeader()
+		if err != nil {
+			err = fmt.Errorf("read header err: %w", err)
+			goto fail
+		}
+
+		if !success {
+			goto success
+		}
+		success, err = c.readPayloadAndCallback()
+		if err != nil {
+			err = fmt.Errorf("read payload err: %w", err)
+			goto fail
+		}
+
+		if !success {
+			goto success
+		}
+	}
+success:
+fail:
+	// 回收read buffer至内存池中
+	if err != nil || c.rbuf != nil && c.rr == c.rw {
+		c.rr, c.rw = 0, 0
+		bytespool.PutBytes(c.rbuf)
+		c.rbuf = nil
+	}
+	return err
+}
+
 func (c *Conn) setDeadlineInner(t **time.Timer, tm time.Time, err error) error {
 	if t == nil {
 		return nil
