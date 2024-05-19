@@ -118,7 +118,8 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (wsCon *
 		bytespool.PutUpgradeRespBytes(buf)
 		tmpWriter = nil
 	}()
-	if err = prepareWriteResponse(r, tmpWriter, conf); err != nil {
+	resetPermessageDeflate(&pd, conf)
+	if err = prepareWriteResponse(r, tmpWriter, conf, pd); err != nil {
 		return
 	}
 
@@ -148,4 +149,11 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (wsCon *
 	}
 
 	return wsCon, nil
+}
+
+func resetPermessageDeflate(pd *deflate.PermessageDeflateConf, conf *Config) {
+	pd.Decompression = pd.Enable && conf.Decompression
+	pd.Compression = pd.Enable && conf.Compression
+	pd.ServerContextTakeover = pd.Enable && pd.ServerContextTakeover && conf.ServerContextTakeover
+	pd.ClientContextTakeover = pd.Enable && pd.ClientContextTakeover && conf.ClientContextTakeover
 }

@@ -112,7 +112,6 @@ func (h *handler) echoRunStream(w http.ResponseWriter, r *http.Request) {
 		greatws.WithServerEnableUTF8Check(),
 		greatws.WithServerReadTimeout(5 * time.Second),
 		greatws.WithServerMultiEventLoop(h.m),
-		greatws.WithServerCallbackInEventLoop(),
 	}
 
 	if *runInEventLoop {
@@ -161,7 +160,6 @@ func (h *handler) echoRunInParseLoop(w http.ResponseWriter, r *http.Request) {
 		greatws.WithServerReadTimeout(5 * time.Second),
 		greatws.WithServerMultiEventLoop(h.parseLoop),
 		greatws.WithServerStreamMode(),
-		greatws.WithServerCallbackInEventLoop(),
 	}
 
 	if *runInEventLoop {
@@ -174,6 +172,81 @@ func (h *handler) echoRunInParseLoop(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = c
 }
+
+// 1.测试不接管上下文，只解压
+func (h *handler) echoNoContextDecompression(w http.ResponseWriter, r *http.Request) {
+	c, err := greatws.Upgrade(w, r,
+		greatws.WithServerReplyPing(),
+		greatws.WithServerDecompression(),
+		greatws.WithServerIgnorePong(),
+		greatws.WithServerCallback(&echoHandler{}),
+		greatws.WithServerEnableUTF8Check(),
+		greatws.WithServerMultiEventLoop(h.m),
+	)
+	if err != nil {
+		fmt.Println("Upgrade fail:", err)
+		return
+	}
+
+	c.ReadLoop()
+}
+
+// 2.测试不接管上下文，压缩和解压
+func (h *handler) echoNoContextDecompressionAndCompression(w http.ResponseWriter, r *http.Request) {
+	c, err := greatws.Upgrade(w, r,
+		greatws.WithServerReplyPing(),
+		greatws.WithServerDecompressAndCompress(),
+		greatws.WithServerIgnorePong(),
+		greatws.WithServerCallback(&echoHandler{}),
+		greatws.WithServerEnableUTF8Check(),
+		greatws.WithServerMultiEventLoop(h.m),
+	)
+	if err != nil {
+		fmt.Println("Upgrade fail:", err)
+		return
+	}
+
+	c.ReadLoop()
+}
+
+// 3.测试接管上下文，解压
+func (h *handler) echoContextTakeoverDecompression(w http.ResponseWriter, r *http.Request) {
+	c, err := greatws.Upgrade(w, r,
+		greatws.WithServerReplyPing(),
+		greatws.WithServerDecompression(),
+		greatws.WithServerIgnorePong(),
+		greatws.WithServerContextTakeover(),
+		greatws.WithServerCallback(&echoHandler{}),
+		greatws.WithServerEnableUTF8Check(),
+		greatws.WithServerMultiEventLoop(h.m),
+	)
+	if err != nil {
+		fmt.Println("Upgrade fail:", err)
+		return
+	}
+
+	c.ReadLoop()
+}
+
+// 4.测试接管上下文，压缩/解压缩
+func (h *handler) echoContextTakeoverDecompressionAndCompression(w http.ResponseWriter, r *http.Request) {
+	c, err := greatws.Upgrade(w, r,
+		greatws.WithServerReplyPing(),
+		greatws.WithServerDecompressAndCompress(),
+		greatws.WithServerIgnorePong(),
+		greatws.WithServerContextTakeover(),
+		greatws.WithServerCallback(&echoHandler{}),
+		greatws.WithServerEnableUTF8Check(),
+		greatws.WithServerMultiEventLoop(h.m),
+	)
+	if err != nil {
+		fmt.Println("Upgrade fail:", err)
+		return
+	}
+
+	c.ReadLoop()
+}
+
 func main() {
 	flag.Parse()
 
@@ -220,8 +293,12 @@ func main() {
 	mux.HandleFunc("/autobahn-stream", h.echoRunStream)
 	mux.HandleFunc("/autobahn-stream2", h.echoRunStream2)
 	mux.HandleFunc("/autobahn-parse-loop", h.echoRunInParseLoop)
+	mux.HandleFunc("/no-context-takeover-decompression", h.echoNoContextDecompression)
+	mux.HandleFunc("/no-context-takeover-decompression-and-compression", h.echoNoContextDecompressionAndCompression)
+	mux.HandleFunc("/context-takeover-decompression", h.echoContextTakeoverDecompression)
+	mux.HandleFunc("/context-takeover-decompression-and-compression", h.echoContextTakeoverDecompressionAndCompression)
 
-	rawTCP, err := net.Listen("tcp", ":9001")
+	rawTCP, err := net.Listen("tcp", ":9004")
 	if err != nil {
 		fmt.Println("Listen fail:", err)
 		return
@@ -240,7 +317,7 @@ func main() {
 		InsecureSkipVerify: true,
 	}
 
-	lnTLS, err := tls.Listen("tcp", "localhost:9002", tlsConfig)
+	lnTLS, err := tls.Listen("tcp", "localhost:9005", tlsConfig)
 	if err != nil {
 		panic(err)
 	}

@@ -106,6 +106,11 @@ func (c *Conn) StartReadLoop() {
 
 }
 
+// 这是一个空函数，兼容下quickws的接口
+func (c *Conn) ReadLoop() {
+
+}
+
 func duplicateSocket(socketFD int) (int, error) {
 	return unix.Dup(socketFD)
 }

@@ -350,6 +350,7 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				mask.Mask(*f.Payload, maskKey)
 			}
 			if c.fragmentFramePayload == nil {
+				// greatws和quickws，这时的f.Payload是单独分配出来的，所以转移下变量的所有权就行
 				c.fragmentFramePayload = f.Payload
 				f.Payload = nil
 			}
