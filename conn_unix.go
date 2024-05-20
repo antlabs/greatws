@@ -31,6 +31,7 @@ import (
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/deflate"
 	"github.com/antlabs/wsutil/enum"
+	"github.com/antlabs/wsutil/myonce"
 	"golang.org/x/sys/unix"
 )
 
@@ -79,8 +80,8 @@ type Conn struct {
 	// 也可以共用mu，区别 优点:节约内存，缺点:容易出现死锁和需要精心调试代码
 	// 这里选择维护简单
 	mu2         sync.Mutex
-	onCloseOnce myOnce // 保证只调用一次OnClose函数
-	closed      int32  // 是否关闭
+	onCloseOnce myonce.MyOnce // 保证只调用一次OnClose函数
+	closed      int32         // 是否关闭
 }
 
 func newConn(fd int64, client bool, conf *Config) *Conn {
