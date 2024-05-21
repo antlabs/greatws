@@ -39,9 +39,14 @@
 		* [配置握手时的超时时间](#配置握手时的超时时间)
 		* [配置自动回复ping消息](#配置自动回复ping消息)
 		* [配置客户端最大读取message](#配置客户端最大读message)
+		* [配置客户端压缩和解压消息](#配置客户端压缩和解压消息)
+		* [配置客户端上下文接管](#配置客户端上下文接管)
 	* [服务配置参数](#服务端配置)
 		* [配置服务自动回复ping消息](#配置服务自动回复ping消息)
 		* [配置服务端最大读取message](#配置服务端最大读message)
+		* [配置服务端解压消息](#配置服务端解压消息)
+		* [配置服务端压缩和解压消息](#配置服务端压缩和解压消息)
+		* [配置服务端上下文接管](#配置服务端上下文接管)
 # 例子-服务端
 ### net http升级到websocket服务端
 ```go
@@ -248,6 +253,20 @@ func main() {
 	greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientReadMaxMessage(1024))
 ```
 [返回](#内容)
+#### 配置客户端压缩和解压消息
+```go
+func main() {
+	greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientDecompressAndCompress())
+}
+```
+[返回](#内容)
+#### 配置客户端上下文接管
+```go
+func main() {
+	greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientContextTakeover())
+}
+```
+[返回](#内容)
 ### 服务端配置参数
 #### 配置服务自动回复ping消息
 ```go
@@ -266,6 +285,41 @@ func main() {
 func main() {
 	// 配置服务端读取客户端最大的包是1024大小, 超过该值报错
 	c, err := greatws.Upgrade(w, r, greatws.WithServerReadMaxMessage(1024))
+        if err != nil {
+                fmt.Println("Upgrade fail:", err)
+                return
+        }   
+}
+```
+[返回](#内容)
+#### 配置服务端解压消息
+```go
+func main() {
+	// 配置服务端读取客户端最大的包是1024大小, 超过该值报错
+	c, err := greatws.Upgrade(w, r, greatws.WithServerDecompression())
+        if err != nil {
+                fmt.Println("Upgrade fail:", err)
+                return
+        }   
+}
+```
+[返回](#内容)
+#### 配置服务端压缩和解压消息
+```go
+func main() {
+	c, err := greatws.Upgrade(w, r, greatws.WithServerDecompressAndCompress())
+        if err != nil {
+                fmt.Println("Upgrade fail:", err)
+                return
+        }   
+}
+```
+[返回](#内容)
+#### 配置服务端上下文接管
+```go
+func main() {
+	// 配置服务端读取客户端最大的包是1024大小, 超过该值报错
+	c, err := greatws.Upgrade(w, r, greatws.WithServerContextTakeover)
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
