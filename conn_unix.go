@@ -442,6 +442,11 @@ fail:
 		bytespool.PutBytes(c.rbuf)
 		c.rbuf = nil
 	}
+
+	if err != nil {
+		// 如果是status code类型，要回写符合rfc的close包
+		c.writeAndMaybeOnClose(err)
+	}
 	return err
 }
 

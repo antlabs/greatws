@@ -17,6 +17,7 @@ package greatws
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -157,6 +158,10 @@ func (c *Conn) readHeader() (sucess bool, err error) {
 		case 127:
 			c.rh.PayloadLen = int64(binary.BigEndian.Uint64(head[:8]))
 			head = head[8:]
+		}
+
+		if c.readMaxMessage > 0 && c.rh.PayloadLen > c.readMaxMessage {
+			return false, TooBigMessage
 		}
 
 		if c.rh.Mask {
@@ -493,14 +498,29 @@ func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, d
 	return false
 }
 
+func (c *Conn) writeAndMaybeOnClose(err error) error {
+	var sc *StatusCode
+	defer func() {
+		c.onCloseOnce.Do(&c.mu2, func() {
+			c.Callback.OnClose(c, err)
+		})
+	}()
+
+	if errors.As(err, &sc) {
+		if err := c.WriteTimeout(opcode.Close, sc.toBytes(), 2*time.Second); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
 	defer func() {
 		c.onCloseOnce.Do(&c.mu2, func() {
 			c.Callback.OnClose(c, userErr)
 		})
 	}()
-
-	if err := c.WriteTimeout(opcode.Close, statusCodeToBytes(code), 2*time.Second); err != nil {
+	if err := c.WriteTimeout(opcode.Close, code.toBytes(), 2*time.Second); err != nil {
 		return err
 	}
 
@@ -638,7 +658,7 @@ func (c *Conn) WriteControl(op Opcode, data []byte) (err error) {
 }
 
 func (c *Conn) WriteCloseTimeout(sc StatusCode, t time.Duration) (err error) {
-	buf := statusCodeToBytes(sc)
+	buf := sc.toBytes()
 	return c.WriteTimeout(opcode.Close, buf, t)
 }
 
