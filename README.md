@@ -28,35 +28,39 @@
 早期阶段，暂时不建议生产使用
 
 ## 内容
+
 * [安装](#Installation)
 * [例子](#example)
-	* [net/http升级到websocket服务端](#net-http升级到websocket服务端)
-	* [gin升级到websocket服务端](#gin升级到websocket服务端)
-	* [客户端](#客户端)
+ 	* [net/http升级到websocket服务端](#net-http升级到websocket服务端)
+ 	* [gin升级到websocket服务端](#gin升级到websocket服务端)
+ 	* [客户端](#客户端)
 * [配置函数](#配置函数)
-	* [客户端配置参数](#客户端配置)
-		* [配置header](#配置header)
-		* [配置握手时的超时时间](#配置握手时的超时时间)
-		* [配置自动回复ping消息](#配置自动回复ping消息)
-		* [配置客户端最大读取message](#配置客户端最大读message)
-		* [配置客户端压缩和解压消息](#配置客户端压缩和解压消息)
-		* [配置客户端上下文接管](#配置客户端上下文接管)
-	* [服务配置参数](#服务端配置)
-		* [配置服务自动回复ping消息](#配置服务自动回复ping消息)
-		* [配置服务端最大读取message](#配置服务端最大读message)
-		* [配置服务端解压消息](#配置服务端解压消息)
-		* [配置服务端压缩和解压消息](#配置服务端压缩和解压消息)
-		* [配置服务端上下文接管](#配置服务端上下文接管)
+ 	* [客户端配置参数](#客户端配置)
+  		* [配置header](#配置header)
+  		* [配置握手时的超时时间](#配置握手时的超时时间)
+  		* [配置自动回复ping消息](#配置自动回复ping消息)
+  		* [配置客户端最大读取message](#配置客户端最大读message)
+  		* [配置客户端压缩和解压消息](#配置客户端压缩和解压消息)
+  		* [配置客户端上下文接管](#配置客户端上下文接管)
+ 	* [服务配置参数](#服务端配置)
+  		* [配置服务自动回复ping消息](#配置服务自动回复ping消息)
+  		* [配置服务端最大读取message](#配置服务端最大读message)
+  		* [配置服务端解压消息](#配置服务端解压消息)
+  		* [配置服务端压缩和解压消息](#配置服务端压缩和解压消息)
+  		* [配置服务端上下文接管](#配置服务端上下文接管)
+
 # 例子-服务端
+
 ### net http升级到websocket服务端
+
 ```go
 
 package main
 
 import (
-	"fmt"
+ "fmt"
 
-	"github.com/antlabs/greatws"
+ "github.com/antlabs/greatws"
 )
 
 type echoHandler struct{}
@@ -121,17 +125,19 @@ func main() {
  log.Println("non-tls server exit:", http.Serve(rawTCP, mux))
 }
 ```
+
 [返回](#内容)
 
 ### gin升级到websocket服务端
+
 ```go
 package main
 
 import (
-	"fmt"
+ "fmt"
 
-	"github.com/antlabs/greatws"
-	"github.com/gin-gonic/gin"
+ "github.com/antlabs/greatws"
+ "github.com/gin-gonic/gin"
 )
 
 type handler struct{
@@ -139,194 +145,232 @@ type handler struct{
 }
 
 func (h *handler) OnOpen(c *greatws.Conn) {
-	fmt.Printf("服务端收到一个新的连接")
+ fmt.Printf("服务端收到一个新的连接")
 }
 
 func (h *handler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
-	// 如果msg的生命周期不是在OnMessage中结束，需要拷贝一份
-	// newMsg := make([]byte, len(msg))
-	// copy(newMsg, msg)
+ // 如果msg的生命周期不是在OnMessage中结束，需要拷贝一份
+ // newMsg := make([]byte, len(msg))
+ // copy(newMsg, msg)
 
-	fmt.Printf("收到客户端消息:%s\n", msg)
-	c.WriteMessage(op, msg)
-	// os.Stdout.Write(msg)
+ fmt.Printf("收到客户端消息:%s\n", msg)
+ c.WriteMessage(op, msg)
+ // os.Stdout.Write(msg)
 }
 
 func (h *handler) OnClose(c *greatws.Conn, err error) {
-	fmt.Printf("服务端连接关闭:%v\n", err)
+ fmt.Printf("服务端连接关闭:%v\n", err)
 }
 
 func main() {
-	r := gin.Default()
-	var h handler
-	h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(256), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
-	h.m.Start()
+ r := gin.Default()
+ var h handler
+ h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(256), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+ h.m.Start()
 
-	r.GET("/", func(c *gin.Context) {
-		con, err := greatws.Upgrade(c.Writer, c.Request, greatws.WithServerCallback(h.m), greatws.WithServerMultiEventLoop(h.m))
-		if err != nil {
-			return
-		}
-		con.StartReadLoop()
-	})
-	r.Run()
+ r.GET("/", func(c *gin.Context) {
+  con, err := greatws.Upgrade(c.Writer, c.Request, greatws.WithServerCallback(h.m), greatws.WithServerMultiEventLoop(h.m))
+  if err != nil {
+   return
+  }
+  con.StartReadLoop()
+ })
+ r.Run()
 }
 ```
+
 [返回](#内容)
 
 ### 客户端
+
 ```go
 package main
 
 import (
-	"fmt"
-	"time"
+ "fmt"
+ "time"
 
-	"github.com/antlabs/greatws"
+ "github.com/antlabs/greatws"
 )
 
 var m *greatws.MultiEventLoop
 type handler struct{}
 
 func (h *handler) OnOpen(c *greatws.Conn) {
-	fmt.Printf("客户端连接成功\n")
+ fmt.Printf("客户端连接成功\n")
 }
 
 func (h *handler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
-	// 如果msg的生命周期不是在OnMessage中结束，需要拷贝一份
-	// newMsg := make([]byte, len(msg))
-	// copy(newMsg, msg)
+ // 如果msg的生命周期不是在OnMessage中结束，需要拷贝一份
+ // newMsg := make([]byte, len(msg))
+ // copy(newMsg, msg)
 
-	fmt.Printf("收到服务端消息:%s\n", msg)
-	c.WriteMessage(op, msg)
-	time.Sleep(time.Second)
+ fmt.Printf("收到服务端消息:%s\n", msg)
+ c.WriteMessage(op, msg)
+ time.Sleep(time.Second)
 }
 
 func (h *handler) OnClose(c *greatws.Conn, err error) {
-	fmt.Printf("客户端端连接关闭:%v\n", err)
+ fmt.Printf("客户端端连接关闭:%v\n", err)
 }
 
 func main() {
-	m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(256), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
-	m.Start()
-	c, err := greatws.Dial("ws://127.0.0.1:8080/", greatws.WithClientCallback(&handler{}), greatws.WithServerMultiEventLoop(h.m))
-	if err != nil {
-		fmt.Printf("连接失败:%v\n", err)
-		return
-	}
+ m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(256), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+ m.Start()
+ c, err := greatws.Dial("ws://127.0.0.1:8080/", greatws.WithClientCallback(&handler{}), greatws.WithServerMultiEventLoop(h.m))
+ if err != nil {
+  fmt.Printf("连接失败:%v\n", err)
+  return
+ }
 
-	c.WriteMessage(opcode.Text, []byte("hello"))
-	time.Sleep(time.Hour) //demo里面等待下OnMessage 看下执行效果，因为greatws.Dial和WriteMessage都是非阻塞的函数调用，不会卡住主go程
+ c.WriteMessage(opcode.Text, []byte("hello"))
+ time.Sleep(time.Hour) //demo里面等待下OnMessage 看下执行效果，因为greatws.Dial和WriteMessage都是非阻塞的函数调用，不会卡住主go程
 }
 ```
+
 [返回](#内容)
+
 ## 配置函数
+
 ### 客户端配置参数
+
 #### 配置header
+
 ```go
 func main() {
-	greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientHTTPHeader(http.Header{
-		"h1": "v1",
-		"h2":"v2", 
-	}))
+ greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientHTTPHeader(http.Header{
+  "h1": "v1",
+  "h2":"v2", 
+ }))
 }
 ```
+
 [返回](#内容)
+
 #### 配置握手时的超时时间
+
 ```go
 func main() {
-	greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientDialTimeout(2 * time.Second))
+ greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientDialTimeout(2 * time.Second))
 }
 ```
+
 [返回](#内容)
 
 #### 配置自动回复ping消息
+
 ```go
 func main() {
-	greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientReplyPing())
+ greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientReplyPing())
 }
 ```
+
 [返回](#内容)
+
 #### 配置客户端最大读message
+
 ```go
-	// 限制客户端最大服务返回返回的最大包是1024，如果超过这个大小报错
-	greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientReadMaxMessage(1024))
+ // 限制客户端最大服务返回返回的最大包是1024，如果超过这个大小报错
+ greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientReadMaxMessage(1024))
 ```
+
 [返回](#内容)
+
 #### 配置客户端压缩和解压消息
+
 ```go
 func main() {
-	greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientDecompressAndCompress())
+ greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientDecompressAndCompress())
 }
 ```
+
 [返回](#内容)
+
 #### 配置客户端上下文接管
+
 ```go
 func main() {
-	greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientContextTakeover())
+ greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientContextTakeover())
 }
 ```
+
 [返回](#内容)
+
 ### 服务端配置参数
+
 #### 配置服务自动回复ping消息
+
 ```go
 func main() {
-	c, err := greatws.Upgrade(w, r, greatws.WithServerReplyPing())
+ c, err := greatws.Upgrade(w, r, greatws.WithServerReplyPing())
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
         }   
 }
 ```
+
 [返回](#内容)
 
 #### 配置服务端最大读message
+
 ```go
 func main() {
-	// 配置服务端读取客户端最大的包是1024大小, 超过该值报错
-	c, err := greatws.Upgrade(w, r, greatws.WithServerReadMaxMessage(1024))
+ // 配置服务端读取客户端最大的包是1024大小, 超过该值报错
+ c, err := greatws.Upgrade(w, r, greatws.WithServerReadMaxMessage(1024))
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
         }   
 }
 ```
+
 [返回](#内容)
+
 #### 配置服务端解压消息
+
 ```go
 func main() {
-	// 配置服务端读取客户端最大的包是1024大小, 超过该值报错
-	c, err := greatws.Upgrade(w, r, greatws.WithServerDecompression())
+ // 配置服务端读取客户端最大的包是1024大小, 超过该值报错
+ c, err := greatws.Upgrade(w, r, greatws.WithServerDecompression())
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
         }   
 }
 ```
+
 [返回](#内容)
+
 #### 配置服务端压缩和解压消息
+
 ```go
 func main() {
-	c, err := greatws.Upgrade(w, r, greatws.WithServerDecompressAndCompress())
+ c, err := greatws.Upgrade(w, r, greatws.WithServerDecompressAndCompress())
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
         }   
 }
 ```
+
 [返回](#内容)
+
 #### 配置服务端上下文接管
+
 ```go
 func main() {
-	// 配置服务端读取客户端最大的包是1024大小, 超过该值报错
-	c, err := greatws.Upgrade(w, r, greatws.WithServerContextTakeover)
+ // 配置服务端读取客户端最大的包是1024大小, 超过该值报错
+ c, err := greatws.Upgrade(w, r, greatws.WithServerContextTakeover)
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
         }   
 }
 ```
+
 [返回](#内容)
+
 ## 100w websocket长链接测试
 
 ### e5 洋垃圾机器
@@ -335,31 +379,31 @@ func main() {
 * memory=32GB
 
 ```
-BenchType  : BenchEcho
-Framework  : greatws
-TPS        : 27954
-EER        : 225.42
-Min        : 35.05us
-Avg        : 1.79s
-Max        : 2.74s
-TP50       : 1.88s
-TP75       : 1.95s
-TP90       : 1.99s
-TP95       : 2.02s
-TP99       : 2.09s
-Used       : 178.86s
-Total      : 5000000
-Success    : 5000000
-Failed     : 0
-Conns      : 1000000
-Concurrency: 50000
-Payload    : 1024
-CPU Min    : 41.62%
-CPU Avg    : 124.01%
-CPU Max    : 262.72%
-MEM Min    : 555.25M
-MEM Avg    : 562.44M
-MEM Max    : 626.47M
+BenchType : BenchEcho
+Framework : greatws
+TPS : 106014
+EER : 218.54
+Min : 49.26us
+Avg : 94.08ms
+Max : 954.33ms
+TP50 : 45.76ms
+TP75 : 52.27ms
+TP90 : 336.85ms
+TP95 : 427.07ms
+TP99 : 498.66ms
+Used : 18.87s
+Total : 2000000
+Success : 2000000
+Failed : 0
+Conns : 1000000
+Concurrency: 10000
+Payload : 1024
+CPU Min : 184.90%
+CPU Avg : 485.10%
+CPU Max : 588.31%
+MEM Min : 563.40M
+MEM Avg : 572.40M
+MEM Max : 594.48M
 ```
 
 ### 5800h cpu
