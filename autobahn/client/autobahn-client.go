@@ -93,7 +93,9 @@ func (h *handler) runTest(caseNo int, wg *sync.WaitGroup) {
 		return
 	}
 
-	go c.ReadLoop()
+	go func() {
+		_ = c.ReadLoop()
+	}()
 	<-done
 }
 

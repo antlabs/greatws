@@ -255,7 +255,9 @@ func (d *DialOption) Dial() (wsCon *Conn, err error) {
 	if err = conn.Close(); err != nil {
 		return nil, err
 	}
-	wsCon = newConn(int64(fd), true, &d.Config)
+	if wsCon, err = newConn(int64(fd), true, &d.Config); err != nil {
+		return nil, err
+	}
 	wsCon.pd = pd
 	d.Callback.OnOpen(wsCon)
 	if br.Buffered() > 0 {

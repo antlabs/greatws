@@ -26,9 +26,8 @@ import (
 )
 
 type apiState struct {
-	kqfd    int
-	events  []unix.Kevent_t
-	changes []unix.Kevent_t
+	kqfd   int
+	events []unix.Kevent_t
 }
 
 func (e *EventLoop) apiCreate(flag evFlag) (err error) {
@@ -46,6 +45,7 @@ func (e *EventLoop) apiCreate(flag evFlag) (err error) {
 func (e *EventLoop) apiFree() {
 	if e.apiState != nil {
 		unix.Close(e.apiState.kqfd)
+		e.apiState.kqfd = -1
 	}
 }
 

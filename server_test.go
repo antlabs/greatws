@@ -49,7 +49,11 @@ func Test_Server_HandshakeFail(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		http.DefaultClient.Do(req)
+		_, err = http.DefaultClient.Do(req)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		select {
 		case <-done:
 		case <-time.After(100 * time.Millisecond):
@@ -82,7 +86,11 @@ func Test_Server_HandshakeFail(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		http.DefaultClient.Do(req)
+		_, err = http.DefaultClient.Do(req)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		select {
 		case <-done:
 		case <-time.After(100 * time.Millisecond):
@@ -112,7 +120,10 @@ func Test_Server_HandshakeFail(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		c.Write([]byte("GET / HTTP/1.0\r\nHost: localhost:8080\r\n\r\n"))
+		_, err = c.Write([]byte("GET / HTTP/1.0\r\nHost: localhost:8080\r\n\r\n"))
+		if err != nil {
+			t.Error(err)
+		}
 		c.Close()
 		select {
 		case <-done:
@@ -145,7 +156,11 @@ func Test_Server_HandshakeFail(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		c.Write([]byte("GET / HTTP/1.0\r\n\r\n"))
+		_, err = c.Write([]byte("GET / HTTP/1.0\r\n\r\n"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		// c.Write([]byte("GET / HTTP/1.0\r\nHost: localhost:8080\r\n\r\n"))
 		c.Close()
 
@@ -179,7 +194,11 @@ func Test_Server_HandshakeFail(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		c.Write([]byte("GET / HTTP/1.1\r\nHost: \r\n\r\n"))
+		_, err = c.Write([]byte("GET / HTTP/1.1\r\nHost: \r\n\r\n"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		defer c.Close()
 		select {
 		case <-done:
@@ -212,7 +231,11 @@ func Test_Server_HandshakeFail(t *testing.T) {
 			t.Error(err)
 		}
 		wbuf := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUpgrade: xx\r\n\r\n", url))
-		c.Write(wbuf)
+		_, err = c.Write(wbuf)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		c.Close()
 
 		select {
@@ -245,7 +268,11 @@ func Test_Server_HandshakeFail(t *testing.T) {
 			t.Error(err)
 		}
 		wbuf := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUpgrade: xx\r\n\r\n", url))
-		c.Write(wbuf)
+		_, err = c.Write(wbuf)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		c.Close()
 
 		select {
@@ -280,7 +307,11 @@ func Test_Server_HandshakeFail(t *testing.T) {
 			t.Error(err)
 		}
 		wbuf := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: xx\r\n\r\n", url))
-		c.Write(wbuf)
+		_, err = c.Write(wbuf)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		c.Close()
 
 		select {
@@ -313,7 +344,11 @@ func Test_Server_HandshakeFail(t *testing.T) {
 			t.Error(err)
 		}
 		wbuf := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: xx\r\n\r\n", url))
-		c.Write(wbuf)
+		_, err = c.Write(wbuf)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		c.Close()
 
 		select {
@@ -348,7 +383,11 @@ func Test_Server_HandshakeFail(t *testing.T) {
 			t.Error(err)
 		}
 		wbuf := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n", url))
-		c.Write(wbuf)
+		_, err = c.Write(wbuf)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		c.Close()
 
 		select {
@@ -381,7 +420,10 @@ func Test_Server_HandshakeFail(t *testing.T) {
 			t.Error(err)
 		}
 		wbuf := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n", url))
-		c.Write(wbuf)
+		_, err = c.Write(wbuf)
+		if err != nil {
+			t.Error(err)
+		}
 		c.Close()
 
 		select {
@@ -414,9 +456,14 @@ func Test_Server_HandshakeFail(t *testing.T) {
 		c, err := net.Dial("tcp", url)
 		if err != nil {
 			t.Error(err)
+			return
 		}
 		wbuf := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: key\r\n\r\n", url))
-		c.Write(wbuf)
+		_, err = c.Write(wbuf)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		c.Close()
 
 		select {
@@ -449,7 +496,10 @@ func Test_Server_HandshakeFail(t *testing.T) {
 			t.Error(err)
 		}
 		wbuf := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: key\r\n\r\n", url))
-		c.Write(wbuf)
+		_, err = c.Write(wbuf)
+		if err != nil {
+			t.Error(err)
+		}
 		c.Close()
 
 		select {

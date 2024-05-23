@@ -15,7 +15,6 @@
 package greatws
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -546,14 +545,6 @@ func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 		}
 	}
 	return false, nil
-}
-
-type wrapBuffer struct {
-	bytes.Buffer
-}
-
-func (w *wrapBuffer) Close() error {
-	return nil
 }
 
 func (c *Conn) isClosed() bool {

@@ -170,6 +170,11 @@ func (m *MultiEventLoop) Start() {
 	atomic.StoreUint32(&m.evLoopStart, 1)
 }
 
+func (m *MultiEventLoop) Free() {
+	for _, m := range m.loops {
+		m.apiFree()
+	}
+}
 func (m *MultiEventLoop) isStart() bool {
 	return atomic.LoadUint32(&m.evLoopStart) == 1
 }

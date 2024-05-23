@@ -69,7 +69,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 	})
 
 	t.Run("0.server.global: Without setting WithClientCallbackFunc", func(t *testing.T) {
@@ -95,7 +98,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 	})
 
 	t.Run("0.server.global: Without setting WithClientCallbackFunc", func(t *testing.T) {
@@ -118,14 +124,21 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 	})
 	t.Run("0.client: WithClientCallbackFunc", func(t *testing.T) {
 		run := int32(0)
 		done := make(chan bool, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerTCPDelay(), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
-				c.WriteMessage(mt, payload)
+				err := c.WriteMessage(mt, payload)
+				if err != nil {
+					t.Error(err)
+					return
+				}
 				atomic.AddInt32(&run, int32(1))
 			}))
 			if err != nil {
@@ -155,7 +168,11 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer clientConn.Close()
 
-		clientConn.WriteMessage(Binary, []byte("hello"))
+		err = clientConn.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		clientConn.StartReadLoop()
 		for i := 0; i < 2; i++ {
 			select {
@@ -199,7 +216,11 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		select {
 		case <-done:
 		case <-time.After(1000 * time.Millisecond):
@@ -235,7 +256,10 @@ func Test_CommonOption(t *testing.T) {
 			return
 		}
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		select {
 		case <-done:
 		case <-time.After(100 * time.Millisecond):
@@ -250,7 +274,11 @@ func Test_CommonOption(t *testing.T) {
 		done := make(chan bool, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
-				c.WriteMessage(mt, payload)
+				err2 := c.WriteMessage(mt, payload)
+				if err2 != nil {
+					t.Error(err2)
+					return
+				}
 			}))
 			if err != nil {
 				t.Error(err)
@@ -290,7 +318,11 @@ func Test_CommonOption(t *testing.T) {
 		done := make(chan bool, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerEnableUTF8Check(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err2 := c.WriteMessage(op, payload)
+				if err2 != nil {
+					t.Error(err2)
+					return
+				}
 				atomic.AddInt32(&run, int32(1))
 				done <- true
 			}))
@@ -314,7 +346,10 @@ func Test_CommonOption(t *testing.T) {
 			t.Error("写入非法utf8数据，没有报错")
 		}
 
-		con.WriteMessage(Binary, badUTF8)
+		err = con.WriteMessage(Binary, badUTF8)
+		if err != nil {
+			t.Error(err)
+		}
 		select {
 		case <-done:
 		case <-time.After(1000 * time.Millisecond):
@@ -328,7 +363,12 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		done := make(chan bool, 1)
 		upgrade := NewUpgrade(WithServerMultiEventLoop(m), WithServerEnableUTF8Check(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err := c.WriteMessage(op, payload)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
 			atomic.AddInt32(&run, int32(1))
 			done <- true
 		}))
@@ -371,7 +411,11 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		done := make(chan bool, 1)
 		upgrade := NewUpgrade(WithServerEnableUTF8Check(), WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err := c.WriteMessage(op, payload)
+			if err != nil {
+				t.Error(err)
+				return
+			}
 			atomic.AddInt32(&run, int32(1))
 			done <- true
 		}))
@@ -435,7 +479,11 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		select {
 		case <-done:
 		case <-time.After(1000 * time.Millisecond):
@@ -470,7 +518,11 @@ func Test_CommonOption(t *testing.T) {
 			return
 		}
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		select {
 		case <-done:
 		case <-time.After(100 * time.Millisecond):
@@ -485,7 +537,11 @@ func Test_CommonOption(t *testing.T) {
 		done := make(chan bool, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
-				c.WriteMessage(mt, payload)
+				err2 := c.WriteMessage(mt, payload)
+				if err2 != nil {
+					t.Error(err2)
+					return
+				}
 			}))
 			if err != nil {
 				t.Error(err)
@@ -506,7 +562,11 @@ func Test_CommonOption(t *testing.T) {
 		}
 
 		con.StartReadLoop()
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		select {
 		case <-done:
 		case <-time.After(100 * time.Millisecond):
@@ -543,7 +603,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 
 		con.StartReadLoop()
-		con.WritePing([]byte("hello"))
+		err = con.WritePing([]byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		select {
 		case <-done:
 		case <-time.After(1000 * time.Millisecond):
@@ -600,7 +663,10 @@ func Test_CommonOption(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerReplyPing(), WithServerOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 				if mt == Text {
-					c.WritePing([]byte("hello"))
+					err2 := c.WritePing([]byte("hello"))
+					if err2 != nil {
+						t.Error(err2)
+					}
 				} else if mt == Pong {
 				} else {
 					t.Error("unknown opcode")
@@ -628,7 +694,11 @@ func Test_CommonOption(t *testing.T) {
 		}
 
 		con.StartReadLoop()
-		con.WriteMessage(Text, []byte("hello"))
+		err = con.WriteMessage(Text, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		select {
 		case <-done:
 		case <-time.After(1000 * time.Millisecond):
@@ -643,7 +713,11 @@ func Test_CommonOption(t *testing.T) {
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerIgnorePong(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err2 := c.WriteMessage(op, payload)
+				if err2 != nil {
+					t.Error(err2)
+				}
+
 			}))
 			if err != nil {
 				t.Error(err)
@@ -665,8 +739,16 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WritePong([]byte("hello"))
-		con.WriteMessage(Text, []byte("hello"))
+		err = con.WritePong([]byte("hello"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		err = con.WriteMessage(Text, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -684,7 +766,10 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		upgrade := NewUpgrade(WithServerIgnorePong(), WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err1 := c.WriteMessage(op, payload)
+			if err1 != nil {
+				t.Error(err1)
+			}
 		}))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := upgrade.Upgrade(w, r)
@@ -735,8 +820,18 @@ func Test_CommonOption(t *testing.T) {
 
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerIgnorePong(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WritePong([]byte("hello"))
-				c.WriteMessage(op, payload)
+				err1 := c.WritePong([]byte("hello"))
+				if err1 != nil {
+					t.Error(err1)
+					return
+				}
+
+				err1 = c.WriteMessage(op, payload)
+				if err1 != nil {
+					t.Error(err1)
+					return
+				}
+
 			}))
 			if err != nil {
 				t.Error(err)
@@ -781,7 +876,10 @@ func Test_CommonOption(t *testing.T) {
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerWindowsMultipleTimesPayloadSize(-1), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err := c.WriteMessage(op, payload)
+				if err != nil {
+					t.Error(err)
+				}
 			}))
 			if err != nil {
 				t.Error(err)
@@ -803,7 +901,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -821,7 +922,10 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		upgrade := NewUpgrade(WithServerMultiEventLoop(m), WithServerWindowsMultipleTimesPayloadSize(-1), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err := c.WriteMessage(op, payload)
+			if err != nil {
+				t.Error(err)
+			}
 		}))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := upgrade.Upgrade(w, r)
@@ -845,7 +949,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -864,7 +971,10 @@ func Test_CommonOption(t *testing.T) {
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err := c.WriteMessage(op, payload)
+				if err != nil {
+					t.Error(err)
+				}
 			}))
 			if err != nil {
 				t.Error(err)
@@ -907,7 +1017,10 @@ func Test_CommonOption(t *testing.T) {
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err := c.WriteMessage(op, payload)
+				if err != nil {
+					t.Error(err)
+				}
 			}))
 			if err != nil {
 				t.Error(err)
@@ -928,7 +1041,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -946,7 +1062,10 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		upgrade := NewUpgrade(WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err := c.WriteMessage(op, payload)
+			if err != nil {
+				t.Error(err)
+			}
 		}))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := upgrade.Upgrade(w, r)
@@ -968,7 +1087,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -987,7 +1109,10 @@ func Test_CommonOption(t *testing.T) {
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err := c.WriteMessage(op, payload)
+				if err != nil {
+					t.Error(err)
+				}
 			}))
 			if err != nil {
 				t.Error(err)
@@ -1007,7 +1132,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -1026,7 +1154,10 @@ func Test_CommonOption(t *testing.T) {
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err := c.WriteMessage(op, payload)
+				if err != nil {
+					t.Error(err)
+				}
 			}))
 			if err != nil {
 				t.Error(err)
@@ -1047,7 +1178,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -1065,7 +1199,10 @@ func Test_CommonOption(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		upgrade := NewUpgrade(WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err := c.WriteMessage(op, payload)
+			if err != nil {
+				t.Error(err)
+			}
 		}))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := upgrade.Upgrade(w, r)
@@ -1088,7 +1225,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -1107,7 +1247,10 @@ func Test_CommonOption(t *testing.T) {
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err := c.WriteMessage(op, payload)
+				if err != nil {
+					t.Error(err)
+				}
 			}))
 			if err != nil {
 				t.Error(err)
@@ -1127,7 +1270,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -1147,7 +1293,10 @@ func Test_CommonOption(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerDecompressAndCompress(),
 				WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-					c.WriteMessage(op, payload)
+					err := c.WriteMessage(op, payload)
+					if err != nil {
+						t.Error(err)
+					}
 				}))
 			if err != nil {
 				t.Error(err)
@@ -1190,7 +1339,10 @@ func Test_CommonOption(t *testing.T) {
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := Upgrade(w, r, WithServerMultiEventLoop(m), WithServerDisableBufioClearHack(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err := c.WriteMessage(op, payload)
+				if err != nil {
+					t.Error(err)
+				}
 			}))
 			if err != nil {
 				t.Error(err)
@@ -1211,7 +1363,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Binary, []byte("hello"))
+		err = con.WriteMessage(Binary, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		con.StartReadLoop()
 		select {
 		case d := <-data:
@@ -1591,7 +1746,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Text, []byte("hello"))
+		err = con.WriteMessage(Text, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		select {
 		case d := <-tsort.err:
 			if d == nil {
@@ -1671,7 +1829,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Text, []byte("hello"))
+		err = con.WriteMessage(Text, []byte("hello"))
+		if err != nil {
+			t.Error(err)
+		}
 		select {
 		case d := <-tsort.err:
 			if d == nil {
@@ -1698,6 +1859,7 @@ func Test_CommonOption(t *testing.T) {
 				return
 			}
 			c.StartReadLoop()
+			c.Close()
 		}))
 
 		defer ts.Close()
@@ -1705,7 +1867,6 @@ func Test_CommonOption(t *testing.T) {
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
 		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientDisableBufioClearHack(),
 			WithClientEnableUTF8Check(), WithClientOnCloseFunc(func(c *Conn, err error) {
-				atomic.AddInt32(&run, 1)
 				data <- err.Error()
 			}))
 		if err != nil {
@@ -1717,15 +1878,17 @@ func Test_CommonOption(t *testing.T) {
 		err = con.WriteMessage(Text, []byte("hello"))
 		if err != nil {
 			t.Error("not error")
+			return
 		}
 		con.StartReadLoop()
 		select {
-		case _ = <-data:
+		case <-data:
+			atomic.AddInt32(&run, 1)
 		case <-time.After(500 * time.Millisecond):
 		}
 
-		if atomic.LoadInt32(&run) != 0 {
-			t.Error("not run server:method fail")
+		if atomic.LoadInt32(&run) != 1 {
+			t.Errorf("not run server:method fail:%d\n", atomic.LoadInt32(&run))
 		}
 	})
 
@@ -1752,7 +1915,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Text, bytes.Repeat([]byte("1"), 1025))
+		err = con.WriteMessage(Text, bytes.Repeat([]byte("1"), 1025))
+		if err != nil {
+			t.Error(err)
+		}
 		select {
 		case d := <-tsort.err:
 			if d == nil {
@@ -1790,7 +1956,10 @@ func Test_CommonOption(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Text, bytes.Repeat([]byte("1"), 1025))
+		err = con.WriteMessage(Text, bytes.Repeat([]byte("1"), 1025))
+		if err != nil {
+			t.Error(err)
+		}
 		select {
 		case d := <-tsort.err:
 			if d == nil {
@@ -1814,7 +1983,11 @@ func Test_CommonOption(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
-			c.WriteMessage(Binary, bytes.Repeat([]byte("1"), 1025))
+			time.Sleep(time.Second / 10)
+			err = c.WriteMessage(Binary, bytes.Repeat([]byte("1"), 1025))
+			if err != nil {
+				t.Error(err)
+			}
 			c.StartReadLoop()
 		}))
 

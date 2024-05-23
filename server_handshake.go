@@ -27,7 +27,6 @@ import (
 var (
 	ErrNotFoundHijacker             = errors.New("not found Hijacker")
 	bytesHeaderUpgrade              = []byte("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ")
-	bytesHeaderExtensions           = []byte("Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n")
 	bytesSecWebSocketExtensionsKey  = []byte("Sec-WebSocket-Extensions: ")
 	bytesCRLF                       = []byte("\r\n")
 	bytesPutSecWebSocketProtocolKey = []byte("Sec-WebSocket-Protocol: ")
