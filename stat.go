@@ -114,12 +114,12 @@ func (m *MultiEventLoop) addMoveBytes(n uint64) {
 	atomic.AddUint64(&m.moveBytes, n)
 }
 
-对内接口
+// 对内接口
 func (m *MultiEventLoop) addReadEvNum() {
 	atomic.AddInt64(&m.readEv, 1)
 }
 
-对内接口
+// 对内接口
 func (m *MultiEventLoop) addWriteEvNum() {
 	atomic.AddInt64(&m.writeEv, 1)
 }
