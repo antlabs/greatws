@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/antlabs/wsutil/deflate"
-	"github.com/antlabs/wsutil/enum"
 )
 
 type Config struct {
@@ -43,10 +42,6 @@ type Config struct {
 // func (c *Config) useIoUring() bool {
 // 	return c.multiEventLoop.flag == EVENT_IOURING
 // }
-
-func (c *Config) initPayloadSize() int {
-	return int((1024.0 + float32(enum.MaxFrameHeaderSize)) * c.windowsMultipleTimesPayloadSize)
-}
 
 // 默认设置
 func (c *Config) defaultSetting() {

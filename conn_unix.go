@@ -84,7 +84,7 @@ type Conn struct {
 	closed      int32         // 是否关闭
 }
 
-func newConn(fd int64, client bool, conf *Config) *Conn {
+func newConn(fd int64, client bool, conf *Config) (*Conn, error) {
 	c := &Conn{
 		conn: conn{
 			fd:     fd,
@@ -97,9 +97,12 @@ func newConn(fd int64, client bool, conf *Config) *Conn {
 
 	c.task = c.parent.localTask.newTask(conf.runInGoTask)
 	if conf.readTimeout > 0 {
-		c.setReadDeadline(time.Now().Add(conf.readTimeout))
+		err := c.setReadDeadline(time.Now().Add(conf.readTimeout))
+		if err != nil {
+			return nil, err
+		}
 	}
-	return c
+	return c, nil
 }
 
 // 这是一个空函数，兼容下quickws的接口
@@ -405,10 +408,10 @@ func (c *Conn) processWebsocketFrame() (err error) {
 			}
 
 			// TODO
-			if len((*c.rbuf)[c.rw:]) == 0 {
-				//
-				// panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
-			}
+			// if len((*c.rbuf)[c.rw:]) == 0 {
+			// 	//
+			// 	// panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
+			// }
 			continue
 		}
 	}

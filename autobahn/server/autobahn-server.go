@@ -188,7 +188,7 @@ func (h *handler) echoNoContextDecompression(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	c.ReadLoop()
+	_ = c.ReadLoop()
 }
 
 // 2.测试不接管上下文，压缩和解压
@@ -206,7 +206,7 @@ func (h *handler) echoNoContextDecompressionAndCompression(w http.ResponseWriter
 		return
 	}
 
-	c.ReadLoop()
+	_ = c.ReadLoop()
 }
 
 // 3.测试接管上下文，解压
@@ -225,7 +225,7 @@ func (h *handler) echoContextTakeoverDecompression(w http.ResponseWriter, r *htt
 		return
 	}
 
-	c.ReadLoop()
+	_ = c.ReadLoop()
 }
 
 // 4.测试接管上下文，压缩/解压缩
@@ -244,7 +244,7 @@ func (h *handler) echoContextTakeoverDecompressionAndCompression(w http.Response
 		return
 	}
 
-	c.ReadLoop()
+	_ = c.ReadLoop()
 }
 
 func main() {

@@ -46,7 +46,6 @@ type testMessageHandler struct {
 	callbedChan chan bool
 	server      bool
 	count       int
-	got         chan []byte
 	done        chan struct{}
 	output      bool
 }
@@ -64,9 +63,9 @@ func (t *testMessageHandler) OnMessage(c *Conn, op opcode.Opcode, msg []byte) {
 	if t.server {
 		message = "#server"
 	}
-	if t.output {
-		// fmt.Printf(">>>>>%p %s, %#v\n", &msg, message, msg)
-	}
+	// if t.output {
+	// 	// fmt.Printf(">>>>>%p %s, %#v\n", &msg, message, msg)
+	// }
 	if len(msg) < 30 {
 		if !bytes.Equal(msg, need) {
 			t.t.Errorf(">>>>>%p %s, %#v\n", &msg, message, msg)
@@ -83,9 +82,9 @@ func (t *testMessageHandler) OnMessage(c *Conn, op opcode.Opcode, msg []byte) {
 	if err != nil {
 		t.t.Error(err)
 	}
-	if !t.server {
-		// c.Close()
-	}
+	// if !t.server {
+	// 	// c.Close()
+	// }
 }
 
 func (t *testMessageHandler) OnClose(c *Conn, err error) {
@@ -104,7 +103,7 @@ func newServrEcho(t *testing.T, data []byte, output bool) *httptest.Server {
 	m := NewMultiEventLoopAndStartMust(WithLogLevel(slog.LevelError), WithBusinessGoNum(1, 1, 1), WithEventLoops(1))
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, err := Upgrade(w, r,
-			WithServerCallback(&testMessageHandler{t: t, need: data, server: true, count: -1, output: true, callbedChan: make(chan bool, 1)}),
+			WithServerCallback(&testMessageHandler{t: t, need: data, server: true, count: -1, output: true, callbedChan: make(chan bool, 10)}),
 			WithServerMultiEventLoop(m),
 		)
 		if err != nil {
@@ -223,7 +222,10 @@ func Test_ReadMessage(t *testing.T) {
 		data := make(chan string, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := Upgrade(w, r, WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-				c.WriteMessage(op, payload)
+				err1 := c.WriteMessage(op, payload)
+				if err1 != nil {
+					t.Error(err1)
+				}
 			}), WithServerMultiEventLoop(m))
 			if err != nil {
 				t.Error(err)
@@ -277,7 +279,10 @@ func Test_ReadMessage(t *testing.T) {
 				// WithServerDecompression(),
 				WithServerDecompressAndCompress(),
 				WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-					c.WriteMessage(op, payload)
+					err1 := c.WriteMessage(op, payload)
+					if err1 != nil {
+						t.Error(err1)
+					}
 				}), WithServerMultiEventLoop(m))
 			if err != nil {
 				t.Error(err)
@@ -315,7 +320,7 @@ func Test_ReadMessage(t *testing.T) {
 		}
 
 		select {
-		case _ = <-data:
+		case <-data:
 		case <-time.After(1000 * time.Millisecond):
 		}
 		if atomic.LoadInt32(&run) > 0 {
@@ -333,7 +338,10 @@ func TestFragmentFrame(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		upgrade := NewUpgrade(WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err := c.WriteMessage(op, payload)
+			if err != nil {
+				t.Error(err)
+			}
 		}), WithServerMultiEventLoop(m))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := upgrade.Upgrade(w, r)
@@ -359,7 +367,11 @@ func TestFragmentFrame(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.writeFragment(Binary, []byte("hello"), 1)
+		err = con.writeFragment(Binary, []byte("hello"), 1)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 
 		select {
 		case d := <-data:
@@ -403,7 +415,11 @@ func TestFragmentFrame(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.writeFragment(Ping, []byte("hello"), 1)
+		err = con.writeFragment(Ping, []byte("hello"), 1)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		select {
 		case <-data:
 		case <-time.After(1000 * time.Millisecond):
@@ -469,7 +485,10 @@ func TestFragmentFrame(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		upgrade := NewUpgrade(WithServerDecompression(), WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err := c.WriteMessage(op, payload)
+			if err != nil {
+				t.Error(err)
+			}
 		}), WithServerMultiEventLoop(m))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := upgrade.Upgrade(w, r)
@@ -496,7 +515,11 @@ func TestFragmentFrame(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.writeFragment(Binary, []byte("hello"), 1)
+		err = con.writeFragment(Binary, []byte("hello"), 1)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 
 		select {
 		case d := <-data:
@@ -515,7 +538,10 @@ func TestFragmentFrame(t *testing.T) {
 		run := int32(0)
 		data := make(chan string, 1)
 		upgrade := NewUpgrade(WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err := c.WriteMessage(op, payload)
+			if err != nil {
+				t.Error(err)
+			}
 		}), WithServerMultiEventLoop(m))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := upgrade.Upgrade(w, r)
@@ -564,7 +590,10 @@ func TestFragmentFrame(t *testing.T) {
 
 	t.Run("FragmentFrame-Client-Not-UTF8", func(t *testing.T) {
 		upgrade := NewUpgrade(WithServerOnMessageFunc(func(c *Conn, op Opcode, payload []byte) {
-			c.WriteMessage(op, payload)
+			err := c.WriteMessage(op, payload)
+			if err != nil {
+				t.Error(err)
+			}
 		}), WithServerMultiEventLoop(m))
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := upgrade.Upgrade(w, r)
@@ -631,12 +660,13 @@ func TestFragmentFrame(t *testing.T) {
 		}
 
 		select {
-		case _ = <-data:
+		case <-data:
+			atomic.AddInt32(&run, 1)
 		case <-time.After(500 * time.Millisecond):
 		}
 
-		if atomic.LoadInt32(&run) != 0 {
-			t.Error("not run server:method fail")
+		if atomic.LoadInt32(&run) != 1 {
+			t.Errorf("not run server:method fail:%d\n", atomic.LoadInt32(&run))
 		}
 	})
 }
@@ -772,7 +802,10 @@ func TestPingPongClose(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Close, nil)
+		err = con.WriteMessage(Close, nil)
+		if err != nil {
+			t.Error(err)
+		}
 
 		select {
 		case d := <-shandler.data:
@@ -814,7 +847,10 @@ func TestPingPongClose(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Close, []byte{1})
+		err = con.WriteMessage(Close, []byte{1})
+		if err != nil {
+			t.Error(err)
+		}
 
 		select {
 		case d := <-shandler.data:
@@ -856,7 +892,10 @@ func TestPingPongClose(t *testing.T) {
 		}
 		defer con.Close()
 
-		con.WriteMessage(Close, []byte{128, 129, 130, 131})
+		err = con.WriteMessage(Close, []byte{128, 129, 130, 131})
+		if err != nil {
+			t.Error(err)
+		}
 
 		select {
 		case d := <-shandler.data:
@@ -886,7 +925,7 @@ func TestPingPongClose(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+		con, err := Dial(url, WithClientDialTimeout(time.Second), WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 			atomic.AddInt32(&run, int32(1))
 		}))
 		if err != nil {
@@ -899,7 +938,10 @@ func TestPingPongClose(t *testing.T) {
 		defer con.Close()
 
 		var badSc StatusCode = 3
-		con.WriteCloseTimeout(badSc, 10*time.Second)
+		err = con.WriteCloseTimeout(badSc, 10*time.Second)
+		if err != nil {
+			t.Error(err)
+		}
 
 		select {
 		case d := <-shandler.data:
@@ -943,7 +985,7 @@ func TestPingPongClose(t *testing.T) {
 			defer ts.Close()
 
 			url := strings.ReplaceAll(ts.URL, "http", "ws")
-			con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+			con, err := Dial(url, WithClientDialTimeout(time.Second), WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 				atomic.AddInt32(&run, int32(1))
 			}))
 			if err != nil {
@@ -955,7 +997,10 @@ func TestPingPongClose(t *testing.T) {
 			}
 			defer con.Close()
 
-			con.WriteCloseTimeout(st, 10*time.Second)
+			err = con.WriteCloseTimeout(st, 10*time.Second)
+			if err != nil {
+				t.Error(err)
+			}
 
 			select {
 			case d := <-shandler.data:
@@ -988,7 +1033,7 @@ func TestPingPongClose(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientDisableBufioClearHack(),
+		con, err := Dial(url, WithClientDialTimeout(time.Second), WithClientMultiEventLoop(m), WithClientDisableBufioClearHack(),
 			WithClientEnableUTF8Check(), WithClientOnCloseFunc(func(c *Conn, err error) {
 			}))
 		if err != nil {
@@ -1006,7 +1051,7 @@ func TestPingPongClose(t *testing.T) {
 		}
 
 		select {
-		case _ = <-data:
+		case <-data:
 		case <-time.After(500 * time.Millisecond):
 		}
 

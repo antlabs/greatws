@@ -186,9 +186,9 @@ func (t *task) NewExecutor() driver.TaskExecutor {
 }
 
 // 是否满了
-func (t *task) isFull() bool {
-	return atomic.LoadInt64(&t.curGo) >= int64(t.max)
-}
+// func (t *task) isFull() bool {
+// 	return atomic.LoadInt64(&t.curGo) >= int64(t.max)
+// }
 
 func (t *task) addGoWithSteal(g *businessGo) bool {
 	if atomic.LoadInt64(&t.curGo) >= int64(t.max) {
