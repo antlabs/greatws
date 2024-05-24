@@ -36,7 +36,7 @@ func WithClientHTTPHeader(h http.Header) ClientOption {
 	}
 }
 
-// 3.配置握手时的timeout
+// 3.配置握手时的timeout，tcp连接的timeout
 func WithClientDialTimeout(t time.Duration) ClientOption {
 	return func(o *DialOption) {
 		o.dialTimeout = t

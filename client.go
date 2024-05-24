@@ -190,15 +190,14 @@ func (d *DialOption) Dial() (wsCon *Conn, err error) {
 		return nil, err
 	}
 
-	begin := time.Now()
 	hostName := hostname.GetHostName(d.u)
-	conn, err := net.Dial("tcp", hostName)
+	var conn net.Conn
+	conn, err = net.DialTimeout("tcp", hostName, d.dialTimeout)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("net.Dial:%w", err)
 	}
 
-	dialDuration := time.Since(begin)
-
+	err = conn.SetDeadline(time.Time{})
 	conn = d.tlsConn(conn)
 	defer func() {
 		if err != nil && conn != nil {
@@ -207,18 +206,8 @@ func (d *DialOption) Dial() (wsCon *Conn, err error) {
 		}
 	}()
 
-	if to := d.dialTimeout - dialDuration; to > 0 {
-		if err = conn.SetDeadline(time.Now().Add(to)); err != nil {
-			return
-		}
-	}
-	err = conn.SetDeadline(time.Time{})
-	if err != nil {
-		return nil, err
-	}
-
 	if err = req.Write(conn); err != nil {
-		return
+		return nil, fmt.Errorf("write req fail:%w", err)
 	}
 
 	br := bufio.NewReader(bufio.NewReader(conn))

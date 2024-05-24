@@ -1877,7 +1877,7 @@ func Test_CommonOption(t *testing.T) {
 		// 这里必须要报错
 		err = con.WriteMessage(Text, []byte("hello"))
 		if err != nil {
-			t.Error("not error")
+			t.Errorf("not error:%s\n", err)
 			return
 		}
 		con.StartReadLoop()
@@ -1976,17 +1976,18 @@ func Test_CommonOption(t *testing.T) {
 	t.Run("22.3.WithClientReadMaxMessage", func(t *testing.T) {
 		var tsort testServerOptionReadTimeout
 
-		upgrade := NewUpgrade(WithServerCallback(&tsort), WithServerReadTimeout(time.Millisecond*60), WithServerMultiEventLoop(m))
+		upgrade := NewUpgrade(WithServerMultiEventLoop(m))
 		tsort.err = make(chan error, 1)
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := upgrade.Upgrade(w, r)
 			if err != nil {
 				t.Error(err)
 			}
-			time.Sleep(time.Second / 10)
+			time.Sleep(time.Second / 100)
 			err = c.WriteMessage(Binary, bytes.Repeat([]byte("1"), 1025))
 			if err != nil {
 				t.Error(err)
+				return
 			}
 			c.StartReadLoop()
 		}))
@@ -1994,8 +1995,7 @@ func Test_CommonOption(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientReadMaxMessage(1<<10), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
-		}))
+		con, err := Dial(url, WithClientCallback(&tsort), WithClientMultiEventLoop(m), WithClientReadMaxMessage(1<<10))
 		if err != nil {
 			t.Error(err)
 			return
@@ -2007,8 +2007,9 @@ func Test_CommonOption(t *testing.T) {
 			if d == nil {
 				t.Errorf("got:nil, need:error\n")
 			}
+			fmt.Printf(">>> err = %v\n", d)
 		case <-time.After(100 * time.Millisecond):
-			t.Errorf(" Test_ServerOption:WithServerReadTimeout timeout\n")
+			t.Errorf(" Test_ServerOption:WithServerReadMaxMessage timeout\n")
 		}
 		if atomic.LoadInt32(&tsort.run) != 1 {
 			t.Error("not run server:method fail")

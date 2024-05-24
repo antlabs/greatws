@@ -103,7 +103,7 @@ func newServrEcho(t *testing.T, data []byte, output bool) *httptest.Server {
 	m := NewMultiEventLoopAndStartMust(WithLogLevel(slog.LevelError), WithBusinessGoNum(1, 1, 1), WithEventLoops(1))
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, err := Upgrade(w, r,
-			WithServerCallback(&testMessageHandler{t: t, need: data, server: true, count: -1, output: true, callbedChan: make(chan bool, 1)}),
+			WithServerCallback(&testMessageHandler{t: t, need: data, server: true, count: -1, output: true, callbedChan: make(chan bool, 10)}),
 			WithServerMultiEventLoop(m),
 		)
 		if err != nil {
@@ -925,7 +925,7 @@ func TestPingPongClose(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+		con, err := Dial(url, WithClientDialTimeout(time.Second), WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 			atomic.AddInt32(&run, int32(1))
 		}))
 		if err != nil {
@@ -985,7 +985,7 @@ func TestPingPongClose(t *testing.T) {
 			defer ts.Close()
 
 			url := strings.ReplaceAll(ts.URL, "http", "ws")
-			con, err := Dial(url, WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
+			con, err := Dial(url, WithClientDialTimeout(time.Second), WithClientMultiEventLoop(m), WithClientOnMessageFunc(func(c *Conn, mt Opcode, payload []byte) {
 				atomic.AddInt32(&run, int32(1))
 			}))
 			if err != nil {
@@ -1033,7 +1033,7 @@ func TestPingPongClose(t *testing.T) {
 		defer ts.Close()
 
 		url := strings.ReplaceAll(ts.URL, "http", "ws")
-		con, err := Dial(url, WithClientMultiEventLoop(m), WithClientDisableBufioClearHack(),
+		con, err := Dial(url, WithClientDialTimeout(time.Second), WithClientMultiEventLoop(m), WithClientDisableBufioClearHack(),
 			WithClientEnableUTF8Check(), WithClientOnCloseFunc(func(c *Conn, err error) {
 			}))
 		if err != nil {
