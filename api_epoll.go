@@ -43,8 +43,10 @@ const (
 	etDelWriteOneShot  = uint32(0)
 	etResetReadOneShot = uint32(etReadOneShot)
 
+	// 写事件
 	processWrite = uint32(unix.EPOLLOUT)
-	processRead  = uint32(unix.EPOLLIN | unix.EPOLLRDHUP | unix.EPOLLHUP | unix.EPOLLERR)
+	// 读事件
+	processRead = uint32(unix.EPOLLIN | unix.EPOLLRDHUP | unix.EPOLLHUP | unix.EPOLLERR)
 )
 
 type epollState struct {
@@ -180,22 +182,19 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 				continue
 			}
 
-			// 如果是关闭事件，直接关闭
-			if ev.Events&unix.EPOLLRDHUP > 0 {
-				conn.closeWithLock(io.EOF)
-				continue
-			}
+			// unix.EPOLLRDHUP是关闭事件，遇到直接关闭
 			if ev.Events&(unix.EPOLLERR|unix.EPOLLHUP|unix.EPOLLRDHUP) > 0 {
 				conn.closeWithLock(io.EOF)
 				continue
 			}
 			// 默认是io线程只做事件的分发，websocket包的读取和解析在parse loop里面做
+			// parseInParseLoop 可以通过选项配置
 			if *e.getMultiEventLoop().parseInParseLoop {
 				isRead := ev.Events&processRead > 0
 				isWrite := ev.Events&processWrite > 0
 
 				e.getMultiEventLoop().parseLoop.addTask(int(ev.Fd), func() bool {
-					// 如果这里直接贴逻辑go test -race有时候会报错，使用函数则没大这个问题
+					// 如果这里直接贴逻辑go test -race会报错，使用函数包下就不会
 					return e.process(conn, isRead, isWrite)
 				})
 				continue
@@ -203,7 +202,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 			if ev.Events&processRead > 0 {
 				e.getMultiEventLoop().addReadEvNum()
 
-				// 读取数据，这里要发行下websocket的解析变成流式解析
+				// 读取数据，这里是websocket解析的入口函数，使用状态器解析，可以处理粘包
 				err = conn.processWebsocketFrame()
 				if err != nil {
 					conn.closeWithLock(err)
@@ -211,7 +210,8 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 			}
 			if ev.Events&processWrite > 0 {
 				e.getMultiEventLoop().addWriteEvNum()
-				// 刷新下直接写入失败的数据
+				// 直接调用WriteMessage遇到EAGAIN会把数据未成功写的数据放至写wbuf里面, 内核socket write buffer有空间就会进这个逻辑
+				// 刷新下直接写入失败的数据,
 				conn.flushOrClose()
 			}
 
