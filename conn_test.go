@@ -253,7 +253,7 @@ func Test_ReadMessage(t *testing.T) {
 		// err = con.WriteMessage(Binary, []byte("hello"))
 		maskValue := rand.Uint32()
 		var fw fixedwriter.FixedWriter
-		err = frame.WriteFrame(&fw, con, []byte("hello"), true, true, con.client, Binary, maskValue)
+		err = frame.WriteFrame(&fw, connToNewConn(con), []byte("hello"), true, true, con.client, Binary, maskValue)
 		if err != nil {
 			t.Error(err)
 		}
@@ -314,7 +314,7 @@ func Test_ReadMessage(t *testing.T) {
 		// err = con.WriteMessage(Binary, []byte("hello"))
 		maskValue := rand.Uint32()
 		var fw fixedwriter.FixedWriter
-		err = frame.WriteFrame(&fw, con, []byte("hello"), true, true, con.client, Ping, maskValue)
+		err = frame.WriteFrame(&fw, connToNewConn(con), []byte("hello"), true, true, con.client, Ping, maskValue)
 		if err != nil {
 			t.Error(err)
 		}
@@ -461,12 +461,12 @@ func TestFragmentFrame(t *testing.T) {
 
 		maskValue := rand.Uint32()
 		var fw fixedwriter.FixedWriter
-		err = frame.WriteFrame(&fw, con, []byte("h"), false, false, con.client, Text, maskValue)
+		err = frame.WriteFrame(&fw, connToNewConn(con), []byte("h"), false, false, con.client, Text, maskValue)
 		if err != nil {
 			t.Error(err)
 		}
 		maskValue = rand.Uint32()
-		err = frame.WriteFrame(&fw, con, []byte{}, true, false, con.client, Text, maskValue)
+		err = frame.WriteFrame(&fw, connToNewConn(con), []byte{}, true, false, con.client, Text, maskValue)
 		if err != nil {
 			t.Error(err)
 		}

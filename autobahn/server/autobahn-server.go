@@ -27,6 +27,10 @@ var keyPEMBlock []byte
 type echoHandler struct{}
 
 func (e *echoHandler) OnOpen(c *greatws.Conn) {
+	// err := c.WriteMessage(greatws.Binary, make([]byte, 1<<28))
+	// if err != nil {
+	// 	fmt.Printf("%s\n", err)
+	// }
 	// fmt.Printf("OnOpen: %p\n", c)
 }
 
@@ -132,7 +136,7 @@ func (h *handler) echoRunStream2(w http.ResponseWriter, r *http.Request) {
 		greatws.WithServerIgnorePong(),
 		greatws.WithServerCallback(&echoHandler{}),
 		greatws.WithServerEnableUTF8Check(),
-		greatws.WithServerReadTimeout(5 * time.Second),
+		// greatws.WithServerReadTimeout(5 * time.Second),
 		greatws.WithServerMultiEventLoop(h.m),
 		greatws.WithServerStreamMode(),
 		greatws.WithServerCallbackInEventLoop(),

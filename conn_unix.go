@@ -185,7 +185,9 @@ func (c *Conn) getPtr() int {
 	return int(uintptr(unsafe.Pointer(c)))
 }
 
-func (c *Conn) Write(b []byte) (n int, err error) {
+// Conn Write入口， 原始定义是func (c *Conn) Write() (n int, err error)
+// 会引起误用，所以隐藏起来, 作为一个websocket库，直接暴露tcp的write接口也不合适
+func connWrite(c *Conn, b []byte) (n int, err error) {
 	if c.isClosed() {
 		return 0, ErrClosed
 	}

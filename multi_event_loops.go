@@ -186,6 +186,9 @@ func (m *MultiEventLoop) getEventLoop(fd int) *EventLoop {
 // 添加一个连接到多路事件循环
 func (m *MultiEventLoop) add(c *Conn) error {
 	fd := c.getFd()
+	if fd == -1 {
+		return nil
+	}
 	index := fd % len(m.loops)
 	m.safeConns.addConn(c)
 	// m.loops[index].conns.Store(fd, c)

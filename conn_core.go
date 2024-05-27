@@ -581,7 +581,7 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 	var fw fixedwriter.FixedWriter
 
 	c.mu.Lock()
-	err = frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
+	err = frame.WriteFrame(&fw, connToNewConn(c), writeBuf, true, rsv1, c.client, op, maskValue)
 	c.mu.Unlock()
 
 	return err
@@ -619,14 +619,14 @@ func (c *Conn) writeFragment(op Opcode, writeBuf []byte, maxFragment int /*å•ä¸
 	var fw fixedwriter.FixedWriter
 	for len(writeBuf) > 0 {
 		if len(writeBuf) > maxFragment {
-			if err := frame.WriteFrame(&fw, c, writeBuf[:maxFragment], false, rsv1, c.client, op, maskValue); err != nil {
+			if err := frame.WriteFrame(&fw, connToNewConn(c), writeBuf[:maxFragment], false, rsv1, c.client, op, maskValue); err != nil {
 				return err
 			}
 			writeBuf = writeBuf[maxFragment:]
 			op = Continuation
 			continue
 		}
-		return frame.WriteFrame(&fw, c, writeBuf, true, rsv1, c.client, op, maskValue)
+		return frame.WriteFrame(&fw, connToNewConn(c), writeBuf, true, rsv1, c.client, op, maskValue)
 	}
 	return nil
 }
