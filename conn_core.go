@@ -664,5 +664,9 @@ func (c *Conn) WritePong(data []byte) (err error) {
 }
 
 func (c *Conn) Close() {
+	if c == nil {
+		return
+	}
+
 	c.closeWithLock(nil)
 }

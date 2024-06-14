@@ -47,6 +47,14 @@ type multiEventLoopOption struct {
 	parseInParseLoop *bool      //在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
 }
 
+// 默认MultiEventLoop
+var DefaultMultiEventLoop *MultiEventLoop
+
+func init() {
+	DefaultMultiEventLoop = NewMultiEventLoopMust(WithEventLoops(0), WithMaxEventNum(256), WithLogLevel(slog.LevelError)) // epoll, kqueue
+	DefaultMultiEventLoop.Start()
+}
+
 type MultiEventLoop struct {
 	multiEventLoopOption //配置选项
 

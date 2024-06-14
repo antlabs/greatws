@@ -66,15 +66,16 @@ var (
 type Conn struct {
 	conn
 
-	pd      deflate.PermessageDeflateConf      // 上下文接管的控制参数, 由于每个comm的配置都可能不一样，所以需要放在Conn里面
-	mu      sync.Mutex                         // 锁
-	*Config                                    // 配置
-	deCtx   *deflate.DeCompressContextTakeover // 解压缩上下文
-	enCtx   *deflate.CompressContextTakeover   // 压缩上下文
-	parent  *EventLoop                         // event loop
-	task    driver.TaskExecutor                // 任务，该任务会进协程池里面执行
-	rtime   *time.Timer                        // 控制读超时
-	wtime   *time.Timer                        // 控制写超时
+	Callback                                    // callback移至conn中
+	pd       deflate.PermessageDeflateConf      // 上下文接管的控制参数, 由于每个comm的配置都可能不一样，所以需要放在Conn里面
+	mu       sync.Mutex                         // 锁
+	*Config                                     // 配置
+	deCtx    *deflate.DeCompressContextTakeover // 解压缩上下文
+	enCtx    *deflate.CompressContextTakeover   // 压缩上下文
+	parent   *EventLoop                         // event loop
+	task     driver.TaskExecutor                // 任务，该任务会进协程池里面执行
+	rtime    *time.Timer                        // 控制读超时
+	wtime    *time.Timer                        // 控制写超时
 
 	// mu2由 onCloseOnce使用, 这里使用新锁只是为了简化维护的难度
 	// 也可以共用mu，区别 优点:节约内存，缺点:容易出现死锁和需要精心调试代码
