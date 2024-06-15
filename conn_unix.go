@@ -121,7 +121,7 @@ func duplicateSocket(socketFD int) (int, error) {
 }
 
 // 没有加锁的版本，有外层已经有锁保护，所以不需要加锁
-func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
+func (c *Conn) closeWithoutLockOnClose(err error, onClose bool) {
 
 	if c.isClosed() {
 		return
@@ -148,9 +148,9 @@ func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
 
 }
 
-func (c *Conn) closeInner(err error) {
+func (c *Conn) closeWithoutLock(err error) {
 
-	c.closeInnerWithOnClose(err, true)
+	c.closeWithoutLockOnClose(err, true)
 }
 
 func (c *Conn) closeWithLock(err error) {
@@ -167,7 +167,7 @@ func (c *Conn) closeWithLock(err error) {
 	if err == nil {
 		err = io.EOF
 	}
-	c.closeInnerWithOnClose(err, false)
+	c.closeWithoutLockOnClose(err, false)
 
 	c.mu.Unlock()
 
@@ -262,7 +262,7 @@ func (c *Conn) maybeWriteAll(b []byte) (total int, ws writeState, err error) {
 			}
 
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
-			c.closeInner(err)
+			c.closeWithoutLock(err)
 			return total, writeDefault, err
 		}
 
@@ -354,9 +354,10 @@ func (c *Conn) processWebsocketFrame() (err error) {
 	}
 
 	if c.readTimeout > 0 {
-		if err = c.setReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
-			return err
-		}
+		// if err = c.setReadDeadline(time.Time{}); err != nil {
+		// 	return err
+		// }
+		c.setReadDeadline(time.Now().Add(c.readTimeout))
 	}
 	n := 0
 	var success bool
@@ -492,9 +493,14 @@ func (c *Conn) setDeadlineInner(t **time.Timer, tm time.Time, err error) error {
 		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	// c.getLogger().Error("Conn-lock", "addr", uintptr(unsafe.Pointer(c)))
+	defer func() {
+		// c.getLogger().Error("Conn-unlock", "addr", uintptr(unsafe.Pointer(c)))
+		c.mu.Unlock()
+	}()
 	if tm.IsZero() {
 		if *t != nil {
+			// c.getLogger().Error("conn-reset", "addr", uintptr(unsafe.Pointer(c)))
 			(*t).Stop()
 			*t = nil
 		}
