@@ -127,7 +127,6 @@ func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
 		return
 	}
 
-	c.task.Close(nil)
 	if err != nil {
 		err = io.EOF
 	}
@@ -142,6 +141,9 @@ func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
 		c.onCloseOnce.Do(&c.mu2, func() {
 			c.OnClose(c, err)
 		})
+		if c.task != nil {
+			c.task.Close(nil)
+		}
 	}
 
 }

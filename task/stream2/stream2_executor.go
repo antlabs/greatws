@@ -32,7 +32,7 @@ func (s *stream2Executor) AddTask(mu *sync.Mutex, f func() bool) error {
 		mu.Lock()
 	}
 
-	if atomic.LoadInt32(&s.parent.close) == 1 {
+	if atomic.LoadInt32(&s.parent.closed) == 1 {
 		return nil
 	}
 
@@ -121,12 +121,12 @@ func (s *stream2Executor) Close(mu *sync.Mutex) error {
 		mu.Lock()
 	}
 
-	if atomic.LoadInt32(&s.parent.close) == 1 {
+	if atomic.LoadInt32(&s.parent.closed) == 1 {
 		return nil
 	}
 	s.parent.subOnMessageCount(-len(s.list))
 
-	atomic.StoreInt32(&s.parent.close, 1)
+	atomic.StoreInt32(&s.parent.closed, 1)
 	s.list = nil
 	if mu != nil {
 		mu.Unlock()
