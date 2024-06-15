@@ -43,6 +43,10 @@ func (s *stream2Executor) AddTask(mu *sync.Mutex, f func() bool) error {
 			return false
 		}
 
+		mu.Lock()
+		s.parent.addOnMessageCount()
+		mu.Unlock()
+
 		if len(s.parent.haveData) < cap(s.parent.haveData) {
 			select {
 			case s.parent.haveData <- struct{}{}:
@@ -101,6 +105,7 @@ func (s *stream2Executor) run(mu *sync.Mutex) bool {
 				}
 			}()
 			f()
+			s.parent.subOnMessageCount()
 		}()
 	}
 }

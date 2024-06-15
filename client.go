@@ -49,6 +49,7 @@ func ClientOptionToConf(opts ...ClientOption) *DialOption {
 	for _, o := range opts {
 		o(&dial)
 	}
+	dial.defaultSettingAfter()
 	return &dial
 }
 
@@ -87,6 +88,7 @@ func Dial(rawUrl string, opts ...ClientOption) (*Conn, error) {
 		o(&dial)
 	}
 
+	dial.defaultSettingAfter()
 	return dial.Dial()
 }
 

@@ -37,6 +37,7 @@ func NewUpgrade(opts ...ServerOption) *UpgradeServer {
 	for _, o := range opts {
 		o(&conf)
 	}
+	conf.defaultSettingAfter()
 	return &UpgradeServer{config: conf.Config}
 }
 
@@ -55,6 +56,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...ServerOption) (c *C
 		o(&conf)
 	}
 
+	conf.defaultSettingAfter()
 	return upgradeInner(w, r, &conf.Config, nil)
 }
 

@@ -18,13 +18,13 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	_ "github.com/antlabs/greatws/task/io"
 	_ "github.com/antlabs/greatws/task/stream"
 	_ "github.com/antlabs/greatws/task/stream2"
-	_ "github.com/antlabs/greatws/task/unstream"
 )
 
 type taskConfig struct {
@@ -50,9 +50,14 @@ type multiEventLoopOption struct {
 // 默认MultiEventLoop
 var DefaultMultiEventLoop *MultiEventLoop
 
-func init() {
-	DefaultMultiEventLoop = NewMultiEventLoopMust(WithEventLoops(0), WithMaxEventNum(256), WithLogLevel(slog.LevelError)) // epoll, kqueue
-	DefaultMultiEventLoop.Start()
+var defaultOnce sync.Once
+
+func getDefaultMultiEventLoop() *MultiEventLoop {
+
+	defaultOnce.Do(func() {
+		DefaultMultiEventLoop = NewMultiEventLoopMust(WithEventLoops(0), WithMaxEventNum(256), WithLogLevel(slog.LevelError)) // epoll, kqueue
+	})
+	return DefaultMultiEventLoop
 }
 
 type MultiEventLoop struct {
@@ -71,6 +76,8 @@ type MultiEventLoop struct {
 	evLoopStart uint32
 
 	ctx context.Context
+
+	once sync.Once
 }
 
 var (
@@ -140,12 +147,12 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m := &MultiEventLoop{}
 	m.safeConns.init()
-	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: m.level}))
 	m.initDefaultSetting()
 	for _, o := range opts {
 		o(m)
 	}
 	m.initDefaultSetting()
+	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: m.level}))
 
 	if *m.parseInParseLoop {
 		m.parseLoop = newTaskParse()
@@ -171,11 +178,14 @@ func NewMultiEventLoopAndStartMust(opts ...EvOption) (m *MultiEventLoop) {
 
 // 启动多路事件循环
 func (m *MultiEventLoop) Start() {
-	for _, loop := range m.loops {
-		go loop.Loop()
-	}
-	time.Sleep(time.Millisecond * 10)
-	atomic.StoreUint32(&m.evLoopStart, 1)
+
+	m.once.Do(func() {
+		for _, loop := range m.loops {
+			go loop.Loop()
+		}
+		time.Sleep(time.Millisecond * 10)
+		atomic.StoreUint32(&m.evLoopStart, 1)
+	})
 }
 
 func (m *MultiEventLoop) Free() {

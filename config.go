@@ -57,8 +57,15 @@ func (c *Config) defaultSetting() {
 	c.maxDelayWriteDuration = 10 * time.Millisecond
 	// c.runInGoStrategy = taskStrategyBind
 	c.tcpNoDelay = true
-	c.multiEventLoop = DefaultMultiEventLoop
 	// 对于text消息，默认不检查text是utf8字符
 	c.utf8Check = func(b []byte) bool { return true }
 	c.runInGoTask = "stream2" //默认使用stream2模块
+}
+
+func (c *Config) defaultSettingAfter() {
+
+	if c.multiEventLoop == nil {
+		c.multiEventLoop = getDefaultMultiEventLoop()
+	}
+	c.multiEventLoop.Start()
 }
