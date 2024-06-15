@@ -16,7 +16,6 @@ package stream2
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"runtime"
 	"sync/atomic"
@@ -45,14 +44,15 @@ type stream2 struct {
 	conf           *driver.Conf     // 初始化传递过来的参数
 	process        func()           // 处理单个任务的循环
 	onMessageCount int64            //需要处理的OnMessage个数
+	close          int32
 }
 
-func (s *stream2) addOnMessageCount() {
-	atomic.AddInt64(&s.onMessageCount, 1)
+func (s *stream2) addOnMessageCount(n int) {
+	atomic.AddInt64(&s.onMessageCount, int64(n))
 }
 
-func (s *stream2) subOnMessageCount() {
-	atomic.AddInt64(&s.onMessageCount, -1)
+func (s *stream2) subOnMessageCount(n int) {
+	atomic.AddInt64(&s.onMessageCount, int64(n))
 }
 
 func (s *stream2) loadOnMessageCount() int64 {
@@ -122,7 +122,6 @@ func (s *stream2) lteInit() bool {
 }
 
 func (s *stream2) lteMax() bool {
-	fmt.Printf("%d:%d\n", s.goroutines, s.max)
 	return atomic.LoadInt32(&s.goroutines) <= int32(s.max)
 }
 
@@ -226,7 +225,7 @@ func (s *stream2) mainLoopLinux() {
 				"onMessageCount", s.loadOnMessageCount(),
 			)
 
-			if notBusyMachine && notBusyProcess && s.lteMax() {
+			if notBusyMachine && notBusyProcess && s.lteMax() && s.loadOnMessageCount() > int64(s.GetGoroutines()) {
 				s.addGoProcessNum(int(addNum))
 			}
 			tm.Reset(timeout)

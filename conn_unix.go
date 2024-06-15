@@ -127,17 +127,15 @@ func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
 		return
 	}
 
-	if !c.isClosed() {
-
-		if err != nil {
-			err = io.EOF
-		}
-		fd := c.getFd()
-		c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
-		c.parent.del(c)
-		atomic.StoreInt64(&c.fd, -1)
-		atomic.StoreInt32(&c.closed, 1)
+	c.task.Close(nil)
+	if err != nil {
+		err = io.EOF
 	}
+	fd := c.getFd()
+	c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
+	c.parent.del(c)
+	atomic.StoreInt64(&c.fd, -1)
+	atomic.StoreInt32(&c.closed, 1)
 
 	// 这个必须要放在后面
 	if onClose {
@@ -157,8 +155,6 @@ func (c *Conn) closeWithLock(err error) {
 	if c.isClosed() {
 		return
 	}
-
-	c.task.Close(&c.mu)
 
 	c.mu.Lock()
 	if c.isClosed() {
