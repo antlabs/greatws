@@ -178,7 +178,7 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 			ev := &e.events[i]
 			conn := e.parent.getConn(int(ev.Fd))
 			if conn == nil {
-				e.getMultiEventLoop().Logger.Debug("ev.Fd is", "fd", ev.Fd)
+				e.getMultiEventLoop().Logger.Debug("ev.Fd get conn is nil", "fd", ev.Fd)
 				unix.Close(int(ev.Fd))
 				continue
 			}
@@ -225,6 +225,8 @@ func (e *epollState) apiPoll(tv time.Duration) (retVal int, err error) {
 
 func (e *epollState) process(conn *Conn, isRead, isWrite bool) bool {
 	if isRead {
+
+		e.getMultiEventLoop().addReadEvNum()
 		err := conn.processWebsocketFrame()
 		if err != nil {
 			e.getMultiEventLoop().Logger.Info("processWebsocketFrame", "err", err.Error())
@@ -234,6 +236,7 @@ func (e *epollState) process(conn *Conn, isRead, isWrite bool) bool {
 	}
 
 	if isWrite {
+		e.getMultiEventLoop().addWriteEvNum()
 		// 刷新下直接写入失败的数据
 		conn.flushOrClose()
 	}

@@ -44,7 +44,6 @@ type stream2 struct {
 	conf           *driver.Conf     // 初始化传递过来的参数
 	process        func()           // 处理单个任务的循环
 	onMessageCount int64            //需要处理的OnMessage个数
-	closed         int32
 }
 
 func (s *stream2) addOnMessageCount(n int) {

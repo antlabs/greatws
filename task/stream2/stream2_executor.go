@@ -17,7 +17,6 @@ package stream2
 import (
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 )
 
@@ -41,10 +40,7 @@ func myUnlock(mu *sync.Mutex) {
 func (s *stream2Executor) AddTask(mu *sync.Mutex, f func() bool) error {
 
 	myLock(mu)
-	if atomic.LoadInt32(&s.parent.closed) == 1 {
-		myUnlock(mu)
-		return nil
-	}
+
 	process := len(s.list) == 0
 	s.list = append(s.list, f)
 	myUnlock(mu)
@@ -115,14 +111,8 @@ func (s *stream2Executor) run(mu *sync.Mutex) bool {
 func (s *stream2Executor) Close(mu *sync.Mutex) error {
 	myLock(mu)
 
-	if atomic.LoadInt32(&s.parent.closed) == 1 {
-		myUnlock(mu)
-		return nil
-	}
-
 	s.parent.subOnMessageCount(-len(s.list))
 
-	atomic.StoreInt32(&s.parent.closed, 1)
 	s.list = nil
 	myUnlock(mu)
 	return nil
