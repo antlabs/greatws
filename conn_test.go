@@ -30,8 +30,10 @@ func Test_Conn(t *testing.T) {
 		// 在未加入tls功能时，Conn的大小为160字节够用了。
 		fmt.Printf("%d\n", unsafe.Sizeof(Conn{}))
 		// conn大小改变历史
-		// 新增上下文接管，从< 160到184
-		if unsafe.Sizeof(Conn{}) > 184 {
+		// 新增上下文接管，从 小于160到184
+		// 把Callback移到Conn, 从184到200
+		fmt.Printf("conn.size = %d\n", unsafe.Sizeof(conn{}))
+		if unsafe.Sizeof(Conn{}) > 200 {
 			t.Errorf("Conn size:%d is too large", unsafe.Sizeof(Conn{}))
 		}
 	})

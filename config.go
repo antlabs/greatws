@@ -20,10 +20,15 @@ import (
 	"github.com/antlabs/wsutil/deflate"
 )
 
+// Config 配置
+// 有两种方式可以配置相关值
+// 1. NewUpgrade, 这通常在只初始化一次的时候使用
+// 2. greatws.Upgrade(), 这通常在每次请求的时候使用，每个语法的配置参数不一样
+// 这样可以方便的在两种方式中使用, 不需要担心配置参数会有并发修改的情况
 type Config struct {
-	Callback
+	cb                              Callback          // 静态配置
 	deflate.PermessageDeflateConf                     // 静态配置, 从WithXXX函数中获取
-	tcpNoDelay                      bool              //TODO: 加下这个功能
+	tcpNoDelay                      bool              // TODO: 加下这个功能
 	replyPing                       bool              // 开启自动回复
 	ignorePong                      bool              // 忽略pong消息
 	disableBufioClearHack           bool              // 关闭bufio的clear hack优化
@@ -45,7 +50,7 @@ type Config struct {
 
 // 默认设置
 func (c *Config) defaultSetting() {
-	c.Callback = &DefCallback{}
+	c.cb = &DefCallback{}
 	c.maxDelayWriteNum = 10
 	c.windowsMultipleTimesPayloadSize = 1.0
 	c.delayWriteInitBufferSize = 8 * 1024
@@ -55,4 +60,12 @@ func (c *Config) defaultSetting() {
 	// 对于text消息，默认不检查text是utf8字符
 	c.utf8Check = func(b []byte) bool { return true }
 	c.runInGoTask = "stream2" //默认使用stream2模块
+}
+
+func (c *Config) defaultSettingAfter() {
+
+	if c.multiEventLoop == nil {
+		c.multiEventLoop = getDefaultMultiEventLoop()
+	}
+	c.multiEventLoop.Start()
 }

@@ -25,23 +25,36 @@ type stream2Executor struct {
 	parent *stream2
 }
 
-func (s *stream2Executor) AddTask(mu *sync.Mutex, f func() bool) error {
-
+func myLock(mu *sync.Mutex) {
 	if mu != nil {
 		mu.Lock()
 	}
+}
 
-	process := len(s.list) == 0
-	s.list = append(s.list, f)
+func myUnlock(mu *sync.Mutex) {
 	if mu != nil {
 		mu.Unlock()
 	}
+}
+
+func (s *stream2Executor) AddTask(mu *sync.Mutex, f func() bool) error {
+
+	myLock(mu)
+
+	process := len(s.list) == 0
+	s.list = append(s.list, f)
+	myUnlock(mu)
 
 	if process {
+		myLock(mu)
+		listSize := len(s.list)
+		myUnlock(mu)
 		s.parent.fn <- func() bool {
 			s.run(mu)
 			return false
 		}
+
+		s.parent.addOnMessageCount(listSize)
 
 		if len(s.parent.haveData) < cap(s.parent.haveData) {
 			select {
@@ -57,39 +70,28 @@ func (s *stream2Executor) AddTask(mu *sync.Mutex, f func() bool) error {
 func (s *stream2Executor) run(mu *sync.Mutex) bool {
 	var f func() bool
 	for i := 0; ; i++ {
-		if mu != nil {
-			// 加锁
-			mu.Lock()
-		}
+		myLock(mu)
 
 		if len(s.list) == 0 {
-			if mu != nil {
-				mu.Unlock()
-			}
+			myUnlock(mu)
 			return false
 		}
 
 		if len(s.list) == i {
 			s.list = s.list[0:0]
-			if mu != nil {
-				mu.Unlock()
-			}
+			myUnlock(mu)
 			return false
 		}
 
 		if i >= len(s.list) {
 			s.list = s.list[0:0]
-			if mu != nil {
-				mu.Unlock()
-			}
+			myUnlock(mu)
 			return false
 		}
 
 		f = s.list[i]
 		s.list[i] = nil
-		if mu != nil {
-			mu.Unlock()
-		}
+		myUnlock(mu)
 
 		func() {
 			defer func() {
@@ -101,18 +103,17 @@ func (s *stream2Executor) run(mu *sync.Mutex) bool {
 				}
 			}()
 			f()
+			s.parent.subOnMessageCount(-1)
 		}()
 	}
 }
 
 func (s *stream2Executor) Close(mu *sync.Mutex) error {
-	if mu != nil {
-		mu.Lock()
-	}
+	myLock(mu)
+
+	s.parent.subOnMessageCount(-len(s.list))
 
 	s.list = nil
-	if mu != nil {
-		mu.Unlock()
-	}
+	myUnlock(mu)
 	return nil
 }

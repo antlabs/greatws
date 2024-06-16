@@ -28,7 +28,7 @@ func TestUpgradeInner(t *testing.T) {
 			}
 
 			rr := httptest.NewRecorder()
-			_, err = upgradeInner(rr, req, tt.conf)
+			_, err = upgradeInner(rr, req, tt.conf, nil)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("upgradeInner() error = %v, wantErr %v", err, tt.wantErr)

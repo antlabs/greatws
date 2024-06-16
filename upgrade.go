@@ -37,11 +37,16 @@ func NewUpgrade(opts ...ServerOption) *UpgradeServer {
 	for _, o := range opts {
 		o(&conf)
 	}
+	conf.defaultSettingAfter()
 	return &UpgradeServer{config: conf.Config}
 }
 
 func (u *UpgradeServer) Upgrade(w http.ResponseWriter, r *http.Request) (c *Conn, err error) {
-	return upgradeInner(w, r, &u.config)
+	return upgradeInner(w, r, &u.config, nil)
+}
+
+func (u *UpgradeServer) UpgradeV2(w http.ResponseWriter, r *http.Request, cb Callback) (c *Conn, err error) {
+	return upgradeInner(w, r, &u.config, cb)
 }
 
 func Upgrade(w http.ResponseWriter, r *http.Request, opts ...ServerOption) (c *Conn, err error) {
@@ -51,7 +56,8 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...ServerOption) (c *C
 		o(&conf)
 	}
 
-	return upgradeInner(w, r, &conf.Config)
+	conf.defaultSettingAfter()
+	return upgradeInner(w, r, &conf.Config, nil)
 }
 
 func getFdFromConn(c net.Conn) (newFd int, err error) {
@@ -76,7 +82,7 @@ func getFdFromConn(c net.Conn) (newFd int, err error) {
 	return duplicateSocket(int(newFd))
 }
 
-func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (wsCon *Conn, err error) {
+func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config, cb Callback) (wsCon *Conn, err error) {
 	if conf.multiEventLoop == nil {
 		return nil, ErrEventLoopEmpty
 	}
@@ -145,7 +151,14 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config) (wsCon *
 		return nil, err
 	}
 	wsCon.pd = pd
-	conf.Callback.OnOpen(wsCon)
+	wsCon.Callback = cb
+	if cb == nil {
+		wsCon.Callback = conf.cb
+	}
+	wsCon.Callback.OnOpen(wsCon)
+	if wsCon.Callback == nil {
+		panic("callback is nil")
+	}
 	if err = conf.multiEventLoop.add(wsCon); err != nil {
 		return nil, err
 	}

@@ -66,15 +66,16 @@ var (
 type Conn struct {
 	conn
 
-	pd      deflate.PermessageDeflateConf      // 上下文接管的控制参数, 由于每个comm的配置都可能不一样，所以需要放在Conn里面
-	mu      sync.Mutex                         // 锁
-	*Config                                    // 配置
-	deCtx   *deflate.DeCompressContextTakeover // 解压缩上下文
-	enCtx   *deflate.CompressContextTakeover   // 压缩上下文
-	parent  *EventLoop                         // event loop
-	task    driver.TaskExecutor                // 任务，该任务会进协程池里面执行
-	rtime   *time.Timer                        // 控制读超时
-	wtime   *time.Timer                        // 控制写超时
+	Callback                                    // callback移至conn中
+	pd       deflate.PermessageDeflateConf      // 上下文接管的控制参数, 由于每个comm的配置都可能不一样，所以需要放在Conn里面
+	mu       sync.Mutex                         // 锁
+	*Config                                     // 配置
+	deCtx    *deflate.DeCompressContextTakeover // 解压缩上下文
+	enCtx    *deflate.CompressContextTakeover   // 压缩上下文
+	parent   *EventLoop                         // event loop
+	task     driver.TaskExecutor                // 任务，该任务会进协程池里面执行
+	rtime    *time.Timer                        // 控制读超时
+	wtime    *time.Timer                        // 控制写超时
 
 	// mu2由 onCloseOnce使用, 这里使用新锁只是为了简化维护的难度
 	// 也可以共用mu，区别 优点:节约内存，缺点:容易出现死锁和需要精心调试代码
@@ -120,44 +121,42 @@ func duplicateSocket(socketFD int) (int, error) {
 }
 
 // 没有加锁的版本，有外层已经有锁保护，所以不需要加锁
-func (c *Conn) closeInnerWithOnClose(err error, onClose bool) {
+func (c *Conn) closeWithoutLockOnClose(err error, onClose bool) {
 
 	if c.isClosed() {
 		return
 	}
 
-	if !c.isClosed() {
-
-		if err != nil {
-			err = io.EOF
-		}
-		fd := c.getFd()
-		c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
-		c.parent.del(c)
-		atomic.StoreInt64(&c.fd, -1)
-		atomic.StoreInt32(&c.closed, 1)
+	if err != nil {
+		err = io.EOF
 	}
+	fd := c.getFd()
+	c.getLogger().Debug("close conn", slog.Int64("fd", int64(fd)))
+	c.parent.del(c)
+	atomic.StoreInt64(&c.fd, -1)
+	atomic.StoreInt32(&c.closed, 1)
 
 	// 这个必须要放在后面
 	if onClose {
 		c.onCloseOnce.Do(&c.mu2, func() {
 			c.OnClose(c, err)
 		})
+		if c.task != nil {
+			c.task.Close(nil)
+		}
 	}
 
 }
 
-func (c *Conn) closeInner(err error) {
+func (c *Conn) closeWithoutLock(err error) {
 
-	c.closeInnerWithOnClose(err, true)
+	c.closeWithoutLockOnClose(err, true)
 }
 
 func (c *Conn) closeWithLock(err error) {
 	if c.isClosed() {
 		return
 	}
-
-	c.task.Close(&c.mu)
 
 	c.mu.Lock()
 	if c.isClosed() {
@@ -168,7 +167,7 @@ func (c *Conn) closeWithLock(err error) {
 	if err == nil {
 		err = io.EOF
 	}
-	c.closeInnerWithOnClose(err, false)
+	c.closeWithoutLockOnClose(err, false)
 
 	c.mu.Unlock()
 
@@ -263,7 +262,7 @@ func (c *Conn) maybeWriteAll(b []byte) (total int, ws writeState, err error) {
 			}
 
 			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
-			c.closeInner(err)
+			c.closeWithoutLock(err)
 			return total, writeDefault, err
 		}
 
@@ -355,9 +354,10 @@ func (c *Conn) processWebsocketFrame() (err error) {
 	}
 
 	if c.readTimeout > 0 {
-		if err = c.setReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
-			return err
-		}
+		// if err = c.setReadDeadline(time.Time{}); err != nil {
+		// 	return err
+		// }
+		c.setReadDeadline(time.Now().Add(c.readTimeout))
 	}
 	n := 0
 	var success bool
@@ -493,9 +493,14 @@ func (c *Conn) setDeadlineInner(t **time.Timer, tm time.Time, err error) error {
 		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	// c.getLogger().Error("Conn-lock", "addr", uintptr(unsafe.Pointer(c)))
+	defer func() {
+		// c.getLogger().Error("Conn-unlock", "addr", uintptr(unsafe.Pointer(c)))
+		c.mu.Unlock()
+	}()
 	if tm.IsZero() {
 		if *t != nil {
+			// c.getLogger().Error("conn-reset", "addr", uintptr(unsafe.Pointer(c)))
 			(*t).Stop()
 			*t = nil
 		}
