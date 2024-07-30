@@ -663,10 +663,11 @@ func (c *Conn) WritePong(data []byte) (err error) {
 	return c.WriteControl(Pong, data[:])
 }
 
-func (c *Conn) Close() {
+func (c *Conn) Close() error {
 	if c == nil {
-		return
+		return nil
 	}
 
 	c.closeWithLock(nil)
+	return nil
 }
