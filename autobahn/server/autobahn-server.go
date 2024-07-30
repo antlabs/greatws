@@ -40,7 +40,7 @@ func (e *echoHandler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) 
 	// 	fmt.Println("write fail:", err)
 	// }
 	if err := c.WriteMessage(op, msg); err != nil {
-		slog.Error("write fail:", err)
+		slog.Error("write fail:", "err", err.Error())
 	}
 }
 
