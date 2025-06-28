@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/antlabs/pulse/core"
 	_ "github.com/antlabs/task/task/stream"
 	_ "github.com/antlabs/task/task/stream2"
 )
@@ -62,7 +63,7 @@ func getDefaultMultiEventLoop() *MultiEventLoop {
 type MultiEventLoop struct {
 	multiEventLoopOption //配置选项
 
-	safeConns safeConns
+	safeConns core.SafeConns[Conn]
 
 	loops     []*EventLoop
 	parseLoop *taskParse
@@ -145,7 +146,7 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 // 创建一个多路事件循环
 func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m := &MultiEventLoop{}
-	m.safeConns.init()
+	m.safeConns.Init(core.GetMaxFd())
 	m.initDefaultSetting()
 	for _, o := range opts {
 		o(m)
@@ -207,7 +208,7 @@ func (m *MultiEventLoop) add(c *Conn) error {
 		return nil
 	}
 	index := fd % len(m.loops)
-	m.safeConns.addConn(c)
+	m.safeConns.Add(fd, c)
 	// m.loops[index].conns.Store(fd, c)
 	if err := m.loops[index].AddRead(c.getFd()); err != nil {
 		m.loops[index].del(c)

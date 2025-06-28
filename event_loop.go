@@ -81,13 +81,13 @@ func (el *EventLoop) Loop() {
 
 // 获取一个连接
 func (m *EventLoop) getConn(fd int) *Conn {
-	return m.parent.safeConns.getConn(fd)
+	return m.parent.safeConns.Get(fd)
 }
 
 func (el *EventLoop) del(c *Conn) {
 	fd := c.getFd()
 	atomic.AddInt64(&el.parent.curConn, -1)
-	el.parent.safeConns.delConn(c)
+	el.parent.safeConns.Del(fd)
 	// el.conns.Delete(fd)
 	closeFd(fd)
 }
