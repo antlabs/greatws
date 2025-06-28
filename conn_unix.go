@@ -27,7 +27,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/antlabs/greatws/task/driver"
+	"github.com/antlabs/task/task/driver"
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/deflate"
 	"github.com/antlabs/wsutil/enum"
@@ -227,7 +227,7 @@ func connWrite(c *Conn, b []byte) (n int, err error) {
 			c.wbuf = newBuf
 		}
 
-		if err = c.parent.addWrite(c); err != nil {
+		if err = c.parent.AddWrite(c.getFd()); err != nil {
 			return total, err
 		}
 	}
@@ -297,7 +297,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 
 			bytespool.PutBytes(old)
 			c.wbuf = nil
-			if err := c.parent.delWrite(c); err != nil {
+			if err := c.parent.Del(c.getFd()); err != nil {
 				return err
 			}
 		} else {
@@ -316,7 +316,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 				c.wbuf = newBuf
 			}
 
-			if err = c.parent.addWrite(c); err != nil {
+			if err = c.parent.AddWrite(c.getFd()); err != nil {
 				return err
 			}
 		}
@@ -330,7 +330,7 @@ func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
 			"write_state", ws.String())
 	} else {
 		c.getLogger().Debug("wbuf is nil", "fd", c.getFd())
-		if err := c.parent.delWrite(c); err != nil {
+		if err := c.parent.Del(c.getFd()); err != nil {
 			return err
 		}
 	}

@@ -22,9 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/antlabs/greatws/task/io"
-	_ "github.com/antlabs/greatws/task/stream"
-	_ "github.com/antlabs/greatws/task/stream2"
+	_ "github.com/antlabs/task/task/stream"
+	_ "github.com/antlabs/task/task/stream2"
 )
 
 type taskConfig struct {
@@ -190,7 +189,7 @@ func (m *MultiEventLoop) Start() {
 
 func (m *MultiEventLoop) Free() {
 	for _, m := range m.loops {
-		m.apiFree()
+		m.Free()
 	}
 }
 func (m *MultiEventLoop) isStart() bool {
@@ -210,7 +209,7 @@ func (m *MultiEventLoop) add(c *Conn) error {
 	index := fd % len(m.loops)
 	m.safeConns.addConn(c)
 	// m.loops[index].conns.Store(fd, c)
-	if err := m.loops[index].addRead(c); err != nil {
+	if err := m.loops[index].AddRead(c.getFd()); err != nil {
 		m.loops[index].del(c)
 		return err
 	}

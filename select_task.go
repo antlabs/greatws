@@ -16,7 +16,7 @@ package greatws
 import (
 	"context"
 
-	"github.com/antlabs/greatws/task/driver"
+	"github.com/antlabs/task/task/driver"
 )
 
 type selectTask struct {
