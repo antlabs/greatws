@@ -81,11 +81,17 @@ func (el *EventLoop) Loop() {
 			}
 
 			if c == nil {
-				return
+				panic("c is nil")
 			}
 
 			if state.IsWrite() && c.needFlush() {
 				c.flush()
+			}
+
+			if state.IsRead() {
+				if err := c.processWebsocketFrame(); err != nil {
+					c.Close()
+				}
 			}
 		})
 		if err != nil {

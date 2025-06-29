@@ -151,7 +151,7 @@ func (c *Conn) closeWithoutLockOnClose(err error, onClose bool) {
 
 }
 
-func (c *Conn) closeWithoutLock(err error) {
+func (c *Conn) closeNoLock(err error) {
 
 	c.closeWithoutLockOnClose(err, true)
 }
@@ -200,13 +200,13 @@ func connWrite(c *Conn, b []byte) (n int, err error) {
 func (c *Conn) needFlush() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.wbufList != nil && len(c.wbufList) > 0
+	return len(c.wbufList) > 0
 }
 
 func (c *Conn) flush() {
-	// if _, err := c.write(nil); err != nil {
-	// 	slog.Error("failed to flush write buffer", "error", err)
-	// }
+	if _, err := connWrite(c, nil); err != nil {
+		slog.Error("failed to flush write buffer", "error", err)
+	}
 }
 
 // writeToSocket 尝试将数据写入 socket，并处理中断与临时错误
@@ -329,14 +329,14 @@ func (c *Conn) Write(data []byte) (int, error) {
 			}
 			// 把剩余数据放到缓冲区
 			if err := c.handlePartialWrite(&data, n, true); err != nil {
-				c.closeWithoutLock(err)
+				c.closeNoLock(err)
 				return 0, err
 			}
 			return len(data), nil
 		}
 
 		// 发生严重错误
-		c.closeWithoutLock(err)
+		c.closeNoLock(err)
 		return n, err
 	}
 
@@ -357,7 +357,7 @@ func (c *Conn) Write(data []byte) (int, error) {
 			}
 			// 移动剩余数据到缓冲区开始位置
 			if err := c.handlePartialWrite(wbuf, n, false); err != nil {
-				c.closeWithoutLock(err)
+				c.closeNoLock(err)
 				return 0, err
 			}
 
@@ -367,7 +367,7 @@ func (c *Conn) Write(data []byte) (int, error) {
 			return len(data), nil
 		}
 
-		c.closeWithoutLock(err)
+		c.closeNoLock(err)
 		return n, err
 	}
 
