@@ -194,7 +194,7 @@ func connWrite(c *Conn, b []byte) (n int, err error) {
 		return 0, ErrClosed
 	}
 
-	return c.Write(b)
+	return c.write(b)
 }
 
 func (c *Conn) needFlush() bool {
@@ -309,9 +309,7 @@ func (c *Conn) handlePartialWrite(data *[]byte, n int, needAppend bool) error {
 	return nil
 }
 
-func (c *Conn) Write(data []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *Conn) write(data []byte) (int, error) {
 
 	if atomic.LoadInt64(&c.fd) == -1 {
 		return 0, net.ErrClosed
@@ -410,7 +408,9 @@ func (c *Conn) processWebsocketFrame() (err error) {
 	// 不使用io_uring的直接调用read获取buffer数据
 	for i := 0; ; i++ {
 		fd := atomic.LoadInt64(&c.fd)
+		c.mu.Lock()
 		n, err = unix.Read(int(fd), (*c.rbuf)[c.rw:])
+		c.mu.Unlock()
 		c.multiEventLoop.addReadSyscall()
 		// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n",
 		// i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)

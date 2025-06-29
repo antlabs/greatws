@@ -44,7 +44,7 @@ func (u *UpgradeServer) Upgrade(w http.ResponseWriter, r *http.Request) (c *Conn
 	return upgradeInner(w, r, &u.config, nil)
 }
 
-func (u *UpgradeServer) UpgradeV2(w http.ResponseWriter, r *http.Request, cb Callback) (c *Conn, err error) {
+func (u *UpgradeServer) UpgradeLocalCallback(w http.ResponseWriter, r *http.Request, cb Callback) (c *Conn, err error) {
 	return upgradeInner(w, r, &u.config, cb)
 }
 

@@ -76,12 +76,13 @@ func (el *EventLoop) Loop() {
 				if c != nil {
 					c.Close()
 				}
-				el.parent.Error("apiPolll", "err", err.Error())
+				el.parent.Error("apiPoll", "err", err.Error())
 				return
 			}
 
 			if c == nil {
-				panic("c is nil")
+				el.parent.Logger.Error("apiPoll c is nil", "fd", fd)
+				return
 			}
 
 			if state.IsWrite() && c.needFlush() {
@@ -95,7 +96,7 @@ func (el *EventLoop) Loop() {
 			}
 		})
 		if err != nil {
-			el.parent.Error("apiPolll", "err", err.Error())
+			el.parent.Error("apiPoll", "err", err.Error())
 			return
 		}
 	}

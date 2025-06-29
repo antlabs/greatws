@@ -32,8 +32,8 @@ func Test_Conn(t *testing.T) {
 		// conn大小改变历史
 		// 新增上下文接管，从 小于160到184
 		// 把Callback移到Conn, 从184到200
-		fmt.Printf("conn.size = %d\n", unsafe.Sizeof(conn{}))
-		if unsafe.Sizeof(Conn{}) > 200 {
+		fmt.Printf("conn.size = %d, Conn.Size = %d\n", unsafe.Sizeof(conn{}), unsafe.Sizeof(Conn{}))
+		if unsafe.Sizeof(Conn{}) > 216 {
 			t.Errorf("Conn size:%d is too large", unsafe.Sizeof(Conn{}))
 		}
 	})

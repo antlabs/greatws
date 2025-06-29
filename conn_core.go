@@ -66,7 +66,7 @@ type conn struct {
 	wbufList             []*[]byte          // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
 	lenAndMaskSize       int                // payload长度和掩码的长度
 	rh                   frame.FrameHeader  // frame头部
-	fragmentFramePayload *[]byte            // 存放分片帧的缓冲区
+	fragmentFramePayload *[]byte            // 存放分片帧的缓冲区, TODO: 这个可以优化下 把Test_DefaultCallback和 fragmentFrameHeader 放到一个结构体里面
 	fragmentFrameHeader  *frame.FrameHeader // 存放分段帧的头部
 	lastPayloadLen       int32              // 上一次读取的payload长度, TODO启用
 	curState             frameState         // 保存当前状态机的状态
