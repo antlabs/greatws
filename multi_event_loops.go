@@ -42,9 +42,8 @@ type multiEventLoopOption struct {
 	// 如果设计全局任务池，那么概念就会很乱，容易出错，也会临界区竞争
 	configTask taskConfig
 	// taskMode         taskMode
-	level            slog.Level //控制日志等级
-	maxEventNum      int        //每次epoll/kqueue返回时，一次最多处理多少事件
-	parseInParseLoop *bool      //在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
+	level       slog.Level //控制日志等级
+	maxEventNum int        //每次epoll/kqueue返回时，一次最多处理多少事件
 }
 
 // 默认MultiEventLoop
@@ -91,20 +90,12 @@ var (
 // 这个函数会被调用两次
 // 默认 1个event loop分发io事件， 多个parse loop解析websocket包
 func (m *MultiEventLoop) initDefaultSetting() {
-	if m.parseInParseLoop == nil {
-		m.parseInParseLoop = new(bool)
-		*m.parseInParseLoop = true
-	}
 
 	if m.level == 0 {
 		m.level = slog.LevelError //
 	}
 	if m.numLoops == 0 {
-		if *m.parseInParseLoop {
-			m.numLoops = 1
-		} else {
-			m.numLoops = max(defNumLoops, 1)
-		}
+		m.numLoops = max(defNumLoops, 1)
 	}
 
 	if m.maxEventNum == 0 {
