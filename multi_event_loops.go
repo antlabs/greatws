@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/antlabs/pulse/core"
+	_ "github.com/antlabs/task/task/onebyone"
 	_ "github.com/antlabs/task/task/stream"
-	_ "github.com/antlabs/task/task/stream2"
 )
 
 type taskConfig struct {
@@ -145,9 +145,6 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m.initDefaultSetting()
 	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: m.level}))
 
-	if *m.parseInParseLoop {
-		m.parseLoop = newTaskParse()
-	}
 	m.ctx = context.Background()
 	m.loops = make([]*EventLoop, m.numLoops)
 

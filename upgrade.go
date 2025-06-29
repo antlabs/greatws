@@ -22,7 +22,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/antlabs/wsutil/bufio2"
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/deflate"
 )
@@ -99,12 +98,12 @@ func upgradeInner(w http.ResponseWriter, r *http.Request, conf *Config, cb Callb
 
 	// var read *bufio.Reader
 	var conn net.Conn
-	conn, rw, err := hi.Hijack()
+	conn, _, err = hi.Hijack()
 	if err != nil {
 		return nil, err
 	}
 	if !conf.disableBufioClearHack {
-		bufio2.ClearReadWriter(rw)
+		// bufio2.ClearReadWriter(rw)
 	}
 
 	// 是否打开解压缩

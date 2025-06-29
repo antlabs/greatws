@@ -1,8 +1,12 @@
-github.com/antlabs/cpuproc v0.0.0-20240615150837-aa4bcf33806c h1:VHYsrGiynSH8kkauv8Gl+Xd9j883cyNJPUj6m7jEg44=
-github.com/antlabs/cpuproc v0.0.0-20240615150837-aa4bcf33806c/go.mod h1:xRJWwB0CjmTPmZ+I92DKy1N6N/7/IqMC9IPNLbE7Je4=
+github.com/antlabs/pulse v0.0.0-20250629142645-88feb0e9dafe h1:o2gU1Jyfcjs6fnyvK3dAXNl2qvF56mZcWfEm3YkzvEk=
+github.com/antlabs/pulse v0.0.0-20250629142645-88feb0e9dafe/go.mod h1:yYpg246AbPM8BtLWvUA7wjJ7iQjWg8mGJUgW7P89w54=
+github.com/antlabs/task v0.0.0-20250629140636-3fd744b4c2c7 h1:Q+whQMX7LjTNx2zp56ZBlz5NnzeBMy8U2i/RaLSmlJM=
+github.com/antlabs/task v0.0.0-20250629140636-3fd744b4c2c7/go.mod h1:6YSWbWdHmW/4s9L0RkmiSCqAf0qmhmb119yzaSbJXww=
 github.com/antlabs/wsutil v0.1.10 h1:86p67dG8/iiQ+yZrHVl73OPHGnXfXopFSU0w84fLOdE=
 github.com/antlabs/wsutil v0.1.10/go.mod h1:Pk7xYOw3o5iEB6ukiOu+2uJMLYeMVVjJLazFD3okI2A=
+github.com/ebitengine/purego v0.8.4 h1:CF7LEKg5FFOsASUj0+QwaXf8Ht6TlFxg09+S9wz0omw=
+github.com/ebitengine/purego v0.8.4/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/klauspost/compress v1.17.8 h1:YcnTYrq7MikUT7k0Yb5eceMmALQPYBW/Xltxn0NAMnU=
 github.com/klauspost/compress v1.17.8/go.mod h1:Di0epgTjJY877eYKx5yC51cX2A2Vl2ibi7bDH9ttBbw=
-golang.org/x/sys v0.20.0 h1:Od9JTbYCk261bKm4M/mw7AklTlFYIa0bIp9BgSm1S8Y=
-golang.org/x/sys v0.20.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
+golang.org/x/sys v0.31.0 h1:ioabZlmFYtWhL+TRYpcnNlLwhyxaM9kWTDEmfnprqik=
+golang.org/x/sys v0.31.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=
