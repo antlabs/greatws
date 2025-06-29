@@ -63,7 +63,7 @@ type conn struct {
 	rbuf                 *[]byte            // 读缓冲区
 	rr                   int                // rbuf读索引，rfc标准里面有超过4个字节的大包，所以索引只能用int类型
 	rw                   int                // rbuf写索引，rfc标准里面有超过4个字节的大包，所以索引只能用int类型
-	wbuf                 *[]byte            // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
+	wbufList             []*[]byte          // 写缓冲区, 当直接Write失败时，会将数据写入缓冲区
 	lenAndMaskSize       int                // payload长度和掩码的长度
 	rh                   frame.FrameHeader  // frame头部
 	fragmentFramePayload *[]byte            // 存放分片帧的缓冲区

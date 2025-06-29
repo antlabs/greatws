@@ -15,6 +15,7 @@ package greatws
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -67,9 +68,24 @@ func (e *EventLoop) Shutdown(ctx context.Context) error {
 func (el *EventLoop) Loop() {
 	for !el.shutdown {
 		_, err := el.Poll(time.Duration(time.Second*100), func(fd int, state core.State, err error) {
+			c := el.parent.safeConns.GetUnsafe(fd)
 			if err != nil {
+				if errors.Is(err, core.EAGAIN) {
+					return
+				}
+				if c != nil {
+					c.Close()
+				}
 				el.parent.Error("apiPolll", "err", err.Error())
 				return
+			}
+
+			if c == nil {
+				return
+			}
+
+			if state.IsWrite() && c.needFlush() {
+				c.flush()
 			}
 		})
 		if err != nil {
@@ -91,6 +107,15 @@ func (el *EventLoop) del(c *Conn) {
 	// el.conns.Delete(fd)
 	closeFd(fd)
 }
+
+func (el *EventLoop) delRead(c *Conn) error {
+	return el.Del(c.getFd())
+}
+
+func (el *EventLoop) addWrite(c *Conn) error {
+	return el.AddWrite(c.getFd())
+}
+
 func (el *EventLoop) GetApiName() string {
 	return el.Name()
 }

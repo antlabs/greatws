@@ -390,3 +390,15 @@ func WithServerReadMaxMessage(size int64) ServerOption {
 		o.readMaxMessage = size
 	}
 }
+
+func WithFlowBackPressureRemoveRead() ServerOption {
+	return func(o *ConnOption) {
+		o.flowBackPressureRemoveRead = true
+	}
+}
+
+func WithClientFlowBackPressureRemoveRead() ClientOption {
+	return func(o *DialOption) {
+		o.flowBackPressureRemoveRead = true
+	}
+}
