@@ -1,0 +1,19 @@
+{
+	"outdir": "./report/",
+	"servers": [
+		{
+			"agent": "non-tls-elastic",
+			"url": "ws://127.0.0.1:9004/autobahn-elastic",
+			"options": {
+				"version": 18
+			}
+		}
+	],
+	"cases": [
+		"*"
+	],
+	"exclude-cases": [
+		""
+	],
+	"exclude-agent-cases": {}
+}

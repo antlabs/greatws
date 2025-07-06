@@ -15,10 +15,12 @@ package greatws
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
-	"github.com/antlabs/greatws/task/driver"
+	"github.com/antlabs/pulse/core"
+	"github.com/antlabs/task/task/driver"
 )
 
 type evFlag int
@@ -29,9 +31,9 @@ const (
 )
 
 type EventLoop struct {
-	maxFd     int // highest file descriptor currently registered
-	setSize   int // max number of file descriptors tracked
-	*apiState     // 每个平台对应的异步io接口/epoll/kqueue/iouring(暂时不加，除非io-uring性能超过epoll才加回来)
+	maxFd   int // highest file descriptor currently registered
+	setSize int // max number of file descriptors tracked
+	core.PollingApi
 	shutdown  bool
 	parent    *MultiEventLoop
 	localTask selectTasks
@@ -54,7 +56,7 @@ func CreateEventLoop(setSize int, flag evFlag, parent *MultiEventLoop) (e *Event
 	// e.localTask.taskConfig = e.parent.configTask.taskConfig
 	// e.localTask.taskMode = e.parent.configTask.taskMode
 	// e.localTask.init()
-	err = e.apiCreate(flag)
+	e.PollingApi, err = core.Create(core.TriggerType(flag))
 	return e, err
 }
 
@@ -65,9 +67,36 @@ func (e *EventLoop) Shutdown(ctx context.Context) error {
 
 func (el *EventLoop) Loop() {
 	for !el.shutdown {
-		_, err := el.apiPoll(time.Duration(time.Second * 100))
+		_, err := el.Poll(time.Duration(time.Second*100), func(fd int, state core.State, err error) {
+			c := el.parent.safeConns.Get(fd)
+			if err != nil {
+				if errors.Is(err, core.EAGAIN) {
+					return
+				}
+				if c != nil {
+					c.Close()
+				}
+				el.parent.Error("apiPoll", "err", err.Error())
+				return
+			}
+
+			if c == nil {
+				el.parent.Logger.Error("apiPoll c is nil", "fd", fd)
+				return
+			}
+
+			if state.IsWrite() && c.needFlush() {
+				c.flush()
+			}
+
+			if state.IsRead() {
+				if err := c.processWebsocketFrame(); err != nil {
+					c.Close()
+				}
+			}
+		})
 		if err != nil {
-			el.parent.Error("apiPolll", "err", err.Error())
+			el.parent.Error("apiPoll", "err", err.Error())
 			return
 		}
 	}
@@ -75,16 +104,25 @@ func (el *EventLoop) Loop() {
 
 // 获取一个连接
 func (m *EventLoop) getConn(fd int) *Conn {
-	return m.parent.safeConns.getConn(fd)
+	return m.parent.safeConns.Get(fd)
 }
 
 func (el *EventLoop) del(c *Conn) {
 	fd := c.getFd()
 	atomic.AddInt64(&el.parent.curConn, -1)
-	el.parent.safeConns.delConn(c)
+	el.parent.safeConns.Del(fd)
 	// el.conns.Delete(fd)
 	closeFd(fd)
 }
+
+func (el *EventLoop) delRead(c *Conn) error {
+	return el.Del(c.getFd())
+}
+
+func (el *EventLoop) addWrite(c *Conn) error {
+	return el.AddWrite(c.getFd())
+}
+
 func (el *EventLoop) GetApiName() string {
-	return el.apiName()
+	return el.Name()
 }

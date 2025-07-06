@@ -22,12 +22,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
-	"github.com/antlabs/greatws/task/driver"
+	"github.com/antlabs/pulse/core"
+	"github.com/antlabs/task/task/driver"
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/deflate"
 	"github.com/antlabs/wsutil/enum"
@@ -148,7 +151,7 @@ func (c *Conn) closeWithoutLockOnClose(err error, onClose bool) {
 
 }
 
-func (c *Conn) closeWithoutLock(err error) {
+func (c *Conn) closeNoLock(err error) {
 
 	c.closeWithoutLockOnClose(err, true)
 }
@@ -190,155 +193,196 @@ func connWrite(c *Conn, b []byte) (n int, err error) {
 	if c.isClosed() {
 		return 0, ErrClosed
 	}
-	// 如果缓冲区有数据，合并数据
-	curN := len(b)
 
-	if c.wbuf != nil && len(*c.wbuf) > 0 {
-		if err = c.flushOrCloseInner(false); err != nil {
-			return 0, err
-		}
-
-		if c.wbuf != nil && len(*c.wbuf) > 0 {
-			old := c.wbuf
-			*c.wbuf = append(*c.wbuf, b...)
-			c.getLogger().Debug("write message", "wbuf_size", len(*c.wbuf), "newbuf.size", len(b))
-			if old != c.wbuf {
-				bytespool.PutBytes(old)
-			}
-
-			return curN, nil
-		}
-	}
-
-	total, ws, err := c.maybeWriteAll(b)
-	if err != nil {
-		return 0, err
-	}
-	old := b
-	if total != len(b) {
-		// 记录写入的数据，如果有写入，分配一个新的缓冲区
-		if total > 0 && ws == writeEagain {
-			newBuf := bytespool.GetBytes(len(old) - total + enum.MaxFrameHeaderSize)
-			*newBuf = (*newBuf)[:len(old)-total]
-			copy(*newBuf, (old)[total:])
-			if c.wbuf != nil {
-				bytespool.PutBytes(c.wbuf)
-			}
-			c.wbuf = newBuf
-		}
-
-		if err = c.parent.addWrite(c); err != nil {
-			return total, err
-		}
-	}
-
-	// 出错
-	return curN, err
+	return c.write(b)
 }
 
-func (c *Conn) maybeWriteAll(b []byte) (total int, ws writeState, err error) {
-	// i 的目的是debug的时候使用
-	var n int
-	fd := c.getFd()
-	for i := 0; len(b) > 0; i++ {
-
-		// 直接写入数据
-		n, err = unix.Write(int(fd), b)
-		// 统计调用	unix.Write的次数
-		c.multiEventLoop.addWriteSyscall()
-
-		if err != nil {
-			// 如果是EAGAIN或EINTR错误，说明是写缓冲区满了，或者被信号中断，将数据写入缓冲区
-			if errors.Is(err, unix.EINTR) {
-				continue
-			}
-
-			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
-				if n < 0 {
-					n = 0
-				}
-
-				return total + n, writeEagain, nil
-			}
-
-			c.getLogger().Error("writeOrAddPoll", "err", err.Error(), slog.Int64("fd", c.fd), slog.Int("b.len", len(b)))
-			c.closeWithoutLock(err)
-			return total, writeDefault, err
-		}
-
-		if n > 0 {
-			b = b[n:]
-			total += n
-		}
-	}
-
-	return total, writeSuccess, nil
+func (c *Conn) needFlush() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.wbufList) > 0
 }
 
-// 该函数有3个动作
-// 写成功
-// EAGAIN，等待可写再写
-// 报错，直接关闭这个fd
-func (c *Conn) flushOrCloseInner(needLock bool) (err error) {
-	if needLock {
-		c.mu.Lock()
-		defer c.mu.Unlock()
+func (c *Conn) flush() {
+	if _, err := connWrite(c, nil); err != nil {
+		slog.Error("failed to flush write buffer", "error", err)
+	}
+}
+
+// writeToSocket 尝试将数据写入 socket，并处理中断与临时错误
+func (c *Conn) writeToSocket(data []byte) (int, error) {
+
+	n, err := core.Write(c.getFd(), data)
+	if err == nil {
+		return n, nil
+	}
+	if err == syscall.EINTR {
+		return 0, err // 被信号中断，直接返回
+	}
+	if err == syscall.EAGAIN {
+		return 0, err // 资源暂时不可用
+	}
+	return 0, err // 其他错误直接返回
+
+}
+
+// appendToWbufList 将数据添加到写缓冲区列表
+// 先检查最后一个缓冲区是否有足够空间，如果有就直接append
+// 如果没有，将部分数据append到最后一个缓冲区，剩余部分创建新的readBufferSize大小的缓冲区
+func (c *Conn) appendToWbufList(data []byte, oldLen int) {
+	if len(data) == 0 {
+		return
 	}
 
-	if c.isClosed() {
-		return ErrClosed
+	// 如果wbufList为空，直接创建新的缓冲区
+	if len(c.wbufList) == 0 {
+		// 使用原始长度，对齐，提升复用率
+		newBuf := bytespool.GetBytes(len(data) + oldLen)
+		copy(*newBuf, data)
+		*newBuf = (*newBuf)[:len(data)]
+		c.wbufList = append(c.wbufList, newBuf)
+		return
 	}
 
-	if c.wbuf != nil {
-		old := c.wbuf
-		total, ws, err := c.maybeWriteAll(*old)
+	// 获取最后一个缓冲区
+	lastBuf := c.wbufList[len(c.wbufList)-1]
+	remainingSpace := cap(*lastBuf) - len(*lastBuf)
 
-		if total == len(*old) {
+	// 如果最后一个缓冲区有足够空间，直接append
+	if remainingSpace >= len(data) {
+		*lastBuf = append(*lastBuf, data...)
+		return
+	}
 
-			bytespool.PutBytes(old)
-			c.wbuf = nil
-			if err := c.parent.delWrite(c); err != nil {
-				return err
-			}
-		} else {
+	// 如果空间不够，先填满最后一个缓冲区
+	if remainingSpace > 0 {
+		*lastBuf = append(*lastBuf, data[:remainingSpace]...)
+		data = data[remainingSpace:] // 剩余的数据
+	}
 
-			// 记录写入的数据，如果有写入，分配一个新的缓冲区
-			if total > 0 && ws == writeEagain {
-				newBuf := bytespool.GetBytes(len(*old) - total + enum.MaxFrameHeaderSize)
-				*newBuf = (*newBuf)[:len(*old)-total]
-				if len(*newBuf) < len(*old)-total {
-					panic("newBuf is too small")
-				}
-				copy(*newBuf, (*old)[total:])
-				if c.wbuf != nil {
-					bytespool.PutBytes(c.wbuf)
-				}
-				c.wbuf = newBuf
-			}
-
-			if err = c.parent.addWrite(c); err != nil {
-				return err
-			}
+	// 为剩余数据创建新的缓冲区（使用readBufferSize大小）
+	for len(data) > 0 {
+		newBuf := bytespool.GetBytes(len(data) + oldLen)
+		copySize := len(data)
+		if copySize > cap(*newBuf) {
+			copySize = cap(*newBuf)
 		}
-		c.getLogger().Debug("flush or close after",
-			"total", total,
-			"err-is-nil", err == nil,
-			"need-write", len(*old),
-			"addr", c.getPtr(),
-			"closed", c.isClosed(),
-			"fd", c.getFd(),
-			"write_state", ws.String())
+		copy(*newBuf, data[:copySize])
+		*newBuf = (*newBuf)[:copySize]
+		c.wbufList = append(c.wbufList, newBuf)
+		data = data[copySize:]
+	}
+}
+
+// handlePartialWrite 处理部分写入的情况，创建新缓冲区存储剩余数据
+func (c *Conn) handlePartialWrite(data *[]byte, n int, needAppend bool) error {
+	if n < 0 {
+		n = 0
+	}
+
+	// 如果已经全部写入，不需要创建新缓冲区
+	if n >= len(*data) {
+		return nil
+	}
+
+	remainingData := (*data)[n:]
+	if needAppend {
+		c.appendToWbufList(remainingData, len(*data))
 	} else {
-		c.getLogger().Debug("wbuf is nil", "fd", c.getFd())
-		if err := c.parent.delWrite(c); err != nil {
+		copy(*data, (*data)[n:])
+		*data = (*data)[:len(*data)-n]
+	}
+
+	// 部分写入成功，或者全部失败
+	// 如果启用了流量背压机制且有部分写入，先删除读事件
+	if c.Config.flowBackPressureRemoveRead {
+		if delErr := c.eventLoop().delRead(c); delErr != nil {
+			slog.Error("failed to delete read event", "error", delErr)
+		}
+	} else {
+		if err := c.eventLoop().addWrite(c); err != nil {
+			slog.Error("failed to add write event", "error", err)
 			return err
 		}
 	}
-	return err
+
+	return nil
 }
 
-func (c *Conn) flushOrClose() (err error) {
-	return c.flushOrCloseInner(true)
+func (c *Conn) write(data []byte) (int, error) {
+
+	if atomic.LoadInt64(&c.fd) == -1 {
+		return 0, net.ErrClosed
+	}
+
+	if len(data) == 0 && len(c.wbufList) == 0 {
+		return 0, nil
+	}
+
+	if len(c.wbufList) == 0 {
+		n, err := c.writeToSocket(data)
+		if errors.Is(err, core.EAGAIN) || errors.Is(err, core.EINTR) || err == nil {
+			if n == len(data) {
+				return n, nil
+			}
+			// 把剩余数据放到缓冲区
+			if err := c.handlePartialWrite(&data, n, true); err != nil {
+				c.closeNoLock(err)
+				return 0, err
+			}
+			return len(data), nil
+		}
+
+		// 发生严重错误
+		c.closeNoLock(err)
+		return n, err
+	}
+
+	if len(data) > 0 {
+		c.appendToWbufList(data, len(data))
+	}
+
+	i := 0
+	for i < len(c.wbufList) {
+		wbuf := c.wbufList[i]
+		n, err := c.writeToSocket(*wbuf)
+		if errors.Is(err, core.EAGAIN) || errors.Is(err, core.EINTR) || err == nil /*写入成功，也有n != len(*wbuf)的情况*/ {
+			if n == len(*wbuf) {
+				bytespool.PutBytes(wbuf)
+				c.wbufList[i] = nil
+				i++
+				continue
+			}
+			// 移动剩余数据到缓冲区开始位置
+			if err := c.handlePartialWrite(wbuf, n, false); err != nil {
+				c.closeNoLock(err)
+				return 0, err
+			}
+
+			// 移动未处理的缓冲区到列表开始位置
+			copy(c.wbufList, c.wbufList[i:])
+			c.wbufList = c.wbufList[:len(c.wbufList)-i]
+			return len(data), nil
+		}
+
+		c.closeNoLock(err)
+		return n, err
+	}
+
+	// 所有数据都已写入
+	c.wbufList = c.wbufList[:0]
+	// 需要进的逻辑
+	// 1.如果是垂直触发模式，并且启用了流量背压机制，重新添加读事件
+	// 2.如果是水平触发模式也重新添加读事件，为了去掉写事件
+	// 3.如果是垂直触发模式，并且启用了流量背压机制，则需要添加读事件
+
+	// 不需要进的逻辑
+	// 1.如果是垂直触发模式，并且没有启用流量背压机制，不需要重新添加事件, TODO
+
+	if err := c.eventLoop().ResetRead(c.getFd()); err != nil {
+		slog.Error("failed to reset read event", "error", err)
+	}
+	return len(data), nil
 }
 
 // kqueu/epoll模式下，读取数据
@@ -364,7 +408,9 @@ func (c *Conn) processWebsocketFrame() (err error) {
 	// 不使用io_uring的直接调用read获取buffer数据
 	for i := 0; ; i++ {
 		fd := atomic.LoadInt64(&c.fd)
+		c.mu.Lock()
 		n, err = unix.Read(int(fd), (*c.rbuf)[c.rw:])
+		c.mu.Unlock()
 		c.multiEventLoop.addReadSyscall()
 		// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n",
 		// i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
@@ -532,4 +578,8 @@ func (c *Conn) setWriteDeadline(t time.Time) error {
 }
 func closeFd(fd int) {
 	unix.Close(int(fd))
+}
+
+func (c *Conn) eventLoop() *EventLoop {
+	return c.parent
 }

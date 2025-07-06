@@ -265,18 +265,30 @@ func WithClientCallbackInEventLoop() ClientOption {
 }
 
 // 默认模式
-// 19.1 配置服务端使用stream模式处理请求，go程会复用，保证OnMessage的处理是有序的
-func WithServerStreamMode() ServerOption {
+// 19.1 配置服务端使用onebyone模式处理请求，从生命周期的开始到结束，这个Message只会被这个go程处理
+func WithServerOneByOneMode() ServerOption {
 	return func(o *ConnOption) {
-		o.runInGoTask = "stream2"
+		o.runInGoTask = "onebyone"
 	}
 }
 
 // 默认模式
-// 19.2 配置客户端使用stream模式处理请求，go程会复用，保证OnMessage的处理是有序的
-func WithClientStreamMode() ClientOption {
+// 19.2 配置客户端使用onebyone模式处理请求，从生命周期的开始到结束，这个Message只会被这个go程处理
+func WithClientOneByOneMode() ClientOption {
 	return func(o *DialOption) {
-		o.runInGoTask = "stream2"
+		o.runInGoTask = "onebyone"
+	}
+}
+
+func WithServerElasticMode() ServerOption {
+	return func(o *ConnOption) {
+		o.runInGoTask = "elastic"
+	}
+}
+
+func WithClientElasticMode() ClientOption {
+	return func(o *DialOption) {
+		o.runInGoTask = "elastic"
 	}
 }
 
@@ -295,21 +307,6 @@ func WithClientCustomTaskMode(taskName string) ClientOption {
 		if len(taskName) > 0 {
 			o.runInGoTask = taskName
 		}
-	}
-}
-
-// 20.1 配置服务端使用unstream模式处理请求，go程会复用, 但是不保证顺序性，如果你的请求对时序有要求，请不要使用这个模式,
-func WithServerUnstreamMode() ServerOption {
-	return func(o *ConnOption) {
-		o.runInGoTask = "unstream"
-	}
-}
-
-// 默认stream2，忽略这个API
-// 19.2 配置客户端使用stream模式处理请求，go程会复用，但是不保证顺序性，如果你的请求对时序有要求，请不要使用这个模式，
-func WithClientUnstreamMode() ClientOption {
-	return func(o *DialOption) {
-		o.runInGoTask = "unstream"
 	}
 }
 
@@ -388,5 +385,17 @@ func WithClientReadMaxMessage(size int64) ClientOption {
 func WithServerReadMaxMessage(size int64) ServerOption {
 	return func(o *ConnOption) {
 		o.readMaxMessage = size
+	}
+}
+
+func WithFlowBackPressureRemoveRead() ServerOption {
+	return func(o *ConnOption) {
+		o.flowBackPressureRemoveRead = true
+	}
+}
+
+func WithClientFlowBackPressureRemoveRead() ClientOption {
+	return func(o *DialOption) {
+		o.flowBackPressureRemoveRead = true
 	}
 }

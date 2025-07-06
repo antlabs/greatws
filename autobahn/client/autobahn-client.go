@@ -117,7 +117,6 @@ func main() {
 		greatws.WithEventLoops(runtime.NumCPU()/2),
 		greatws.WithBusinessGoNum(50, 10, 10000),
 		greatws.WithMaxEventNum(1000),
-		greatws.WithDisableParseInParseLoop(),
 		greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 
 	h.m.Start()

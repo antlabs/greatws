@@ -22,9 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/antlabs/greatws/task/io"
-	_ "github.com/antlabs/greatws/task/stream"
-	_ "github.com/antlabs/greatws/task/stream2"
+	"github.com/antlabs/pulse/core"
+	_ "github.com/antlabs/task/task"
 )
 
 type taskConfig struct {
@@ -42,9 +41,8 @@ type multiEventLoopOption struct {
 	// 如果设计全局任务池，那么概念就会很乱，容易出错，也会临界区竞争
 	configTask taskConfig
 	// taskMode         taskMode
-	level            slog.Level //控制日志等级
-	maxEventNum      int        //每次epoll/kqueue返回时，一次最多处理多少事件
-	parseInParseLoop *bool      //在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
+	level       slog.Level //控制日志等级
+	maxEventNum int        //每次epoll/kqueue返回时，一次最多处理多少事件
 }
 
 // 默认MultiEventLoop
@@ -63,7 +61,7 @@ func getDefaultMultiEventLoop() *MultiEventLoop {
 type MultiEventLoop struct {
 	multiEventLoopOption //配置选项
 
-	safeConns safeConns
+	safeConns core.SafeConns[Conn]
 
 	loops     []*EventLoop
 	parseLoop *taskParse
@@ -91,20 +89,12 @@ var (
 // 这个函数会被调用两次
 // 默认 1个event loop分发io事件， 多个parse loop解析websocket包
 func (m *MultiEventLoop) initDefaultSetting() {
-	if m.parseInParseLoop == nil {
-		m.parseInParseLoop = new(bool)
-		*m.parseInParseLoop = true
-	}
 
 	if m.level == 0 {
 		m.level = slog.LevelError //
 	}
 	if m.numLoops == 0 {
-		if *m.parseInParseLoop {
-			m.numLoops = 1
-		} else {
-			m.numLoops = max(defNumLoops, 1)
-		}
+		m.numLoops = max(defNumLoops, 1)
 	}
 
 	if m.maxEventNum == 0 {
@@ -146,7 +136,7 @@ func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
 // 创建一个多路事件循环
 func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m := &MultiEventLoop{}
-	m.safeConns.init()
+	m.safeConns.Init(core.GetMaxFd())
 	m.initDefaultSetting()
 	for _, o := range opts {
 		o(m)
@@ -154,9 +144,6 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	m.initDefaultSetting()
 	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: m.level}))
 
-	if *m.parseInParseLoop {
-		m.parseLoop = newTaskParse()
-	}
 	m.ctx = context.Background()
 	m.loops = make([]*EventLoop, m.numLoops)
 
@@ -190,7 +177,7 @@ func (m *MultiEventLoop) Start() {
 
 func (m *MultiEventLoop) Free() {
 	for _, m := range m.loops {
-		m.apiFree()
+		m.Free()
 	}
 }
 func (m *MultiEventLoop) isStart() bool {
@@ -208,9 +195,9 @@ func (m *MultiEventLoop) add(c *Conn) error {
 		return nil
 	}
 	index := fd % len(m.loops)
-	m.safeConns.addConn(c)
+	m.safeConns.Add(fd, c)
 	// m.loops[index].conns.Store(fd, c)
-	if err := m.loops[index].addRead(c); err != nil {
+	if err := m.loops[index].AddRead(c.getFd()); err != nil {
 		m.loops[index].del(c)
 		return err
 	}

@@ -15,7 +15,6 @@ package greatws
 
 import (
 	"log/slog"
-	"runtime"
 )
 
 type EvOption func(e *MultiEventLoop)
@@ -68,30 +67,6 @@ func WithLogLevel(level slog.Level) EvOption {
 func WithMaxEventNum(num int) EvOption {
 	return func(e *MultiEventLoop) {
 		e.maxEventNum = num
-	}
-}
-
-// 关闭: 在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
-func WithDisableParseInParseLoop() EvOption {
-	return func(e *MultiEventLoop) {
-		if e.parseInParseLoop == nil {
-			e.parseInParseLoop = new(bool)
-		}
-		*e.parseInParseLoop = false
-		if runtime.GOOS == "linux" {
-			*e.parseInParseLoop = true
-		}
-
-	}
-}
-
-// 默认行为: 在解析循环中运行websocket OnOpen, OnMessage, OnClose 回调函数
-func WithParseInParseLoop() EvOption {
-	return func(e *MultiEventLoop) {
-		if e.parseInParseLoop == nil {
-			e.parseInParseLoop = new(bool)
-		}
-		*e.parseInParseLoop = true
 	}
 }
 

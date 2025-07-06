@@ -59,28 +59,6 @@ type handler struct {
 }
 
 // 运行在业务线程
-func (h *handler) echoUnstream(w http.ResponseWriter, r *http.Request) {
-	opts := []greatws.ServerOption{
-		greatws.WithServerReplyPing(),
-		greatws.WithServerDecompression(),
-		greatws.WithServerIgnorePong(),
-		greatws.WithServerCallback(&echoHandler{}),
-		greatws.WithServerUnstreamMode(),
-		greatws.WithServerEnableUTF8Check(),
-		greatws.WithServerReadTimeout(5 * time.Second),
-		greatws.WithServerMultiEventLoop(h.m),
-	}
-
-	if *runInEventLoop {
-		opts = append(opts, greatws.WithServerCallbackInEventLoop())
-	}
-
-	c, err := greatws.Upgrade(w, r, opts...)
-	if err != nil {
-		slog.Error("Upgrade fail:", "err", err.Error())
-	}
-	_ = c
-}
 
 // 运行在io线程
 func (h *handler) echoRunInIo(w http.ResponseWriter, r *http.Request) {
@@ -106,30 +84,7 @@ func (h *handler) echoRunInIo(w http.ResponseWriter, r *http.Request) {
 	_ = c
 }
 
-// 使用stream模式运行， 一个websocket一个go程
-func (h *handler) echoRunStream(w http.ResponseWriter, r *http.Request) {
-	opts := []greatws.ServerOption{
-		greatws.WithServerReplyPing(),
-		greatws.WithServerDecompression(),
-		greatws.WithServerIgnorePong(),
-		greatws.WithServerCallback(&echoHandler{}),
-		greatws.WithServerEnableUTF8Check(),
-		greatws.WithServerReadTimeout(5 * time.Second),
-		greatws.WithServerMultiEventLoop(h.m),
-	}
-
-	if *runInEventLoop {
-		opts = append(opts, greatws.WithServerCallbackInEventLoop())
-	}
-
-	c, err := greatws.Upgrade(w, r, opts...)
-	if err != nil {
-		slog.Error("Upgrade fail:", "err", err.Error())
-	}
-	_ = c
-}
-
-func (h *handler) echoRunStream2(w http.ResponseWriter, r *http.Request) {
+func (h *handler) echoRunOneByOne(w http.ResponseWriter, r *http.Request) {
 	opts := []greatws.ServerOption{
 		greatws.WithServerReplyPing(),
 		greatws.WithServerDecompression(),
@@ -138,8 +93,7 @@ func (h *handler) echoRunStream2(w http.ResponseWriter, r *http.Request) {
 		greatws.WithServerEnableUTF8Check(),
 		// greatws.WithServerReadTimeout(5 * time.Second),
 		greatws.WithServerMultiEventLoop(h.m),
-		greatws.WithServerStreamMode(),
-		greatws.WithServerCallbackInEventLoop(),
+		greatws.WithServerOneByOneMode(),
 	}
 
 	if *runInEventLoop {
@@ -153,8 +107,7 @@ func (h *handler) echoRunStream2(w http.ResponseWriter, r *http.Request) {
 	_ = c
 }
 
-// 使用parse loop模式运行， 一个websocket一个go程
-func (h *handler) echoRunInParseLoop(w http.ResponseWriter, r *http.Request) {
+func (h *handler) echoRunElastic(w http.ResponseWriter, r *http.Request) {
 	opts := []greatws.ServerOption{
 		greatws.WithServerReplyPing(),
 		greatws.WithServerDecompression(),
@@ -162,8 +115,8 @@ func (h *handler) echoRunInParseLoop(w http.ResponseWriter, r *http.Request) {
 		greatws.WithServerCallback(&echoHandler{}),
 		greatws.WithServerEnableUTF8Check(),
 		greatws.WithServerReadTimeout(5 * time.Second),
-		greatws.WithServerMultiEventLoop(h.parseLoop),
-		greatws.WithServerStreamMode(),
+		greatws.WithServerMultiEventLoop(h.m),
+		greatws.WithServerElasticMode(),
 	}
 
 	if *runInEventLoop {
@@ -266,8 +219,7 @@ func main() {
 	h.m = greatws.NewMultiEventLoopMust(
 		greatws.WithEventLoops(runtime.NumCPU()/2),
 		greatws.WithBusinessGoNum(50, 10, 10000),
-		greatws.WithMaxEventNum(1000),
-		greatws.WithDisableParseInParseLoop(),
+		greatws.WithMaxEventNum(256),
 		greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
 
@@ -275,9 +227,6 @@ func main() {
 		greatws.WithBusinessGoNum(50, 10, 10000),
 		greatws.WithMaxEventNum(1000),
 		greatws.WithLogLevel(slog.LevelError),
-	}
-	if runtime.GOOS == "darwin" {
-		parseLoopOpt = append(parseLoopOpt, greatws.WithParseInParseLoop())
 	}
 
 	h.parseLoop = greatws.NewMultiEventLoopMust(parseLoopOpt...) // epoll, kqueue
@@ -292,11 +241,9 @@ func main() {
 		}
 	}()
 	mux := &http.ServeMux{}
-	mux.HandleFunc("/autobahn-unstream", h.echoUnstream)
 	mux.HandleFunc("/autobahn-io", h.echoRunInIo)
-	mux.HandleFunc("/autobahn-stream", h.echoRunStream)
-	mux.HandleFunc("/autobahn-stream2", h.echoRunStream2)
-	mux.HandleFunc("/autobahn-parse-loop", h.echoRunInParseLoop)
+	mux.HandleFunc("/autobahn-onebyone", h.echoRunOneByOne)
+	mux.HandleFunc("/autobahn-elastic", h.echoRunElastic)
 	mux.HandleFunc("/no-context-takeover-decompression", h.echoNoContextDecompression)
 	mux.HandleFunc("/no-context-takeover-decompression-and-compression", h.echoNoContextDecompressionAndCompression)
 	mux.HandleFunc("/context-takeover-decompression", h.echoContextTakeoverDecompression)
