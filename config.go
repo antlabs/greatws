@@ -60,7 +60,7 @@ func (c *Config) defaultSetting() {
 	c.tcpNoDelay = true
 	// 对于text消息，默认不检查text是utf8字符
 	c.utf8Check = func(b []byte) bool { return true }
-	c.runInGoTask = "stream" //默认使用stream2模块
+	c.runInGoTask = "elastic" //默认使用elastic模块
 }
 
 func (c *Config) defaultSettingAfter() {

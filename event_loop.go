@@ -68,7 +68,7 @@ func (e *EventLoop) Shutdown(ctx context.Context) error {
 func (el *EventLoop) Loop() {
 	for !el.shutdown {
 		_, err := el.Poll(time.Duration(time.Second*100), func(fd int, state core.State, err error) {
-			c := el.parent.safeConns.GetUnsafe(fd)
+			c := el.parent.safeConns.Get(fd)
 			if err != nil {
 				if errors.Is(err, core.EAGAIN) {
 					return

@@ -84,16 +84,16 @@ func (h *handler) echoRunInIo(w http.ResponseWriter, r *http.Request) {
 	_ = c
 }
 
-// 使用stream模式运行， 一个websocket一个go程
-func (h *handler) echoRunStream(w http.ResponseWriter, r *http.Request) {
+func (h *handler) echoRunOneByOne(w http.ResponseWriter, r *http.Request) {
 	opts := []greatws.ServerOption{
 		greatws.WithServerReplyPing(),
 		greatws.WithServerDecompression(),
 		greatws.WithServerIgnorePong(),
 		greatws.WithServerCallback(&echoHandler{}),
 		greatws.WithServerEnableUTF8Check(),
-		greatws.WithServerReadTimeout(5 * time.Second),
+		// greatws.WithServerReadTimeout(5 * time.Second),
 		greatws.WithServerMultiEventLoop(h.m),
+		greatws.WithServerOneByOneMode(),
 	}
 
 	if *runInEventLoop {
@@ -107,17 +107,16 @@ func (h *handler) echoRunStream(w http.ResponseWriter, r *http.Request) {
 	_ = c
 }
 
-func (h *handler) echoRunOneByOne(w http.ResponseWriter, r *http.Request) {
+func (h *handler) echoRunElastic(w http.ResponseWriter, r *http.Request) {
 	opts := []greatws.ServerOption{
 		greatws.WithServerReplyPing(),
 		greatws.WithServerDecompression(),
 		greatws.WithServerIgnorePong(),
 		greatws.WithServerCallback(&echoHandler{}),
 		greatws.WithServerEnableUTF8Check(),
-		// greatws.WithServerReadTimeout(5 * time.Second),
+		greatws.WithServerReadTimeout(5 * time.Second),
 		greatws.WithServerMultiEventLoop(h.m),
-		greatws.WithServerOneByOneMode(),
-		greatws.WithServerCallbackInEventLoop(),
+		greatws.WithServerElasticMode(),
 	}
 
 	if *runInEventLoop {
@@ -220,7 +219,7 @@ func main() {
 	h.m = greatws.NewMultiEventLoopMust(
 		greatws.WithEventLoops(runtime.NumCPU()/2),
 		greatws.WithBusinessGoNum(50, 10, 10000),
-		greatws.WithMaxEventNum(1000),
+		greatws.WithMaxEventNum(256),
 		greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
 
@@ -243,8 +242,8 @@ func main() {
 	}()
 	mux := &http.ServeMux{}
 	mux.HandleFunc("/autobahn-io", h.echoRunInIo)
-	mux.HandleFunc("/autobahn-stream", h.echoRunStream)
 	mux.HandleFunc("/autobahn-onebyone", h.echoRunOneByOne)
+	mux.HandleFunc("/autobahn-elastic", h.echoRunElastic)
 	mux.HandleFunc("/no-context-takeover-decompression", h.echoNoContextDecompression)
 	mux.HandleFunc("/no-context-takeover-decompression-and-compression", h.echoNoContextDecompressionAndCompression)
 	mux.HandleFunc("/context-takeover-decompression", h.echoContextTakeoverDecompression)

@@ -280,6 +280,18 @@ func WithClientOneByOneMode() ClientOption {
 	}
 }
 
+func WithServerElasticMode() ServerOption {
+	return func(o *ConnOption) {
+		o.runInGoTask = "elastic"
+	}
+}
+
+func WithClientElasticMode() ClientOption {
+	return func(o *DialOption) {
+		o.runInGoTask = "elastic"
+	}
+}
+
 // 20.1 配置自定义task, 需要确保传入的值是有效的，不然会panic
 func WithServerCustomTaskMode(taskName string) ServerOption {
 	return func(o *ConnOption) {
