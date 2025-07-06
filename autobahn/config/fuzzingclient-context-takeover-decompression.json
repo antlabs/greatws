@@ -1,0 +1,19 @@
+{
+    "outdir": "./report/",
+    "servers": [
+        {
+            "agent": "context-takeover-decompression-no-tls",
+            "url": "ws://localhost:9004/context-takeover-decompression",
+            "options": {
+                "version": 18
+            }
+        }
+    ],
+    "cases": [
+        "*"
+    ],
+    "exclude-cases": [
+        ""
+    ],
+    "exclude-agent-cases": {}
+} 
