@@ -5,7 +5,7 @@ go 1.24.1
 require (
 	github.com/antlabs/pulse v0.0.0-20250706072419-b71307af8032
 	github.com/antlabs/task v0.0.0-20250706071410-2137462668b9
-	github.com/antlabs/wsutil v0.1.10
+	github.com/antlabs/wsutil v0.1.13
 	golang.org/x/sys v0.31.0
 )
 
