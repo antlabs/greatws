@@ -45,6 +45,7 @@ type DialOption struct {
 
 func ClientOptionToConf(opts ...ClientOption) *DialOption {
 	var dial DialOption
+	dial.dialTimeout = defaultTimeout
 	dial.defaultSetting()
 	for _, o := range opts {
 		o(&dial)
@@ -60,7 +61,6 @@ func DialConf(rawUrl string, conf *DialOption) (*Conn, error) {
 	}
 
 	conf.u = u
-	conf.dialTimeout = defaultTimeout
 	if conf.Header == nil {
 		conf.Header = make(http.Header)
 	}
@@ -192,6 +192,10 @@ func (d *DialOption) Dial() (wsCon *Conn, err error) {
 		return nil, err
 	}
 
+	var deadline time.Time
+	if d.dialTimeout != 0 {
+		deadline = time.Now().Add(d.dialTimeout)
+	}
 	hostName := hostname.GetHostName(d.u)
 	var conn net.Conn
 	conn, err = net.DialTimeout("tcp", hostName, d.dialTimeout)
@@ -199,14 +203,17 @@ func (d *DialOption) Dial() (wsCon *Conn, err error) {
 		return nil, fmt.Errorf("net.Dial:%w", err)
 	}
 
-	err = conn.SetDeadline(time.Time{})
-	conn = d.tlsConn(conn)
 	defer func() {
 		if err != nil && conn != nil {
 			conn.Close()
 			conn = nil
 		}
 	}()
+
+	if err = conn.SetDeadline(deadline); err != nil {
+		return nil, err
+	}
+	conn = d.tlsConn(conn)
 
 	if err = req.Write(conn); err != nil {
 		return nil, fmt.Errorf("write req fail:%w", err)
@@ -235,6 +242,10 @@ func (d *DialOption) Dial() (wsCon *Conn, err error) {
 
 	if err = d.validateRsp(rsp, secWebSocket); err != nil {
 		return
+	}
+
+	if err = conn.SetDeadline(time.Time{}); err != nil {
+		return nil, err
 	}
 
 	fd, err := getFdFromConn(conn)
