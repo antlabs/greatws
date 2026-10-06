@@ -53,14 +53,24 @@ type Config struct {
 func (c *Config) defaultSetting() {
 	c.cb = &DefCallback{}
 	c.maxDelayWriteNum = 10
-	c.windowsMultipleTimesPayloadSize = 1.0
+	// 2.0 而不是 1.0: 读缓冲区按上一条消息的 payload 长度算, 1.0 时
+	// 正好贴着消息大小, 帧头一多就要扩容; 2.0 留出一倍余量。
+	// 多出来的内存只在每个连接的一块缓冲区上, 不随消息数增长。
+	c.windowsMultipleTimesPayloadSize = 2.0
 	c.delayWriteInitBufferSize = 8 * 1024
 	c.maxDelayWriteDuration = 10 * time.Millisecond
 	// c.runInGoStrategy = taskStrategyBind
 	c.tcpNoDelay = true
 	// 对于text消息，默认不检查text是utf8字符
 	c.utf8Check = func(b []byte) bool { return true }
-	c.runInGoTask = "elastic" //默认使用elastic模块
+	// 默认 elastic: 回调投给线程池, 保证同一连接有序。
+	//
+	// 但 event loop 只分发时(默认, 见 WithParseInWorkerPool)不能再叠加
+	// 这一层: 解析 goroutine 已经在自己的线程上跑, 回调再投一次池就是
+	// 白排一次队, 实测(12 核 1KB echo)从 165 万掉到 22 万 TPS。
+	// 那里在 newConn 里按 multiEventLoop 是不是开了解析池改, 见
+	// conn_unix.go 的 newConn。
+	c.runInGoTask = "elastic"
 }
 
 func (c *Config) defaultSettingAfter() {

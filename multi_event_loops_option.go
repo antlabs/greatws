@@ -26,6 +26,28 @@ func WithEventLoops(num int) EvOption {
 	}
 }
 
+// event loop 只做事件的分发，websocket frame 的读取和解析放到一组
+// goroutine 里面做, 见 task_parse.go。默认不开, 这些工作都在 event loop
+// 自己的 go 程上做。
+//
+// 解析的 goroutine 按 fd 取模分片, 一个连接固定落到一个上, 所以连接的
+// 读缓冲和解析状态还是只被一个 go 程碰, 不需要加锁。
+func WithParseInWorkerPool() EvOption {
+	return func(e *MultiEventLoop) {
+		e.parseInWorkerPool = true
+	}
+}
+
+// 解析 goroutine 的数量, 默认 NumCPU。开了 WithParseInWorkerPool 才有意义。
+//
+// 解析 goroutine 和 event loop 抢同一批 P, 核数不够时每多一个就多一份
+// 调度延迟, 所以有时比 NumCPU 少反而快。n <= 0 表示用默认值。
+func WithParseGoroutines(n int) EvOption {
+	return func(e *MultiEventLoop) {
+		e.parseGoroutines = n
+	}
+}
+
 // 最小业务goroutine数量, 控制业务go程数量
 // initCount: 初始化的协程数
 // min: 最小协程数
@@ -77,3 +99,29 @@ func WithMaxEventNum(num int) EvOption {
 // 		e.flag |= EVENT_IOURING
 // 	}
 // }
+
+// 关掉解析池, 让 event loop 自己读和解析 websocket frame。
+//
+// 默认是开的: event loop 只分发, 读取和解析在一组按 fd 分片的 goroutine
+// 上做, 实测比 event loop 全包更快。这个选项给需要 event loop 独占
+// 连接的场景用。
+func WithParseInEventLoop() EvOption {
+	return func(e *MultiEventLoop) {
+		e.parseInEventLoop = true
+	}
+}
+
+// 投完一批让出 P。默认不让, 见 multi_event_loops.go 里 gosched 的说明。
+func WithGosched() EvOption {
+	return func(e *MultiEventLoop) {
+		e.gosched = true
+	}
+}
+
+// 一次投给解析 goroutine 的连接数上限。默认 parseBatchSize。
+// 调小(比如 1)就等于每条连接单个投递, 和 fib 的粒度一样。
+func WithParseBatchSize(n int) EvOption {
+	return func(e *MultiEventLoop) {
+		e.batchSize = n
+	}
+}

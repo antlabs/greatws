@@ -99,14 +99,15 @@ func (m *MultiEventLoop) addRealloc() {
 	atomic.AddInt64(&m.realloc, 1)
 }
 
-// 对内接口
-func (m *MultiEventLoop) addReadSyscall() {
-	atomic.AddInt64(&m.readSyssall, 1)
+// 系统调用计数。就是两个原子加, 没做本地批量——试过按分片本地累加再
+// 攒批上报, 但写路径可以从任意 go 程调(用户的 OnMessage、超时线程),
+// 本地字段就要跨 go 程写, 反而要加锁; 换来的是 1.7% 的吞吐, 不值。
+func (c *Conn) addReadSyscall() {
+	atomic.AddInt64(&c.multiEventLoop.readSyssall, 1)
 }
 
-// 对内接口
-func (m *MultiEventLoop) addWriteSyscall() {
-	atomic.AddInt64(&m.writeSyscall, 1)
+func (c *Conn) addWriteSyscall() {
+	atomic.AddInt64(&c.multiEventLoop.writeSyscall, 1)
 }
 
 // 对内接口

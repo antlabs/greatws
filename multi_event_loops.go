@@ -43,6 +43,29 @@ type multiEventLoopOption struct {
 	// taskMode         taskMode
 	level       slog.Level //控制日志等级
 	maxEventNum int        //每次epoll/kqueue返回时，一次最多处理多少事件
+
+	// parseInWorkerPool 让 event loop 只做事件的分发，websocket frame 的
+	// 读取和解析放到 taskParse 的 goroutine 里面做，见 task_parse.go。
+	// 默认开; WithParseInWorkerPool 是在它已经开了的时候的显式写法,
+	// 也没有关掉它的开关——关掉是 WithParseInEventLoop。
+	parseInWorkerPool bool
+	// parseGoroutines 是解析 goroutine 的数量, 0 表示 NumCPU。
+	// 只在 parseInWorkerPool 开着时有意义。
+	parseGoroutines int
+	// parsePinned 让解析 goroutine 绑核, 见 WithParsePinned。
+	parsePinned bool
+	// parseInEventLoop 关掉解析池, 让 event loop 自己读和解析。
+	// 默认开解析池, 见 initDefaultSetting。
+	parseInEventLoop bool
+	// noGosched 关掉投递后的让出(P 上的 runtime.Gosched)。
+	//
+	// 默认关掉让出: fib 的注释说让出有 10%~25%, 但那是它的 poller 只
+	// 传一个信号、worker 立刻在同 P 上跑的场景; 我们这边投完要让 10 个
+	// 分片各自醒一次, 让出反而把这一轮的活推给下一轮。实测(12 核/1KB
+	// echo)不让出比让出高 0.2%, 四轮一致。想开用 WithGosched。
+	gosched bool
+	// batchSize 是一批攒多少连接再投, 0 表示默认(parseBatchSize)。
+	batchSize int
 }
 
 // 默认MultiEventLoop
@@ -83,11 +106,42 @@ var (
 	defTaskMin       = 50
 	defTaskMax       = 30000
 	defTaskInitCount = 8
-	defNumLoops      = runtime.NumCPU()
+	defNumLoops      = defaultNumLoops()
 )
 
+// cpusPerEventLoop 是一个 event loop 默认等几个 CPU 的事件。
+//
+// event loop 只等事件、分发, 占不满一个核, 但解析 goroutine 是实打实
+// 吃满的。默认按 4 个核一个 loop 算。
+const cpusPerEventLoop = 4
+
+// defaultNumLoops 是没设置 WithEventLoops 时起的 event loop 数:
+// NumCPU 除以 cpusPerEventLoop 向下取整, 至少一个。
+func defaultNumLoops() int {
+	return max(runtime.NumCPU()/cpusPerEventLoop, 1)
+}
+
+// parsePerCPU 是每个核配几个解析 goroutine。
+//
+// 5/3 而不是 1, 也不是按核数减 loop 数算: 解析 goroutine 有相当一部分
+// 时间在等 socket(读)和等内核(写 syscall), 不是一直在算, 所以要超订
+// 才能把核喂饱。超订多少是实测出来的——12 核上跑 1KB echo, 每核 5/3 个
+// (12 核 → 20 个) 比每核一个高 24%, 五轮交错测量无一例外; 再多(每核
+// 2.33 个, 28 个) 开始掉。
+//
+// 代价是尾延迟: 超订越多, 同一个核上排队的越多, TP99 越长。这里选的
+// 是"吞吐接近最高、尾延迟还能接受"的点, 见 README 的性能一节。
+const parsePerCPU = 5.0 / 3.0
+
+// defaultParseGoroutines 是没设置 WithParseGoroutines 时的解析
+// goroutine 数。至少一个。
+func defaultParseGoroutines(loops int) int {
+	return max(int(float64(runtime.NumCPU())*parsePerCPU+0.5), 1)
+}
+
 // 这个函数会被调用两次
-// 默认 1个event loop分发io事件， 多个parse loop解析websocket包
+// 默认开启 WithParseInWorkerPool 时, 多个event loop只分发io事件, 多个parse
+// goroutine解析websocket包; 不开时 event loop 自己把读和解析都做了。
 func (m *MultiEventLoop) initDefaultSetting() {
 
 	if m.level == 0 {
@@ -122,6 +176,12 @@ func (m *MultiEventLoop) initDefaultSetting() {
 	if m.flag == 0 {
 		m.flag = EVENT_EPOLL
 	}
+
+	// 默认让 event loop 只分发, 解析在 worker pool 里。之前是反过来,
+	// 实测(12 核 1KB echo)默认走解析池后吞吐更高、尾延迟也更好。
+	if !m.parseInEventLoop {
+		m.parseInWorkerPool = true
+	}
 }
 
 func NewMultiEventLoopMust(opts ...EvOption) *MultiEventLoop {
@@ -143,6 +203,14 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 	}
 	m.initDefaultSetting()
 	m.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: m.level}))
+
+	if m.parseInWorkerPool {
+		pg := m.parseGoroutines
+		if pg <= 0 {
+			pg = defaultParseGoroutines(m.numLoops)
+		}
+		m.parseLoop = newTaskParse(pg)
+	}
 
 	m.ctx = context.Background()
 	m.loops = make([]*EventLoop, m.numLoops)
@@ -195,6 +263,9 @@ func (m *MultiEventLoop) add(c *Conn) error {
 		return nil
 	}
 	index := fd % len(m.loops)
+	if m.parseLoop != nil {
+		m.parseLoop.addFD(fd)
+	}
 	m.safeConns.Add(fd, c)
 	// m.loops[index].conns.Store(fd, c)
 	if err := m.loops[index].AddRead(c.getFd()); err != nil {

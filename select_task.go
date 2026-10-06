@@ -15,6 +15,7 @@ package greatws
 
 import (
 	"context"
+	"sync"
 
 	"github.com/antlabs/task/task/driver"
 )
@@ -24,6 +25,14 @@ type selectTask struct {
 	task           driver.Tasker
 }
 type selectTasks []selectTask
+
+// newTaskMu 串行化 newTask。
+//
+// driver 的 NewExecutor 会动 driver 对象自己的计数(见 antlabs/task 里
+// io/elastic 的 NewExecutor), 而 newConn 是每个连接一个 go 程在跑,
+// 并发进去就是数据竞争。这里排一下队: 建连路径每连接只走一次, 代价
+// 可以忽略。
+var newTaskMu sync.Mutex
 
 func newSelectTask(ctx context.Context, initCount, min, max int, c *driver.Conf) []selectTask {
 
@@ -40,6 +49,9 @@ func newSelectTask(ctx context.Context, initCount, min, max int, c *driver.Conf)
 }
 
 func (s *selectTasks) newTask(taskName string) driver.TaskExecutor {
+	newTaskMu.Lock()
+	defer newTaskMu.Unlock()
+
 	for _, val := range *s {
 		if val.taskDriverName == taskName {
 			return val.task.NewExecutor()

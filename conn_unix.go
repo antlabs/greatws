@@ -99,7 +99,17 @@ func newConn(fd int64, client bool, conf *Config) (*Conn, error) {
 		parent: conf.multiEventLoop.getEventLoop(int(fd)),
 	}
 
-	c.task = c.parent.localTask.newTask(conf.runInGoTask)
+	// event loop 只分发时, 读和解析已经在解析 goroutine 上跑了, 回调
+	// 就直接在那上面执行(io 模式), 不再投一次线程池: 多排一次队实测
+	// (12 核 1KB echo)把 165 万 TPS 打到 22 万。
+	//
+	// 这里只读, 不改 conf——conf 是多个连接共用的, 在 newConn 里改它
+	// 会让并发建连撞上。
+	taskName := conf.runInGoTask
+	if conf.multiEventLoop.parseLoop != nil && taskName == "elastic" {
+		taskName = "io"
+	}
+	c.task = c.parent.localTask.newTask(taskName)
 	if conf.readTimeout > 0 {
 		err := c.setReadDeadline(time.Now().Add(conf.readTimeout))
 		if err != nil {
@@ -212,7 +222,11 @@ func (c *Conn) flush() {
 // writeToSocket 尝试将数据写入 socket，并处理中断与临时错误
 func (c *Conn) writeToSocket(data []byte) (int, error) {
 
-	n, err := core.Write(c.getFd(), data)
+	// socketWrite 是平台自己的实现, 见 conn_syscall_*.go: Linux 上走
+	// RawSyscall, 绕开标准库那层 entersyscall/exitsyscall -- 连接都是
+	// 非阻塞的, 这两个调用不会停在内核里, 那层只为可能阻塞的调用而付。
+	n, err := socketWrite(c.getFd(), data)
+	c.addWriteSyscall()
 	if err == nil {
 		return n, nil
 	}
@@ -408,10 +422,12 @@ func (c *Conn) processWebsocketFrame() (err error) {
 	// 不使用io_uring的直接调用read获取buffer数据
 	for i := 0; ; i++ {
 		fd := atomic.LoadInt64(&c.fd)
+		// 这一次要读多少, 读之前先记下来: c.rw 会被下面改掉
+		readBuf := (*c.rbuf)[c.rw:]
 		c.mu.Lock()
-		n, err = unix.Read(int(fd), (*c.rbuf)[c.rw:])
+		n, err = socketRead(int(fd), readBuf)
 		c.mu.Unlock()
-		c.multiEventLoop.addReadSyscall()
+		c.addReadSyscall()
 		// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n",
 		// i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
 		if err != nil {
@@ -444,7 +460,6 @@ func (c *Conn) processWebsocketFrame() (err error) {
 
 		if len((*c.rbuf)[c.rw:]) == 0 {
 			// 说明缓存区已经满了。需要扩容
-			// 并且如果使用epoll ET mode，需要继续读取，直到返回EAGAIN, 不然会丢失数据
 			// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
 			if _, err = c.readHeader(); err != nil {
 				err = fmt.Errorf("read header err: %w", err)
@@ -461,6 +476,18 @@ func (c *Conn) processWebsocketFrame() (err error) {
 			// 	// panic(fmt.Sprintf("需要扩容:rw(%d):rr(%d):currState(%v)", c.rw, c.rr, c.curState.String()))
 			// }
 			continue
+		}
+
+		// 短读: 要了 len(readBuf) 个字节, 只给回来 n 个, 说明内核把
+		// socket 里现成的数据都给了, 已经读空, 下一次 read 必然返回
+		// EAGAIN。ET 模式下没读完的数据不会再触发边缘, 所以危险的是
+		// "读了一半就走"; 读空之后就不存在这个问题了, 新数据到达会触发
+		// 新的边缘。省掉的是那次一定返回 EAGAIN 的 read。
+		//
+		// 这个判断要放在"缓存区满"之后: 缓存区满时 n 也等于
+		// len(readBuf), 但那只是没地方放了, 不代表 socket 读空了。
+		if n < len(readBuf) {
+			break
 		}
 	}
 

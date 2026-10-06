@@ -1,0 +1,109 @@
+// Copyright 2023-2024 antlabs. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//go:build linux && !greatws_rwsyscall && !greatws_slowsyscall
+
+package greatws
+
+import (
+	"unsafe"
+
+	"golang.org/x/sys/unix"
+)
+
+// 默认实现: recvfrom(2)/sendto(2), 直进 socket 层。
+//
+// 与 read(2)/write(2) 的区别是后者要先过 VFS(vfs_read / vfs_write),
+// 再由 socket 的文件操作转到 socket 层的收发。多出来的只有 fd 到 file
+// 的转换和几个模式检查, 但它在每条消息至少一次的路径上。
+//
+// 实测(12 核 / 10000 连接 / 1024B / C++ 客户端 echo, 2 个 event loop +
+// 10 个解析 goroutine): recvfrom/sendto 1,689,307 TPS, read/write
+// 1,642,562, 差 2.8%, 尾延迟 8.0ms 对 8.2ms。所以默认用这一版。
+// 想量 read/write 的, 用 -tags greatws_rwsyscall。
+//
+// 想量 RawSyscall 本身值多少(对比标准库那层 entersyscall/exitsyscall),
+// 用 -tags greatws_slowsyscall, 见 conn_syscall_linux_slow.go。
+//
+// 不是 socket 的 fd 退回 read/write: 库的 fd 正常都来自 accept, 但
+// 用户可能拿别的 fd 来用, 那种情况下 recvfrom 返回 ENOTSOCK, 这里让
+// 它退回 VFS, 和没有任何优化时一样。
+
+// socketRead 从 fd 读取数据。
+//
+// 这里是自己发 syscall, 而不是用 x/sys/unix 的 Recvfrom: 后者会把对端
+// 地址填进一个 RawSockaddrAny 并检查 family, 每次调用都要付这份开销,
+// 而我们只关心数据本身。
+func socketRead(fd int, p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	// recvfrom(fd, buf, len, flags=0, src_addr=NULL, addrlen=NULL)
+	n, _, errno := unix.RawSyscall6(unix.SYS_RECVFROM,
+		uintptr(fd), uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)),
+		0, 0, 0)
+	if errno == unix.ENOTSOCK {
+		// 不是 socket, 退回 VFS
+		return rawRead(fd, p)
+	}
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(n), nil
+}
+
+// socketWrite 向 fd 写入数据。
+//
+// 不使用 x/sys/unix 的 Sendto: 它的生成代码是
+//
+//	_, _, e1 := Syscall6(SYS_SENDTO, ...)
+//
+// 把内核返回的实际写入字节数丢掉了。非阻塞 socket 上 sendto 可能只写出去
+// 一部分, 调用方要靠这个 n 判断部分写(writeToSocket 的上层就是靠
+// n != len(data) 决定剩余数据进缓冲区的), 丢掉它会直接丢数据。
+func socketWrite(fd int, p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	n, _, errno := unix.RawSyscall6(unix.SYS_SENDTO,
+		uintptr(fd), uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)),
+		0, 0, 0)
+	if errno == unix.ENOTSOCK {
+		// 不是 socket, 退回 VFS
+		return rawWrite(fd, p)
+	}
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(n), nil
+}
+
+// rawRead / rawWrite 是 VFS 那条路, 兜底用。
+func rawRead(fd int, p []byte) (int, error) {
+	n, _, errno := unix.RawSyscall(unix.SYS_READ,
+		uintptr(fd), uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)))
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(n), nil
+}
+
+func rawWrite(fd int, p []byte) (int, error) {
+	n, _, errno := unix.RawSyscall(unix.SYS_WRITE,
+		uintptr(fd), uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)))
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(n), nil
+}

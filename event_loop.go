@@ -16,6 +16,7 @@ package greatws
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -66,6 +67,15 @@ func (e *EventLoop) Shutdown(ctx context.Context) error {
 }
 
 func (el *EventLoop) Loop() {
+	// 一轮 epoll 收上来的连接先进这个 batch, 一轮结束整批投给解析
+	// goroutine, 而不是每个 fd 单独投一次。
+	//
+	// 批次的内存从池里取, 投出去就交出了所有权, 解析 goroutine 用完归还。
+	batchSize := el.parent.batchSize
+	if batchSize <= 0 {
+		batchSize = parseBatchSize
+	}
+	batch := getBatch()
 	for !el.shutdown {
 		_, err := el.Poll(time.Duration(time.Second*100), func(fd int, state core.State, err error) {
 			c := el.parent.safeConns.Get(fd)
@@ -85,6 +95,23 @@ func (el *EventLoop) Loop() {
 				return
 			}
 
+			// 开了解析池时这里只攒事件, 读取和解析都在解析 goroutine 上
+			// 做。读写合成一个任务, 让它们还是在一个 go 程上跑, 和没有
+			// 解析池时一样。
+			if el.parent.parseLoop != nil {
+				batch = append(batch, parseTask{
+					c:       c,
+					isRead:  state.IsRead(),
+					isWrite: state.IsWrite(),
+				})
+				// 攒够一批就先投, 免得一轮太长时后面的连接干等。
+				if len(batch) >= batchSize {
+					el.parent.parseLoop.addTask(batch)
+					batch = getBatch()
+				}
+				return
+			}
+
 			if state.IsWrite() && c.needFlush() {
 				c.flush()
 			}
@@ -98,6 +125,15 @@ func (el *EventLoop) Loop() {
 		if err != nil {
 			el.parent.Error("apiPoll", "err", err.Error())
 			return
+		}
+
+		if el.parent.parseLoop != nil && len(batch) > 0 {
+			el.parent.parseLoop.addTask(batch)
+			batch = getBatch()
+			// 默认不让出 P, 见 multiEventLoopOption.gosched 的说明。
+			if el.parent.gosched {
+				runtime.Gosched()
+			}
 		}
 	}
 }
