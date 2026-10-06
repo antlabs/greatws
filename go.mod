@@ -3,7 +3,7 @@ module github.com/antlabs/greatws
 go 1.24.1
 
 require (
-	github.com/antlabs/pulse v0.0.0-20261006151000-8fe38114c515
+	github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515
 	github.com/antlabs/task v0.0.0-20250706071410-2137462668b9
 	github.com/antlabs/wsutil v0.1.13
 	golang.org/x/sys v0.31.0

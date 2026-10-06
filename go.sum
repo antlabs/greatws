@@ -1,5 +1,7 @@
-github.com/antlabs/pulse v0.0.0-20261006151000-8fe38114c515 h1:sXUMupHOSaFzaR/i+TZfu5DW9j4sydbO3jy3M4ZK2PM=
-github.com/antlabs/pulse v0.0.0-20261006151000-8fe38114c515/go.mod h1:CR7Uwu/iaQvySMEXk44joshcjkxDS6hRFW8lp8Zq8rg=
+github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515 h1:+n3rv2k7ygjOxWeu5imRXKzNEiC6EZNlA0ZY+BLYJo4=
+github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515/go.mod h1:CR7Uwu/iaQvySMEXk44joshcjkxDS6hRFW8lp8Zq8rg=
+github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515 h1:+n3rv2k7ygjOxWeu5imRXKzNEiC6EZNlA0ZY+BLYJo4=
+github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515/go.mod h1:CR7Uwu/iaQvySMEXk44joshcjkxDS6hRFW8lp8Zq8rg=
 github.com/antlabs/task v0.0.0-20250706071410-2137462668b9 h1:fNu1p6qI8qGdbmMnxwmsCHPMs6pBm5m3UeCcMkjYSyA=
 github.com/antlabs/task v0.0.0-20250706071410-2137462668b9/go.mod h1:6YSWbWdHmW/4s9L0RkmiSCqAf0qmhmb119yzaSbJXww=
 github.com/antlabs/wsutil v0.1.13 h1:3kWvUhBApta8af4QrS95dV4kLCarNOnCeN1Vby2JnN8=
