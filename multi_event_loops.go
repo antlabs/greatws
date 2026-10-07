@@ -62,10 +62,21 @@ type multiEventLoopOption struct {
 	parseInEventLoop bool
 	// noGosched 关掉投递后的让出(P 上的 runtime.Gosched)。
 	//
-	// 默认关掉让出: fib 的注释说让出有 10%~25%, 但那是它的 poller 只
-	// 传一个信号、worker 立刻在同 P 上跑的场景; 我们这边投完要让 10 个
-	// 分片各自醒一次, 让出反而把这一轮的活推给下一轮。实测(12 核/1KB
-	// echo)不让出比让出高 0.2%, 四轮一致。想开用 WithGosched。
+	// 投完任务后让出 P。默认关。
+	//
+	// fnet 是开的(见它 loop_unix.go 的注释): runtime 把被唤醒的 goroutine
+	// 排到"唤醒它的那个 P"的 runq 上, 而事件循环从不 park, 那些 goroutine
+	// 就得等别的 P 来偷; 让出 P 让它们立刻跑。
+	//
+	// 实测(无绑定 10000 连接 1KB echo, 交替 2 轮):
+	//   关: TPS 2,098,100  Avg 4.67ms  TP95 10.88  TP99 14.91  CPU 1120.8%
+	//   开: TPS 2,186,538  Avg 4.47ms  TP95 11.41  TP99 16.34  CPU 1041.4%
+	// 开了之后吞吐 +4.2%、平均延迟 -4.3%、CPU -7.1%, 但 TP95/TP99 差
+	// 5%/10%。是"多数更快、少数更慢"的分布变化, 不是净改善。
+	//
+	// 顺带否掉一个假设: 开不开 gosched 对调度器的 runq 堆积没影响
+	// (schedtrace 里 "有 >2 堆积的行数" 都是 31~33)。所以无绑定环境那
+	// 个长尾不是"分片 goroutine 拿不到 P"造成的。
 	gosched bool
 	// batchSize 是一批攒多少连接再投, 0 表示默认(parseBatchSize)。
 	batchSize int
