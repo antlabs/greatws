@@ -69,16 +69,60 @@ type conn struct {
 	rh                   frame.FrameHeader  // frame头部
 	fragmentFramePayload *[]byte            // 存放分片帧的缓冲区, TODO: 这个可以优化下 把Test_DefaultCallback和 fragmentFrameHeader 放到一个结构体里面
 	fragmentFrameHeader  *frame.FrameHeader // 存放分段帧的头部
-	curState             frameState         // 状态机的状态
-	client               bool               // 客户端为 true，服务端为 false
+	// curState / client / busy 压进一个 uint32:
+	//
+	//	bit 0-1  curState(状态机, 只有 3 个值)
+	//	bit 2    客户端为 1, 服务端为 0
+	//	bit 3    busy, 这个连接正被某个 goroutine 处理
+	//
+	// 前两个原来是 int8 + bool, 占 96/97 两个字节, 后面还有 6 字节填充;
+	// Conn 有 216 字节上限(conn_test.go 守着), 加不了新字段。busy 是
+	// "分片里有按需帮手时, 同一连接不被两个 goroutine 同时碰"的前提
+	// (见 task_parse.go 的 helpOne)。
+	packed uint32
 }
 
-func (c *Conn) getCurState() frameState  { return c.curState }
-func (c *Conn) setCurState(s frameState) { c.curState = s }
+const (
+	stateMask  uint32 = 0x3
+	flagClient uint32 = 1 << 2
+	flagBusy   uint32 = 1 << 3
+)
 
-func (c *Conn) isClient() bool { return c.client }
+// 下面几个都走原子: packed 里既有"只有本 goroutine 碰"的状态位
+// (curState), 也有跨 goroutine 的位(busy/client)。Go 的 atomic 在 x86 上
+// 就是普通 load/store(带编译器屏障), 所以统一用原子不会变慢, 反而避免了
+// 非原子读改写把别的 goroutine 原子置的位覆盖掉。
+func (c *Conn) getCurState() frameState {
+	return frameState(atomic.LoadUint32(&c.packed) & stateMask)
+}
 
-func (c *Conn) setClient(v bool) { c.client = v }
+func (c *Conn) setCurState(st frameState) {
+	for {
+		old := atomic.LoadUint32(&c.packed)
+		nv := (old &^ stateMask) | (uint32(st) & stateMask)
+		if atomic.CompareAndSwapUint32(&c.packed, old, nv) {
+			return
+		}
+	}
+}
+
+func (c *Conn) isClient() bool { return atomic.LoadUint32(&c.packed)&flagClient != 0 }
+
+func (c *Conn) setClient(v bool) {
+	if v {
+		atomic.OrUint32(&c.packed, flagClient)
+	} else {
+		atomic.AndUint32(&c.packed, ^flagClient)
+	}
+}
+
+// tryBusy 在"这个连接没人在处理"时把 busy 置上, 返回是否抢到。
+func (c *Conn) tryBusy() bool {
+	return atomic.OrUint32(&c.packed, flagBusy)&flagBusy == 0
+}
+
+// unbusy 交回 busy。
+func (c *Conn) unbusy() { atomic.AndUint32(&c.packed, ^flagBusy) }
 
 func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
