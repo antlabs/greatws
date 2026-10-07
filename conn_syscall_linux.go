@@ -126,20 +126,48 @@ func socketWritev(fd int, header, payload []byte) (int, error) {
 	iov[0].SetLen(len(header))
 	iov[1].Base = unsafe.SliceData(payload)
 	iov[1].SetLen(len(payload))
+	return writevIovec(fd, &iov[0], 2)
+}
 
-	msg := unix.Msghdr{Iov: &iov[0]}
-	msg.SetIovlen(2)
+// socketWritev3 是三段: 攒包缓冲区、一个新 frame 的头、它的 payload。
+// 攒包装不下时走这条, payload 和攒下的那批都不用拷。
+func socketWritev3(fd int, first, header, payload []byte) (int, error) {
+	var iov [3]unix.Iovec
+	iov[0].Base = unsafe.SliceData(first)
+	iov[0].SetLen(len(first))
+	iov[1].Base = unsafe.SliceData(header)
+	iov[1].SetLen(len(header))
+	iov[2].Base = unsafe.SliceData(payload)
+	iov[2].SetLen(len(payload))
+	return writevIovec(fd, &iov[0], 3)
+}
+
+func writevIovec(fd int, iov *unix.Iovec, count int) (int, error) {
+	msg := unix.Msghdr{Iov: iov}
+	msg.SetIovlen(count)
 
 	n, _, errno := unix.RawSyscall6(unix.SYS_SENDMSG,
 		uintptr(fd), uintptr(unsafe.Pointer(&msg)), unix.MSG_NOSIGNAL, 0, 0, 0)
 	if errno == unix.ENOTSOCK {
-		all := make([]byte, 0, len(header)+len(payload))
-		all = append(all, header...)
-		all = append(all, payload...)
+		// 不是 socket 的 fd 退回 VFS(sendmsg 对它也是 ENOTSOCK)。把
+		// iovec 描述的各段拼成一块再写。
+		segs := unsafe.Slice(iov, count)
+		total := 0
+		for i := range segs {
+			total += int(segs[i].Len)
+		}
+		all := make([]byte, 0, total)
+		for i := range segs {
+			all = append(all, unsafe.Slice((*byte)(segs[i].Base), segs[i].Len)...)
+		}
 		return rawWrite(fd, all)
 	}
 	if errno != 0 {
-		return int(n), errno
+		// 出错时内核在返回值里放的是 -errno(无符号读出来是个很大的数,
+		// 转成 int 就是负的), 不是"写了多少字节"。丢给调用方会让它拿
+		// 这个负数去切 slices。和 socketWrite 一样返回 0: 出错就是
+		// 一个字节都没写进去(EAGAIN/EINTR 也是)。
+		return 0, errno
 	}
 	return int(n), nil
 }

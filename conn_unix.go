@@ -33,7 +33,7 @@ import (
 	"github.com/antlabs/task/task/driver"
 	"github.com/antlabs/wsutil/bytespool"
 	"github.com/antlabs/wsutil/deflate"
-	"github.com/antlabs/wsutil/enum"
+
 	"github.com/antlabs/wsutil/myonce"
 	"golang.org/x/sys/unix"
 )
@@ -398,10 +398,23 @@ func (c *Conn) write(data []byte) (int, error) {
 	// 3.如果是垂直触发模式，并且启用了流量背压机制，则需要添加读事件
 
 	// 不需要进的逻辑
-	// 1.如果是垂直触发模式，并且没有启用流量背压机制，不需要重新添加事件, TODO
-
-	if err := c.eventLoop().ResetRead(c.getFd()); err != nil {
-		slog.Error("failed to reset read event", "error", err)
+	// 1.如果是垂直触发模式，并且没有启用流量背压机制，不需要重新添加事件
+	//
+	// 这条已经落实: ET 下 AddRead 注册的就是 EPOLLIN|EPOLLOUT|EPOLLET
+	// (pulse 的 etAddRead, 抄的是 man 手册里"ET 下一次 ADD 把读写都加上"
+	// 那条), AddWrite 是空操作, ResetRead 注册的掩码和 AddRead 完全一样。
+	// 所以积压写完之后的这次 MOD 是"把同一个掩码再写一遍", 什么都不改,
+	// 却要陷进内核一次。
+	//
+	// 实测(A 配置, 10 秒 profile): epoll_ctl 占 9.21s / 33.25s 系统调用
+	// 时间, 三分之一的系统调用花在这个空转的 MOD 上。
+	//
+	// 背压(flowBackPressureRemoveRead)那条路会真的删掉读事件, 那种情况
+	// 下要把读加回来, 照旧 ResetRead。
+	if c.Config.flowBackPressureRemoveRead {
+		if err := c.eventLoop().ResetRead(c.getFd()); err != nil {
+			slog.Error("failed to reset read event", "error", err)
+		}
 	}
 	return len(data), nil
 }
@@ -415,7 +428,7 @@ func (c *Conn) processWebsocketFrame() (err error) {
 	// 1. 处理frame header
 	// if !c.useIoUring() {
 	if c.rbuf == nil {
-		c.rbuf = bytespool.GetBytes(int(float32(c.rh.PayloadLen)*c.windowsMultipleTimesPayloadSize) + enum.MaxFrameHeaderSize)
+		c.rbuf = bytespool.GetBytes(c.readBufferSize())
 	}
 
 	if c.readTimeout > 0 {
@@ -482,6 +495,15 @@ func (c *Conn) processWebsocketFrame() (err error) {
 			c.rw += n
 		}
 
+		// 一次 read 把缓冲区读满了, 说明 socket 里还有——这条连接不是
+		// "一次 read 一条消息"(Echo 那种), 而是"一次 read 一批"。换一块
+		// 大缓冲区, 让下一批一次读完, 不然剩下的数据要等下一个边缘
+		// (ET 只有"新数据到达"才给边缘), 变成一条消息一次 read。
+		// 见 conn_core.go 的 batchReadBufferSize。
+		if c.rw == len(*c.rbuf) && len(*c.rbuf) < batchReadBufferSize {
+			c.growReadBuffer()
+		}
+
 		if len((*c.rbuf)[c.rw:]) == 0 {
 			// 说明缓存区已经满了。需要扩容
 			// 结合以上两种，缓存区满了就直接处理frame，解析出payload的长度，得到一个刚刚好的缓存区
@@ -538,6 +560,11 @@ func (c *Conn) processWebsocketFrame() (err error) {
 
 success:
 fail:
+	// 结束攒包: 这一轮解析出来的回包一次写出去。放在回收读缓冲区之前
+	// (写的是攒包缓冲区, 不是 rbuf, 顺序上没有依赖, 但失败路径也走到
+	// 这里, 攒下的回包要在 close 帧之前出去)。
+	c.corkEnd()
+
 	// 回收read buffer至内存池中
 	if err != nil || c.rbuf != nil && c.rr == c.rw {
 		c.rr, c.rw = 0, 0
@@ -576,6 +603,7 @@ func (c *Conn) processHeaderPayloadCallback() (err error) {
 	}
 success:
 fail:
+	c.corkEnd()
 	// 回收read buffer至内存池中
 	if err != nil || c.rbuf != nil && c.rr == c.rw {
 		c.rr, c.rw = 0, 0

@@ -95,6 +95,9 @@ const (
 	// 181,995)。
 	flagPendingRead  uint32 = 1 << 4
 	flagPendingWrite uint32 = 1 << 5
+	// flagCorking: 这一轮 read 里还有后续 frame, 回调写出去的消息先攒在
+	// wbufList 里, 轮末一次写出去。见 cork.go。
+	flagCorking uint32 = 1 << 6
 )
 
 // 下面几个都走原子: packed 里既有"只有本 goroutine 碰"的状态位
@@ -268,6 +271,43 @@ func (c *Conn) leftMove() {
 	c.rw -= c.rr
 	c.rr = 0
 	c.multiEventLoop.addMoveBytes(uint64(n))
+}
+
+// readBufferSize 是读缓冲区的大小: 按上一条消息的 payload 算
+// (windowsMultipleTimesPayloadSize 倍, 默认 2.0, 见 Config.defaultSetting),
+// 留一倍余量, 免得帧头一多就要扩容。
+func (c *Conn) readBufferSize() int {
+	return int(float32(c.rh.PayloadLen)*c.windowsMultipleTimesPayloadSize) + enum.MaxFrameHeaderSize
+}
+
+// batchReadBufferSize 是"这条连接一次 read 能带一批消息"时读缓冲区抬到的
+// 大小。
+//
+// 为什么需要: readBufferSize 那个算法假设"一次 read 拿一条消息", 而客户端
+// 一次 write 可能带多条(压测的 Pipeline: -rpl 15, 一次 15480 字节)。缓冲区
+// 只装得下一条时, 内核把整批给它, 它只解析出一条, 剩下的留在 socket 里;
+// 这些数据已经不产生新的边缘了(ET 的边缘是"新数据到达"触发的), 只能等
+// 下一次事件——于是变成一条消息一次 read。实测(A 配置, 服务端计数): 读系统
+// 调用 2,000,000/s = 每条消息一次(写已经是每批一次 200,000/s); 抬上去之后
+// 读也降到 200,000/s, CPU 344% -> 271%, CPU EER 5,810 -> 7,384(超过 fnet)。
+//
+// 16KB 是因为常见的一次写批次是 8~16KB(-rbs 16384 就是按这个定的)。
+const batchReadBufferSize = 16 * 1024
+
+// growReadBuffer 把读缓冲区换成 batchReadBufferSize 大小, 已经读进来的
+// 数据跟着挪过去。
+//
+// 只在读循环里"刚读完、还没开始解析"那一刻调用: 那时候没有任何 payload
+// 别名指向这块缓冲区(零拷贝的别名只活在回调那次调用里, 见
+// WithServerZeroCopyPayload), 换掉它是安全的。解析中途换会把自己正在用
+// 的那块内存还回池子。
+func (c *Conn) growReadBuffer() {
+	old := c.rbuf
+	nb := bytespool.GetBytes(batchReadBufferSize)
+	copy(*nb, (*old)[:c.rw])
+	c.rbuf = nb
+	bytespool.PutBytes(old)
+	c.multiEventLoop.addRealloc()
 }
 
 func (c *Conn) writeCap() int {
@@ -704,6 +744,7 @@ func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 
 		// fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
 		if success {
+			c.maybeCork()
 			if err := c.processCallback(f, needCopy); err != nil {
 				c.closeWithLock(err)
 				return false, err
@@ -758,6 +799,12 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 	// TP99 好 1.8%。收益是零, 不值得拿这个风险换。
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// 攒包期间(一轮 read 里有多个 frame, 见 cork.go): 回包先进缓冲区,
+	// 轮末一次写出去。这是 Pipeline 场景写路径 CPU 的主要来源。
+	if c.isCorking() && !rsv1 {
+		return c.corkWrite(uint8(op), writeBuf)
+	}
 
 	// io 模式 + 服务端 + 没压缩 + 长度放得进 2/4 字节头 + 没有积压:
 	// 走 writev, header 在栈上拼, payload 不拷贝直接交给内核。
