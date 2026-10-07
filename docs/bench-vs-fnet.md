@@ -1,4 +1,4 @@
-# quicknet vs fnet 压测记录
+# fio vs fnet 压测记录
 
 测量环境：Intel Ultra 9 275HX（8 个 P 核 5.3-5.4GHz + 16 个 E 核 4.7GHz，共 24 逻辑核），
 lab 机 192.168.1.99，C++ 客户端 `benchcli-uwscpp`，10000 连接 / 1024B 消息。

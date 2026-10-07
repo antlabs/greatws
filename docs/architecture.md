@@ -1,12 +1,12 @@
-# quicknet 架构
+# fio 架构
 
-quicknet 是一个多协议网络库，底层是一套 epoll/kqueue 事件引擎，上面挂各协议的
+fio 是一个多协议网络库，底层是一套 epoll/kqueue 事件引擎，上面挂各协议的
 状态机。这份文档定的是分层和各层的边界。
 
 ## 分层
 
 ```
-github.com/antlabs/quicknet
+github.com/antlabs/fio
 ├── websocket/      WebSocket (rfc6455 + rfc7692) + 引擎
 ├── http/           HTTP/1.1
 ├── grpc/           gRPC
@@ -88,7 +88,7 @@ type Handler interface {
 现在：
 
 ```
-quicknet/
+fio/
 ├── websocket/     全部代码（引擎 + 协议）
 ├── http/          骨架，只有 doc.go
 ├── grpc/          骨架，只有 doc.go
@@ -99,7 +99,7 @@ quicknet/
 拆出 `engine/` 之后：
 
 ```
-quicknet/
+fio/
 ├── engine/
 │   ├── eventloop.go        事件循环
 │   ├── conn.go             连接（io + 缓冲）

@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/antlabs/quicknet/websocket"
+	"github.com/antlabs/fio/websocket"
 )
 
 var runInEventLoop = flag.Bool("run-in-event-loop", false, "run in event loop")

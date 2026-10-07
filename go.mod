@@ -1,4 +1,4 @@
-module github.com/antlabs/quicknet
+module github.com/antlabs/fio
 
 go 1.26.0
 

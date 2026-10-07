@@ -1,4 +1,4 @@
-// Package grpc 是 quicknet 上的 gRPC 实现。
+// Package grpc 是 fio 上的 gRPC 实现。
 //
 // gRPC 跑在 HTTP/2 上, 所以这个包依赖 http2: 它提供"HTTP/2 帧 + 流"这层,
 // 本包负责 gRPC 自己的部分——长度前缀的消息分帧、状态码和 trailer、以及

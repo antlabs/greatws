@@ -1,14 +1,14 @@
-# quicknet
+# fio
 
 基于 epoll/kqueue 的网络库，callback 写法。起点是 WebSocket，正在往多协议走。
 
-![Go](https://github.com/antlabs/quicknet/workflows/Go/badge.svg)
-[![codecov](https://codecov.io/gh/antlabs/quicknet/branch/master/graph/badge.svg)](https://codecov.io/gh/antlabs/quicknet)
-[![Go Report Card](https://goreportcard.com/badge/github.com/antlabs/quicknet)](https://goreportcard.com/report/github.com/antlabs/quicknet)
+![Go](https://github.com/antlabs/fio/workflows/Go/badge.svg)
+[![codecov](https://codecov.io/gh/antlabs/fio/branch/master/graph/badge.svg)](https://codecov.io/gh/antlabs/fio)
+[![Go Report Card](https://goreportcard.com/badge/github.com/antlabs/fio)](https://goreportcard.com/report/github.com/antlabs/fio)
 
 ## 处理流程
 
-![quicknet.png](https://github.com/antlabs/images/blob/main/quicknet/quicknet.png?raw=true)
+![fio.png](https://github.com/antlabs/images/blob/main/fio/fio.png?raw=true)
 
 # 特性
 
@@ -73,7 +73,7 @@ package main
 import (
  "fmt"
 
- "github.com/antlabs/quicknet/websocket"
+ "github.com/antlabs/fio/websocket"
 )
 
 type echoHandler struct{}
@@ -149,7 +149,7 @@ package main
 import (
  "fmt"
 
- "github.com/antlabs/quicknet/websocket"
+ "github.com/antlabs/fio/websocket"
  "github.com/gin-gonic/gin"
 )
 
@@ -203,7 +203,7 @@ import (
  "fmt"
  "time"
 
- "github.com/antlabs/quicknet/websocket"
+ "github.com/antlabs/fio/websocket"
 )
 
 var m *websocket.MultiEventLoop
@@ -393,7 +393,7 @@ func main() {
 
 ```
 BenchType : BenchEcho
-Framework : quicknet
+Framework : fio
 TPS : 106014
 EER : 218.54
 Min : 49.26us
@@ -426,7 +426,7 @@ MEM Max : 594.48M
 
 ```
 BenchType  : BenchEcho
-Framework  : quicknet
+Framework  : fio
 TPS        : 103544
 EER        : 397.07
 Min        : 26.51us

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/antlabs/quicknet/websocket"
+	"github.com/antlabs/fio/websocket"
 )
 
 // https://github.com/snapview/tokio-tungstenite/blob/master/examples/autobahn-client.rs
