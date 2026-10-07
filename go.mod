@@ -13,4 +13,5 @@ require (
 	github.com/antlabs/httparser v0.0.11 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/klauspost/compress v1.17.8 // indirect
+	golang.org/x/net v0.59.0 // indirect
 )
