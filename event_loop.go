@@ -85,7 +85,19 @@ func (el *EventLoop) Loop() {
 		// 别的 P 偷走, 而别的 P 可能正闲着。没投过就不用让——让了也是
 		// 空转。
 		submitted := false
-		_, err := el.Poll(time.Duration(time.Second*100), func(fd int, state core.State, err error) {
+		// 连续空转 >= idleThreshold 轮才 park(让出 P); 否则用短超时走
+		// 阻塞 epoll_wait, 免掉 park 那两次 netpoll。
+		//
+		// 门槛取 64: 高负载下事件循环几乎每轮都有事件, idleRounds 一直在
+		// 0 附近, 一直走快路径; 真的闲下来(比如连接都处理完了)连续 64 轮
+		// 没事件(每轮几十微秒, 合计几毫秒)才切 park, 那时让 P 才有意义。
+		// 100ms: pulse 的 park 门槛是 1s, 这个值落在"短超时"档里,
+		// 走阻塞 epoll_wait(有事件立刻返回, 没有就等到超时)。给 10ms 时
+		// 测试里那种"两条消息间隔几十毫秒"的场景会超时, 100ms 留足余量。
+		wait := time.Duration(time.Second * 100)
+		gotEvent := 0
+		_, err := el.Poll(wait, func(fd int, state core.State, err error) {
+			gotEvent++
 			c := el.parent.safeConns.Get(fd)
 			if err != nil {
 				if errors.Is(err, core.EAGAIN) {
