@@ -122,6 +122,15 @@ func (el *EventLoop) Loop() {
 			//
 			// 同一个 fd 永远落到同一个分片, 那边按投递顺序取, 所以一个
 			// 连接的事件顺序还是它发生的顺序。
+			//
+			// 试过在多 worker 时改成随机分片(照 fnet 的 cheaprandn), 想让
+			// "某个分片被抢调度时它名下 250 个连接一起慢"这个长尾散开:
+			// 实测服务端几乎停摆(181,995 TPS / 57% CPU)。原因是随机分片
+			// 后同一个连接的两个事件会落到不同分片, 一个抢到 busy 在处理,
+			// 另一个抢不到就丢弃——而 ET 的边缘只来一次, 那个事件就此丢失,
+			// 连接卡住。要支持随机分片得先有"抢不到就把它记下来、由正在
+			// 处理的那个补做"的机制(fnet 的 scheduledBit + pending 位就是
+			// 干这个的), 不能只加 busy 位。
 			if pl := el.parent.parseLoop; pl != nil {
 				pl.send(fd%len(pl.allTaskParse), parseTask{
 					c:       c,
