@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package greatws
+package quicknet
 
 import (
 	"sync/atomic"
@@ -29,7 +29,7 @@ import (
 //
 // fnet 是这么做的(cork/uncork, 见它 websocket/conn.go)。Pipeline 场景
 // 里两边的 TPS 都顶在客户端灌入上限, 判定列是 CPU EER, 而我们的写路径
-// CPU 是它的大约 3 倍(10 秒 profile: greatws 43.12s vs fnet 12.81s),
+// CPU 是它的大约 3 倍(10 秒 profile: quicknet 43.12s vs fnet 12.81s),
 // 差的就是这 9 次多出来的 write。
 //
 // 做法和 fnet 一致: 解析到一个 frame 后, 如果读缓冲区里还有没解析的

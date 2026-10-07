@@ -1,14 +1,14 @@
-# greatws
+# quicknet
 
-支持海量连接的websocket库，callback写法
+基于 epoll/kqueue 的网络库，callback 写法。起点是 WebSocket，正在往多协议走。
 
-![Go](https://github.com/antlabs/greatws/workflows/Go/badge.svg)
-[![codecov](https://codecov.io/gh/antlabs/greatws/branch/master/graph/badge.svg)](https://codecov.io/gh/antlabs/greatws)
-[![Go Report Card](https://goreportcard.com/badge/github.com/antlabs/greatws)](https://goreportcard.com/report/github.com/antlabs/greatws)
+![Go](https://github.com/antlabs/quicknet/workflows/Go/badge.svg)
+[![codecov](https://codecov.io/gh/antlabs/quicknet/branch/master/graph/badge.svg)](https://codecov.io/gh/antlabs/quicknet)
+[![Go Report Card](https://goreportcard.com/badge/github.com/antlabs/quicknet)](https://goreportcard.com/report/github.com/antlabs/quicknet)
 
 ## 处理流程
 
-![greatws.png](https://github.com/antlabs/images/blob/main/greatws/greatws.png?raw=true)
+![quicknet.png](https://github.com/antlabs/images/blob/main/quicknet/quicknet.png?raw=true)
 
 # 特性
 
@@ -16,6 +16,17 @@
 * 低内存占用
 * 高tps
 * 对websocket的兼容性较高，完整实现rfc6455, rfc7692
+
+# 协议
+
+| 协议 | 状态 |
+|---|---|
+| WebSocket (rfc6455 / rfc7692) | 已支持 |
+| HTTP/1.1 | 计划中 |
+| HTTP/2 | 计划中 |
+| HTTP/3 | 计划中 |
+| gRPC | 计划中 |
+| TLS（状态机实现，不依赖 crypto/tls 的阻塞读） | 计划中 |
 
 # 暂不支持
 
@@ -60,16 +71,16 @@ package main
 import (
  "fmt"
 
- "github.com/antlabs/greatws"
+ "github.com/antlabs/quicknet"
 )
 
 type echoHandler struct{}
 
-func (e *echoHandler) OnOpen(c *greatws.Conn) {
+func (e *echoHandler) OnOpen(c *quicknet.Conn) {
  // fmt.Printf("OnOpen: %p\n", c)
 }
 
-func (e *echoHandler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
+func (e *echoHandler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
  if err := c.WriteTimeout(op, msg, 3*time.Second); err != nil {
   fmt.Println("write fail:", err)
  }
@@ -78,7 +89,7 @@ func (e *echoHandler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) 
  // }
 }
 
-func (e *echoHandler) OnClose(c *greatws.Conn, err error) {
+func (e *echoHandler) OnClose(c *quicknet.Conn, err error) {
  errMsg := ""
  if err != nil {
   errMsg = err.Error()
@@ -87,18 +98,18 @@ func (e *echoHandler) OnClose(c *greatws.Conn, err error) {
 }
 
 type handler struct {
- m *greatws.MultiEventLoop
+ m *quicknet.MultiEventLoop
 }
 
 func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
- c, err := greatws.Upgrade(w, r,
-  greatws.WithServerReplyPing(),
-  // greatws.WithServerDecompression(),
-  greatws.WithServerIgnorePong(),
-  greatws.WithServerCallback(&echoHandler{}),
-  // greatws.WithServerEnableUTF8Check(),
-  greatws.WithServerReadTimeout(5*time.Second),
-  greatws.WithServerMultiEventLoop(h.m),
+ c, err := quicknet.Upgrade(w, r,
+  quicknet.WithServerReplyPing(),
+  // quicknet.WithServerDecompression(),
+  quicknet.WithServerIgnorePong(),
+  quicknet.WithServerCallback(&echoHandler{}),
+  // quicknet.WithServerEnableUTF8Check(),
+  quicknet.WithServerReadTimeout(5*time.Second),
+  quicknet.WithServerMultiEventLoop(h.m),
  )
  if err != nil {
   slog.Error("Upgrade fail:", "err", err.Error())
@@ -110,7 +121,7 @@ func main() {
 
  var h handler
 
- h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(256), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+ h.m = quicknet.NewMultiEventLoopMust(quicknet.WithEventLoops(0), quicknet.WithMaxEventNum(256), quicknet.WithLogLevel(slog.LevelError)) // epoll, kqueue
  h.m.Start()
  fmt.Printf("apiname:%s\n", h.m.GetApiName())
 
@@ -136,19 +147,19 @@ package main
 import (
  "fmt"
 
- "github.com/antlabs/greatws"
+ "github.com/antlabs/quicknet"
  "github.com/gin-gonic/gin"
 )
 
 type handler struct{
-    m *greatws.MultiEventLoop
+    m *quicknet.MultiEventLoop
 }
 
-func (h *handler) OnOpen(c *greatws.Conn) {
+func (h *handler) OnOpen(c *quicknet.Conn) {
  fmt.Printf("服务端收到一个新的连接")
 }
 
-func (h *handler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
+func (h *handler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
  // 如果msg的生命周期不是在OnMessage中结束，需要拷贝一份
  // newMsg := make([]byte, len(msg))
  // copy(newMsg, msg)
@@ -158,18 +169,18 @@ func (h *handler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
  // os.Stdout.Write(msg)
 }
 
-func (h *handler) OnClose(c *greatws.Conn, err error) {
+func (h *handler) OnClose(c *quicknet.Conn, err error) {
  fmt.Printf("服务端连接关闭:%v\n", err)
 }
 
 func main() {
  r := gin.Default()
  var h handler
- h.m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(256), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+ h.m = quicknet.NewMultiEventLoopMust(quicknet.WithEventLoops(0), quicknet.WithMaxEventNum(256), quicknet.WithLogLevel(slog.LevelError)) // epoll, kqueue
  h.m.Start()
 
  r.GET("/", func(c *gin.Context) {
-  con, err := greatws.Upgrade(c.Writer, c.Request, greatws.WithServerCallback(h.m), greatws.WithServerMultiEventLoop(h.m))
+  con, err := quicknet.Upgrade(c.Writer, c.Request, quicknet.WithServerCallback(h.m), quicknet.WithServerMultiEventLoop(h.m))
   if err != nil {
    return
   }
@@ -190,17 +201,17 @@ import (
  "fmt"
  "time"
 
- "github.com/antlabs/greatws"
+ "github.com/antlabs/quicknet"
 )
 
-var m *greatws.MultiEventLoop
+var m *quicknet.MultiEventLoop
 type handler struct{}
 
-func (h *handler) OnOpen(c *greatws.Conn) {
+func (h *handler) OnOpen(c *quicknet.Conn) {
  fmt.Printf("客户端连接成功\n")
 }
 
-func (h *handler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
+func (h *handler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
  // 如果msg的生命周期不是在OnMessage中结束，需要拷贝一份
  // newMsg := make([]byte, len(msg))
  // copy(newMsg, msg)
@@ -210,21 +221,21 @@ func (h *handler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
  time.Sleep(time.Second)
 }
 
-func (h *handler) OnClose(c *greatws.Conn, err error) {
+func (h *handler) OnClose(c *quicknet.Conn, err error) {
  fmt.Printf("客户端端连接关闭:%v\n", err)
 }
 
 func main() {
- m = greatws.NewMultiEventLoopMust(greatws.WithEventLoops(0), greatws.WithMaxEventNum(256), greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+ m = quicknet.NewMultiEventLoopMust(quicknet.WithEventLoops(0), quicknet.WithMaxEventNum(256), quicknet.WithLogLevel(slog.LevelError)) // epoll, kqueue
  m.Start()
- c, err := greatws.Dial("ws://127.0.0.1:8080/", greatws.WithClientCallback(&handler{}), greatws.WithServerMultiEventLoop(h.m))
+ c, err := quicknet.Dial("ws://127.0.0.1:8080/", quicknet.WithClientCallback(&handler{}), quicknet.WithServerMultiEventLoop(h.m))
  if err != nil {
   fmt.Printf("连接失败:%v\n", err)
   return
  }
 
  c.WriteMessage(opcode.Text, []byte("hello"))
- time.Sleep(time.Hour) //demo里面等待下OnMessage 看下执行效果，因为greatws.Dial和WriteMessage都是非阻塞的函数调用，不会卡住主go程
+ time.Sleep(time.Hour) //demo里面等待下OnMessage 看下执行效果，因为quicknet.Dial和WriteMessage都是非阻塞的函数调用，不会卡住主go程
 }
 ```
 
@@ -238,7 +249,7 @@ func main() {
 
 ```go
 func main() {
- greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientHTTPHeader(http.Header{
+ quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientHTTPHeader(http.Header{
   "h1": "v1",
   "h2":"v2", 
  }))
@@ -251,7 +262,7 @@ func main() {
 
 ```go
 func main() {
- greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientDialTimeout(2 * time.Second))
+ quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientDialTimeout(2 * time.Second))
 }
 ```
 
@@ -261,7 +272,7 @@ func main() {
 
 ```go
 func main() {
- greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientReplyPing())
+ quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientReplyPing())
 }
 ```
 
@@ -271,7 +282,7 @@ func main() {
 
 ```go
  // 限制客户端最大服务返回返回的最大包是1024，如果超过这个大小报错
- greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientReadMaxMessage(1024))
+ quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientReadMaxMessage(1024))
 ```
 
 [返回](#内容)
@@ -280,7 +291,7 @@ func main() {
 
 ```go
 func main() {
- greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientDecompressAndCompress())
+ quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientDecompressAndCompress())
 }
 ```
 
@@ -290,7 +301,7 @@ func main() {
 
 ```go
 func main() {
- greatws.Dial("ws://127.0.0.1:12345/test", greatws.WithClientContextTakeover())
+ quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientContextTakeover())
 }
 ```
 
@@ -302,7 +313,7 @@ func main() {
 
 ```go
 func main() {
- c, err := greatws.Upgrade(w, r, greatws.WithServerReplyPing())
+ c, err := quicknet.Upgrade(w, r, quicknet.WithServerReplyPing())
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
@@ -317,7 +328,7 @@ func main() {
 ```go
 func main() {
  // 配置服务端读取客户端最大的包是1024大小, 超过该值报错
- c, err := greatws.Upgrade(w, r, greatws.WithServerReadMaxMessage(1024))
+ c, err := quicknet.Upgrade(w, r, quicknet.WithServerReadMaxMessage(1024))
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
@@ -332,7 +343,7 @@ func main() {
 ```go
 func main() {
  // 配置服务端读取客户端最大的包是1024大小, 超过该值报错
- c, err := greatws.Upgrade(w, r, greatws.WithServerDecompression())
+ c, err := quicknet.Upgrade(w, r, quicknet.WithServerDecompression())
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
@@ -346,7 +357,7 @@ func main() {
 
 ```go
 func main() {
- c, err := greatws.Upgrade(w, r, greatws.WithServerDecompressAndCompress())
+ c, err := quicknet.Upgrade(w, r, quicknet.WithServerDecompressAndCompress())
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
@@ -361,7 +372,7 @@ func main() {
 ```go
 func main() {
  // 配置服务端读取客户端最大的包是1024大小, 超过该值报错
- c, err := greatws.Upgrade(w, r, greatws.WithServerContextTakeover)
+ c, err := quicknet.Upgrade(w, r, quicknet.WithServerContextTakeover)
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
@@ -380,7 +391,7 @@ func main() {
 
 ```
 BenchType : BenchEcho
-Framework : greatws
+Framework : quicknet
 TPS : 106014
 EER : 218.54
 Min : 49.26us
@@ -413,7 +424,7 @@ MEM Max : 594.48M
 
 ```
 BenchType  : BenchEcho
-Framework  : greatws
+Framework  : quicknet
 TPS        : 103544
 EER        : 397.07
 Min        : 26.51us

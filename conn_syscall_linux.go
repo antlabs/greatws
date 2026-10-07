@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build linux && !greatws_rwsyscall && !greatws_slowsyscall
+//go:build linux && !quicknet_rwsyscall && !quicknet_slowsyscall
 
-package greatws
+package quicknet
 
 import (
 	"unsafe"
@@ -31,10 +31,10 @@ import (
 // 实测(12 核 / 10000 连接 / 1024B / C++ 客户端 echo, 2 个 event loop +
 // 10 个解析 goroutine): recvfrom/sendto 1,689,307 TPS, read/write
 // 1,642,562, 差 2.8%, 尾延迟 8.0ms 对 8.2ms。所以默认用这一版。
-// 想量 read/write 的, 用 -tags greatws_rwsyscall。
+// 想量 read/write 的, 用 -tags quicknet_rwsyscall。
 //
 // 想量 RawSyscall 本身值多少(对比标准库那层 entersyscall/exitsyscall),
-// 用 -tags greatws_slowsyscall, 见 conn_syscall_linux_slow.go。
+// 用 -tags quicknet_slowsyscall, 见 conn_syscall_linux_slow.go。
 //
 // 不是 socket 的 fd 退回 read/write: 库的 fd 正常都来自 accept, 但
 // 用户可能拿别的 fd 来用, 那种情况下 recvfrom 返回 ENOTSOCK, 这里让

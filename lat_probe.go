@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build greatws_latprobe
+//go:build quicknet_latprobe
 
-package greatws
+package quicknet
 
 // 延迟探针: 量"事件循环投递"到"解析 goroutine 开始处理"之间隔了多久。
 //
-// 用 -tags greatws_latprobe 编译进来, 压测时读 /latprobe 看直方图。
+// 用 -tags quicknet_latprobe 编译进来, 压测时读 /latprobe 看直方图。
 // 打时间戳本身有开销(每消息一次 nanotime, 约 20ns), 所以只在探针构建里做。
 //
 // 为什么需要它: 无绑定环境下我们 TPS/Avg/CPU 都赢 fnet, 但 TP99 输 1.2ms。

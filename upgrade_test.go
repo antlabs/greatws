@@ -1,4 +1,4 @@
-package greatws
+package quicknet
 
 import (
 	"net/http"

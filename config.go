@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package greatws
+package quicknet
 
 import (
 	"time"
@@ -23,7 +23,7 @@ import (
 // Config 配置
 // 有两种方式可以配置相关值
 // 1. NewUpgrade, 这通常在只初始化一次的时候使用
-// 2. greatws.Upgrade(), 这通常在每次请求的时候使用，每个语法的配置参数不一样
+// 2. quicknet.Upgrade(), 这通常在每次请求的时候使用，每个语法的配置参数不一样
 // 这样可以方便的在两种方式中使用, 不需要担心配置参数会有并发修改的情况
 type Config struct {
 	cb                              Callback          // 静态配置
@@ -40,7 +40,7 @@ type Config struct {
 	maxDelayWriteDuration           time.Duration     // 最大延迟时间, 默认值是10ms
 	subProtocols                    []string          // 设置支持的子协议
 	multiEventLoop                  *MultiEventLoop   // 事件循环
-	runInGoTask                     string            // 运行业务OnMessage的策略, 现在greatws集成三种OnMessage运行模式，分别是io, task
+	runInGoTask                     string            // 运行业务OnMessage的策略, 现在quicknet集成三种OnMessage运行模式，分别是io, task
 	readMaxMessage                  int64             // 最大消息大小
 	flowBackPressureRemoveRead      bool              // 流控背压机制，移除读事件
 	zeroCopyPayload                 bool              // payload 直接指向读缓冲区, 见 WithServerZeroCopyPayload

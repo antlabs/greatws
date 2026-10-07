@@ -1,4 +1,4 @@
-package greatws
+package quicknet
 
 import (
 	"bytes"

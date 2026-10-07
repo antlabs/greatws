@@ -15,7 +15,7 @@
 //go:build linux || darwin || netbsd || freebsd || openbsd || dragonfly
 // +build linux darwin netbsd freebsd openbsd dragonfly
 
-package greatws
+package quicknet
 
 import (
 	"errors"
@@ -458,7 +458,7 @@ func (c *Conn) processWebsocketFrame() (err error) {
 			// error 链再做接口比较, 每消息至少跑一次(profile 里 flat 1.0s)。
 			//
 			// 断言失败就走 errors.Is: 别的构建组合(比如
-			// greatws_slowsyscall, 那里是 x/sys/unix 的 Read, 返回的是
+			// quicknet_slowsyscall, 那里是 x/sys/unix 的 Read, 返回的是
 			// os.SyscallError 包着的)不会命中快路径。
 			if errno, ok := err.(syscall.Errno); ok {
 				if errno == syscall.EINTR {

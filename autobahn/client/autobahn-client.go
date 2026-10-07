@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/antlabs/greatws"
+	"github.com/antlabs/quicknet"
 )
 
 // https://github.com/snapview/tokio-tungstenite/blob/master/examples/autobahn-client.rs
@@ -16,11 +16,11 @@ import (
 const (
 	// host = "ws://192.168.128.44:9003"
 	host  = "ws://127.0.0.1:9005"
-	agent = "greatws"
+	agent = "quicknet"
 )
 
 type handler struct {
-	m *greatws.MultiEventLoop
+	m *quicknet.MultiEventLoop
 }
 
 type echoHandler struct {
@@ -28,13 +28,13 @@ type echoHandler struct {
 	done chan struct{}
 }
 
-func (e *echoHandler) OnOpen(c *greatws.Conn) {
+func (e *echoHandler) OnOpen(c *quicknet.Conn) {
 	fmt.Printf("OnOpen::%p\n", c)
 }
 
-func (e *echoHandler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) {
+func (e *echoHandler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
 	// fmt.Printf("OnMessage: opcode:%s, msg.size:%d\n", op, len(msg))
-	if op == greatws.Text || op == greatws.Binary {
+	if op == quicknet.Text || op == quicknet.Binary {
 		// os.WriteFile("./debug.dat", msg, 0o644)
 		// if err := c.WriteMessage(op, msg); err != nil {
 		// 	fmt.Println("write fail:", err)
@@ -45,7 +45,7 @@ func (e *echoHandler) OnMessage(c *greatws.Conn, op greatws.Opcode, msg []byte) 
 	}
 }
 
-func (e *echoHandler) OnClose(c *greatws.Conn, err error) {
+func (e *echoHandler) OnClose(c *quicknet.Conn, err error) {
 	fmt.Println("OnClose:", c, err)
 	// defer e.wg.Done()
 	close(e.done)
@@ -54,8 +54,8 @@ func (e *echoHandler) OnClose(c *greatws.Conn, err error) {
 func (h *handler) getCaseCount() int {
 	var count int
 	done := make(chan bool, 1)
-	c, err := greatws.Dial(fmt.Sprintf("%s/getCaseCount", host), greatws.WithClientMultiEventLoop(h.m), greatws.WithClientOnMessageFunc(func() greatws.OnMessageFunc {
-		return func(c *greatws.Conn, op greatws.Opcode, msg []byte) {
+	c, err := quicknet.Dial(fmt.Sprintf("%s/getCaseCount", host), quicknet.WithClientMultiEventLoop(h.m), quicknet.WithClientOnMessageFunc(func() quicknet.OnMessageFunc {
+		return func(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
 			var err error
 			count, err = strconv.Atoi(string(msg))
 			if err != nil {
@@ -79,14 +79,14 @@ func (h *handler) getCaseCount() int {
 
 func (h *handler) runTest(caseNo int, wg *sync.WaitGroup) {
 	done := make(chan struct{})
-	c, err := greatws.Dial(fmt.Sprintf("%s/runCase?case=%d&agent=%s", host, caseNo, agent),
-		greatws.WithClientReplyPing(),
-		greatws.WithClientEnableUTF8Check(),
-		greatws.WithClientDecompressAndCompress(),
-		greatws.WithClientContextTakeover(),
-		greatws.WithClientMaxWindowsBits(10),
-		greatws.WithClientCallback(&echoHandler{done: done, wg: wg}),
-		greatws.WithClientMultiEventLoop(h.m),
+	c, err := quicknet.Dial(fmt.Sprintf("%s/runCase?case=%d&agent=%s", host, caseNo, agent),
+		quicknet.WithClientReplyPing(),
+		quicknet.WithClientEnableUTF8Check(),
+		quicknet.WithClientDecompressAndCompress(),
+		quicknet.WithClientContextTakeover(),
+		quicknet.WithClientMaxWindowsBits(10),
+		quicknet.WithClientCallback(&echoHandler{done: done, wg: wg}),
+		quicknet.WithClientMultiEventLoop(h.m),
 	)
 	if err != nil {
 		fmt.Println("Dial fail:", err)
@@ -100,7 +100,7 @@ func (h *handler) runTest(caseNo int, wg *sync.WaitGroup) {
 }
 
 func (h *handler) updateReports() {
-	c, err := greatws.Dial(fmt.Sprintf("%s/updateReports?agent=%s", host, agent), greatws.WithClientMultiEventLoop(h.m))
+	c, err := quicknet.Dial(fmt.Sprintf("%s/updateReports?agent=%s", host, agent), quicknet.WithClientMultiEventLoop(h.m))
 	if err != nil {
 		fmt.Println("Dial fail:", err)
 		return
@@ -113,11 +113,11 @@ func (h *handler) updateReports() {
 // 2.运行测试客户端client
 func main() {
 	var h handler
-	h.m = greatws.NewMultiEventLoopMust(
-		greatws.WithEventLoops(runtime.NumCPU()/2),
-		greatws.WithBusinessGoNum(50, 10, 10000),
-		greatws.WithMaxEventNum(1000),
-		greatws.WithLogLevel(slog.LevelError)) // epoll, kqueue
+	h.m = quicknet.NewMultiEventLoopMust(
+		quicknet.WithEventLoops(runtime.NumCPU()/2),
+		quicknet.WithBusinessGoNum(50, 10, 10000),
+		quicknet.WithMaxEventNum(1000),
+		quicknet.WithLogLevel(slog.LevelError)) // epoll, kqueue
 
 	h.m.Start()
 	total := h.getCaseCount()

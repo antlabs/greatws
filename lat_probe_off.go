@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !greatws_latprobe
+//go:build !quicknet_latprobe
 
-package greatws
+package quicknet
 
 // 不开探针时这几个是空操作, 编译器会整个消掉。
 func probeMark() int64         { return 0 }

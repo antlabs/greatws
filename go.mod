@@ -1,4 +1,4 @@
-module github.com/antlabs/greatws
+module github.com/antlabs/quicknet
 
 go 1.26.0
 

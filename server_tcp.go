@@ -14,7 +14,7 @@
 
 //go:build linux
 
-package greatws
+package quicknet
 
 import (
 	"bytes"
@@ -320,7 +320,7 @@ func waitFd(fd int, events int16) error {
 			return err
 		}
 		if n == 0 {
-			return errors.New("greatws: handshake timeout")
+			return errors.New("quicknet: handshake timeout")
 		}
 		return nil
 	}
@@ -353,7 +353,7 @@ func readHandshake(fd int, buf []byte) (int, error) {
 			return n, nil
 		}
 	}
-	return n, errors.New("greatws: handshake header too large")
+	return n, errors.New("quicknet: handshake header too large")
 }
 
 // handshakeRequest 是握手请求里 we 用得上的那几项。
@@ -435,16 +435,16 @@ func parseHandshake(b []byte) (*handshakeRequest, error) {
 	if i := bytes.Index(line, []byte("\r\n")); i >= 0 {
 		line = line[:i]
 	} else {
-		return nil, errors.New("greatws: bad request line")
+		return nil, errors.New("quicknet: bad request line")
 	}
 	sp1 := bytes.IndexByte(line, ' ')
 	if sp1 <= 0 {
-		return nil, errors.New("greatws: bad request line")
+		return nil, errors.New("quicknet: bad request line")
 	}
 	rest := line[sp1+1:]
 	sp2 := bytes.IndexByte(rest, ' ')
 	if sp2 <= 0 {
-		return nil, errors.New("greatws: bad request line")
+		return nil, errors.New("quicknet: bad request line")
 	}
 	r.method = line[:sp1]
 	r.path = rest[:sp2]
@@ -493,7 +493,7 @@ func parseHandshake(b []byte) (*handshakeRequest, error) {
 	r.isUpgrade = equalFoldASCII(r.upgrade, "websocket") &&
 		containsFoldASCII(r.conn, "upgrade")
 	if r.isUpgrade && (len(r.key) == 0 || !bytes.Equal(r.version, []byte("13"))) {
-		return nil, errors.New("greatws: unsupported websocket version")
+		return nil, errors.New("quicknet: unsupported websocket version")
 	}
 	return &r, nil
 }

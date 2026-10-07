@@ -14,7 +14,7 @@
 
 // 抽象出timer定时器接口，
 // 包含reset和stop两个方法
-package greatws
+package quicknet
 
 import "time"
 

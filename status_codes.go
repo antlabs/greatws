@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package greatws
+package quicknet
 
 import (
 	"encoding/binary"
@@ -89,7 +89,7 @@ type CloseErrMsg struct {
 func (c CloseErrMsg) Error() string {
 	var out strings.Builder
 
-	out.WriteString("<greatws close: code:")
+	out.WriteString("<quicknet close: code:")
 
 	out.WriteString(strconv.Itoa(int(c.Code)))
 

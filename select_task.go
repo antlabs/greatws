@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package greatws
+package quicknet
 
 import (
 	"context"
@@ -58,7 +58,7 @@ func (s *selectTasks) newTask(taskName string) driver.TaskExecutor {
 		}
 	}
 
-	panic("greatws: no task driver found:" + taskName)
+	panic("quicknet: no task driver found:" + taskName)
 }
 
 func (s *selectTasks) GetGoroutines() int {
