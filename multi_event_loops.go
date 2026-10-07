@@ -54,6 +54,9 @@ type multiEventLoopOption struct {
 	parseGoroutines int
 	// parsePinned 让解析 goroutine 绑核, 见 WithParsePinned。
 	parsePinned bool
+	// parseWorkersPerShard 是每个解析分片起几个常驻 worker, 0 表示 1。
+	// 见 task_parse.go 的 workersPerShard。
+	parseWorkersPerShard int
 	// parseInEventLoop 关掉解析池, 让 event loop 自己读和解析。
 	// 默认开解析池, 见 initDefaultSetting。
 	parseInEventLoop bool
@@ -213,7 +216,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 		if pg <= 0 {
 			pg = defaultParseGoroutines(m.numLoops)
 		}
-		m.parseLoop = newTaskParsePinned(pg, m.parsePinned)
+		m.parseLoop = newTaskParseWorkers(pg, m.parsePinned, m.parseWorkersPerShard)
 	}
 
 	m.ctx = context.Background()

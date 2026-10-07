@@ -53,6 +53,12 @@ type taskParse struct {
 	countTasks bool
 	// pinned 决定解析 goroutine 要不要绑核, 见 WithParsePinned。
 	pinned bool
+	// workersPerShard 是每个分片起几个常驻 worker。默认 1(和以前一样)。
+	//
+	// 多个时靠 fnet 那套"逐跳唤醒": 一个 worker 处理任务前, 如果环里还有
+	// 活就先唤醒下一个 worker 来接, 这样手上这个慢了也不挡住后面的。
+	// 同一连接不被两个 worker 同时碰, 靠 Conn 的 busy 位(见 processOne)。
+	workersPerShard int
 }
 
 func newTaskParse(n int) *taskParse {
@@ -61,18 +67,27 @@ func newTaskParse(n int) *taskParse {
 
 // newTaskParsePinned 起 n 个分片, pinned 决定解析 goroutine 要不要绑核。
 func newTaskParsePinned(n int, pinned bool) *taskParse {
+	return newTaskParseWorkers(n, pinned, 1)
+}
+
+// newTaskParseWorkers 起 n 个分片, 每个分片 workers 个常驻 worker。
+func newTaskParseWorkers(n int, pinned bool, workers int) *taskParse {
 	if n <= 0 {
 		n = runtime.NumCPU()
 	}
+	if workers <= 0 {
+		workers = 1
+	}
 	tp := &taskParse{
-		pinned:       pinned,
-		allTaskParse: make([]*taskParseNode, n),
-		fds:          make([]int64, n),
-		tasks:        make([]int64, n),
-		blocked:      make([]int64, n),
+		pinned:          pinned,
+		workersPerShard: workers,
+		allTaskParse:    make([]*taskParseNode, n),
+		fds:             make([]int64, n),
+		tasks:           make([]int64, n),
+		blocked:         make([]int64, n),
 	}
 	wg := sync.WaitGroup{}
-	wg.Add(n)
+	wg.Add(n * workers)
 
 	tp.start(&wg)
 	wg.Wait()
@@ -85,12 +100,14 @@ func (t *taskParse) start(wg *sync.WaitGroup) {
 	for i := 0; i < len(t.allTaskParse); i++ {
 		t.allTaskParse[i] = &taskParseNode{
 			ring:   newTaskRing(taskChanSize),
-			notify: make(chan struct{}, 1),
+			notify: make(chan struct{}, t.workersPerShard),
 			owner:  t,
 		}
 	}
 	for i := 0; i < len(t.allTaskParse); i++ {
-		go t.allTaskParse[i].run(wg)
+		for w := 0; w < t.workersPerShard; w++ {
+			go t.allTaskParse[i].run(wg)
+		}
 	}
 }
 
@@ -167,8 +184,9 @@ type taskParseNode struct {
 	blocked int64
 	// owner 指回自己所属的 taskParse, 拿诊断开关用。
 	owner *taskParse
-	// waiting 是"这个分片有几个人在睡"。多 worker 时它是计数不是布尔:
-	// 两个 worker 都睡着时, 投递方只 post 一个信号, 另一个就醒不来了。
+	// waiting 是"这个分片有几个人在睡"。多 worker 时必须是计数不能是
+	// 布尔: 两个 worker 都睡着时, 投递方只 post 一个信号, 另一个就醒不来。
+	// notify 的容量也是 worker 数, 保证每个睡着的都能收到一个。
 	waiting atomic.Int32
 	// notify 是唤醒用的信号量。传空结构体, 不搬数据——数据走 ring。
 	// 比拿 channel 直接搬批次轻: 投递方 post 一个空值就走, 不用等
@@ -194,6 +212,15 @@ func (tpn *taskParseNode) run(wg *sync.WaitGroup) {
 			pt, ok := tpn.ring.pop()
 			if !ok {
 				break
+			}
+			// fnet 的做法(见它 taskpool.go 的 work): 环里还有活就先叫一个
+			// worker 来接, 再处理手上这个。手上这个可能要等 socket
+			// (EAGAIN 重试)或者用户回调做了重活, 后面的任务不必等它。
+			//
+			// 这是"逐跳传播": 每个 worker 处理前都看一眼环, 有活就叫下一个,
+			// 所以积压会沿着 worker 链一路传开, 不需要一个中心调度点。
+			if tpn.ring.len() > 0 {
+				tpn.notifyIfIdle()
 			}
 			tpn.processOne(&pt)
 		}
@@ -225,6 +252,15 @@ func (tpn *taskParseNode) wake() {
 	}
 }
 
+// notifyIfIdle 在有 worker 睡着时唤醒一个(逐跳唤醒用)。
+//
+// 和 wake 的区别只是先看 waiting 计数——忙的时候不白投一次 channel。
+func (tpn *taskParseNode) notifyIfIdle() {
+	if tpn.waiting.Load() > 0 {
+		tpn.wake()
+	}
+}
+
 // processOne 处理一个连接的一轮: 读、解析、回调、写。
 //
 // 一轮就是"一次 epoll 说这个连接有事"。读和写放在一起, 让它们在一个
@@ -237,13 +273,29 @@ func (tpn *taskParseNode) wake() {
 // 用循环而不是递归/再投一次: 同一个连接连续有事件时(请求-响应就是这种),
 // 就地接着跑能省掉一次完整的投递 + 唤醒, 也保证同一连接还是串行的。
 func (tpn *taskParseNode) processOne(pt *parseTask) {
+	c := pt.c
+
+	// 单 worker 时不需要互斥(一个 fd 恒落一个分片, 一个分片一个 goroutine)。
+	// 多 worker 时同一连接的两次事件可能同时躺在环里, 被两个 worker 取到,
+	// 而连接的无锁状态(rbuf/rr/rw/curState)只能被一个碰——用 busy 位挡掉。
+	//
+	// 抢不到说明这个连接正被别人处理, 这次跳过: 它描述的事件要么已经被
+	// 处理了, 要么还在 socket 里(那个 goroutine 处理完会再读)。ET 模式下
+	// 新数据到达会重新触发边缘。
+	if tpn.owner.workersPerShard > 1 {
+		if !c.tryBusy() {
+			return
+		}
+		defer c.unbusy()
+	}
+
 	if pt.isRead {
-		if err := pt.c.processWebsocketFrame(); err != nil {
-			pt.c.Close()
+		if err := c.processWebsocketFrame(); err != nil {
+			c.Close()
 			return
 		}
 	}
-	if pt.isWrite && pt.c.needFlush() {
-		pt.c.flush()
+	if pt.isWrite && c.needFlush() {
+		c.flush()
 	}
 }

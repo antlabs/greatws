@@ -48,6 +48,17 @@ func WithParseGoroutines(n int) EvOption {
 	}
 }
 
+// WithParseWorkersPerShard 让每个解析分片起 n 个常驻 worker, 默认 1。
+//
+// 多个 worker 之间用 fnet 那套"逐跳唤醒": 一个 worker 处理任务前看到环里
+// 还有活, 就先叫醒下一个来接, 所以手上这个慢了也不挡住后面的。同一连接
+// 不被两个 worker 同时碰, 靠 Conn 的 busy 位。n <= 0 用默认值 1。
+func WithParseWorkersPerShard(n int) EvOption {
+	return func(e *MultiEventLoop) {
+		e.parseWorkersPerShard = n
+	}
+}
+
 // 最小业务goroutine数量, 控制业务go程数量
 // initCount: 初始化的协程数
 // min: 最小协程数
