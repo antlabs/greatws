@@ -26,7 +26,7 @@
 | HTTP/2 (RFC 9113 + HPACK) | `http2/` | 帧层 + 流 + HPACK 可用 |
 | gRPC | `grpc/` | 消息分帧 + 状态，端到端可用 |
 | TLS | `tls/` | 可用（握手在独立 goroutine，不阻塞事件循环） |
-| HTTP/3 | `http3/` | QUIC 包/帧层可用，完整 QUIC 未实现 |
+| HTTP/3 | `http3/` | 端到端可用（QUIC 用 quic-go，帧层自己实现） |
 
 引擎在 `engine/`，协议实现 `engine.Handler`。分层见
 [docs/architecture.md](docs/architecture.md)。
