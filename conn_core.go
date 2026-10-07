@@ -714,6 +714,34 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 	//
 	// 实测(io 模式, 1KB echo, 交替 3 轮): TPS 差 0.24%(噪声内),
 	// TP95 好 1%(三轮全赢)、TP99 好 1%(三轮全赢)。收益很小但一致。
+	// 4KB 以下拼成一块用 sendto, 和 fnet 的 writeFrame 一样
+	// (maxCopiedPayload = 4KB)。
+	//
+	// sendmsg 要读 iovec 数组、sendto 只要一个指针, 小消息下后者更便宜;
+	// 大消息才值得用 iovec 省那次拷贝。之前无条件用 sendmsg, 测下来小消息
+	// 多花 CPU。
+	if c.task == nil && !c.isClient() && !rsv1 && len(writeBuf) <= 4096 && len(c.wbufList) == 0 {
+		var hdr [10]byte
+		hn := wsHeader(hdr[:], uint8(op), len(writeBuf))
+		var seg bufseg
+		all := seg.alloc(hn, len(writeBuf))
+		copy(all, hdr[:hn])
+		copy(all[hn:], writeBuf)
+		n, werr := socketWrite(c.getFd(), all)
+		seg.free()
+		c.addWriteSyscall()
+		if werr == nil && n == len(all) {
+			return nil
+		}
+		if werr == nil || werr == syscall.EAGAIN || werr == syscall.EINTR {
+			c.appendToWbufList(all[n:], len(all)-n)
+			if err := c.eventLoop().addWrite(c); err != nil {
+				return err
+			}
+			return nil
+		}
+		return werr
+	}
 	if c.task == nil && !c.isClient() && !rsv1 && len(writeBuf) <= 65535 && len(c.wbufList) == 0 {
 		var hdr [10]byte
 		hn := wsHeader(hdr[:], uint8(op), len(writeBuf))
