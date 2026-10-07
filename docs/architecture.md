@@ -122,18 +122,26 @@ fio/
 
 ## 已完成 / 接下去
 
-已落地：`engine/`（事件循环 + 连接 io + Handler 接口）、`tls/`（状态机
-TLS，用 goroutine 装 crypto/tls 的握手）、`http2/`（帧层 + 流 + HPACK）、
-`grpc/`（消息分帧 + trailer 状态，端到端跑通）。
+已落地（每个都有测试，`-race` 全绿）：
+
+| 包 | 内容 |
+|---|---|
+| `engine/` | 事件循环 + 连接 io + `Handler` 接口 |
+| `http/` | HTTP/1.1，接在 engine 上，端到端跑通（keep-alive、pipelining） |
+| `http2/` | RFC 9113 帧层 + 流 + HPACK |
+| `grpc/` | 消息分帧 + trailer 状态，端到端跑通 |
+| `tls/` | 握手在独立 goroutine，不阻塞事件循环 |
+| `http3/` | QUIC 包/帧层（变长整数、长/短头、HTTP/3 帧、SETTINGS） |
 
 接下去：
 
 - **websocket/ 搬到 engine 上**：它的引擎和协议还焊在一起。搬的时候要保住
-  两条路径——零拷贝（payload 直接指向读缓冲区）和攒包（cork，一轮 read
-  里多条 frame 的回包合成一次写）。不急着做，那条路径是压测第一名。
-- **http/ 接引擎**：解析器（httparser）已经能用了，缺的是把它接到
-  `engine.Handler` 上、以及响应写出。
-- **http2 的流控和优先级**：现在收发都不做窗口管理，大流量下对端可能
-  因为窗口不动而卡住。要补 WINDOW_UPDATE 的收发。
-- **HTTP/3**：跑在 QUIC 上，是唯一不走 epoll 读事件的——UDP 收包后自己
-  做拥塞控制和流多路复用。
+  两条路径——零拷贝（payload 直接指向读缓冲区）和攒包（cork）。不急着做，
+  那条路径是压测第一名。
+- **http2 的流控**：现在收发都不做窗口管理，大流量下对端可能因为窗口不动
+  而卡住。要补 WINDOW_UPDATE 的收发。
+- **完整的 QUIC**：`http3/` 现在只有包和帧的编解码。QUIC 本体（TLS 1.3
+  握手集成、丢包重传、拥塞控制、流控、连接迁移）是一个完整协议栈的量级——
+  要么自己写几千行，要么接 quic-go。
+- **http/ 的 chunked 响应**：现在只能靠 Content-Length，没设的话连接不能
+  复用。
