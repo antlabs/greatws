@@ -1,0 +1,351 @@
+// Copyright 2023-2024 antlabs. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package http
+
+import (
+	"errors"
+	"strconv"
+
+	"github.com/antlabs/fio/engine"
+)
+
+// ResponseWriter 是给回调写响应用的。
+//
+// 形状对齐 net/http 的 ResponseWriter（Header/Write/WriteHeader），但
+// 底层不是 bufio + 阻塞写，而是**先攒头、Write 时一次发出去**——非阻塞
+// 的 socket 上，分开写头和数据意味着两次系统调用，而且中间可能被可写
+// 事件打断，顺序要额外维护。
+type ResponseWriter struct {
+	// header 是还没发出去的头（名字 -> 值）
+	header map[string][]string
+	// statusCode 是状态码，0 表示还没设（默认 200）
+	statusCode int
+	// wroteHeader 调用方设过状态码了没有（WriteHeader 被调过）
+	wroteHeader bool
+	// headerSent 头真的写出去电路上没有
+	headerSent bool
+
+	// conn 是底层连接
+	conn *engine.Conn
+	// buf 是拼响应用的缓冲区（连接级复用）
+	buf *[]byte
+
+	// keepAlive 这个响应之后连接要不要留着
+	keepAlive bool
+}
+
+// Header 返回可以设置的头。
+func (w *ResponseWriter) Header() map[string][]string {
+	if w.header == nil {
+		w.header = make(map[string][]string, 8)
+	}
+	return w.header
+}
+
+// WriteHeader 设状态码。重复调只认第一次。
+func (w *ResponseWriter) WriteHeader(code int) {
+	if w.wroteHeader {
+		return
+	}
+	w.statusCode = code
+	w.wroteHeader = true
+}
+
+// Write 写响应体。
+//
+// 第一次 Write 会先把头拼好发出去（HTTP/1.1 的规矩：头和体不能分开决定）。
+func (w *ResponseWriter) Write(body []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(200)
+	}
+	if err := w.flushHeader(); err != nil {
+		return 0, err
+	}
+	if len(body) == 0 {
+		return 0, nil
+	}
+	// 用 chunked 还是 Content-Length？
+	//
+	// 这里**先按 Content-Length 写**：调用方在 Write 之前设了
+	// Content-Length 就用它，没设的话……就得用 chunked。
+	//
+	// TODO: chunked 还没实现。现在没设 Content-Length 的话按"写完就关"
+	// 处理（HTTP/1.0 那种），连接不能复用。
+	return len(body), w.conn.Write(body)
+}
+
+// flushHeader 把状态行 + 头拼出来发出去。只发一次。
+func (w *ResponseWriter) flushHeader() error {
+	if w.headerSent {
+		return nil
+	}
+	if w.statusCode == 0 {
+		w.statusCode = 200
+	}
+
+	// 复用连接上的缓冲区
+	if w.buf == nil || cap(*w.buf) < 256 {
+		b := make([]byte, 0, 512)
+		w.buf = &b
+	}
+	buf := (*w.buf)[:0]
+
+	buf = append(buf, "HTTP/1.1 "...)
+	buf = strconv.AppendInt(buf, int64(w.statusCode), 10)
+	buf = append(buf, ' ')
+	buf = append(buf, StatusText(w.statusCode)...)
+	buf = append(buf, '\r', '\n')
+
+	for name, values := range w.header {
+		for _, v := range values {
+			buf = append(buf, name...)
+			buf = append(buf, ':', ' ')
+			buf = append(buf, v...)
+			buf = append(buf, '\r', '\n')
+		}
+	}
+	buf = append(buf, '\r', '\n')
+
+	w.headerSent = true
+	*w.buf = buf
+	return w.conn.Write(buf)
+}
+
+// WriteRaw 直接把一段字节写出去（给需要手写响应的地方用）。
+func (w *ResponseWriter) WriteRaw(b []byte) error { return w.conn.Write(b) }
+
+// Conn 返回底层连接（写 trailer、拿对端地址之类的场景）。
+func (w *ResponseWriter) Conn() *engine.Conn { return w.conn }
+
+// Handler 处理 HTTP 请求。
+//
+// 形状和 net/http 的 Handler 一样：拿到请求和 ResponseWriter，写响应。
+// 不同的是它跑在事件循环上——**不能阻塞**，要等什么东西的话得自己记住
+// 状态、让出，等下一次回调。
+type Handler interface {
+	ServeHTTP(w *ResponseWriter, r *Request)
+}
+
+// HandlerFunc 让普通函数当 Handler。
+type HandlerFunc func(w *ResponseWriter, r *Request)
+
+func (f HandlerFunc) ServeHTTP(w *ResponseWriter, r *Request) { f(w, r) }
+
+// ConnHandler 是每个连接一个的 engine.Handler。
+//
+// 一个连接上会来多个请求（keep-alive），所以解析器、ResponseWriter 都
+// 挂在它上面复用。
+type ConnHandler struct {
+	// handler 是用户的业务处理
+	handler Handler
+	// maxHeaderSize 传给 httparser
+	maxHeaderSize int32
+
+	// onUpgrade 是收到 Upgrade 请求时的回调（websocket 握手）
+	onUpgrade func(c *engine.Conn, r *Request)
+}
+
+// NewConnHandler 建一个连接级处理器。
+func NewConnHandler(h Handler, maxHeaderSize int32) *ConnHandler {
+	return &ConnHandler{
+		handler:       h,
+		maxHeaderSize: maxHeaderSize,
+	}
+}
+
+// OnUpgrade 设置 Upgrade 请求的处理（比如交给 websocket）。
+func (ch *ConnHandler) OnUpgrade(fn func(c *engine.Conn, r *Request)) {
+	ch.onUpgrade = fn
+}
+
+// OnOpen 连接建立。
+//
+// **可能在 OnData 之后才跑到**：engine 的 Add 是 accept 循环（另一个
+// goroutine）调的，它把 OnOpen 投进事件循环的任务队列；而同一个连接如果
+// 立刻有数据到，事件可能先被 epoll 拿出来处理。所以状态不能只靠 OnOpen
+// 建，OnData 那边要能兜住（见 state 方法）。
+func (ch *ConnHandler) OnOpen(c *engine.Conn) {
+	if c.UserData() == nil {
+		c.SetUserData(ch.newState())
+	}
+}
+
+// state 取连接状态，没有就现建。
+//
+// 兜住"OnData 比 OnOpen 先到"那种情况——引擎不保证两者的顺序（见 OnOpen
+// 的注释）。
+func (ch *ConnHandler) state(c *engine.Conn) *connState {
+	if st, ok := c.UserData().(*connState); ok && st != nil {
+		return st
+	}
+	st := ch.newState()
+	c.SetUserData(st)
+	return st
+}
+
+// OnData 有数据可读：喂给 httparser。
+//
+// **返回值语义**：按 engine.Handler 的契约，返回"消化了多少字节"——引擎
+// 会把这么多字节从读缓冲区里丢掉，没丢的留着下次和新的拼一起再喂。
+//
+// 所以这里返回的必须是**真正处理掉的**：一个请求解完了、字节也确实
+// 属于它，才算。报文没解完时返回已经解掉的部分，剩下的留给下一次。
+//
+// 踩过的坑：早先不管解没解完都返回 len(buf)，理由是"httparser 自己会
+// 把不够的攒起来"。但引擎那边也把 buf 当作消化掉了——两边都留着，结果
+// 是**同一段字节被处理两次**（症状：逐字节发的请求，服务端回一个
+// broken pipe 就关，因为解析器拿到的字节是重复的、拼不出合法请求）。
+//
+// 规矩：**缓冲只有一处**，就是引擎的读缓冲区。解析器不攒。
+func (ch *ConnHandler) OnData(c *engine.Conn, buf []byte) (int, error) {
+	st := ch.state(c)
+	consumed := 0
+
+	for consumed < len(buf) {
+		n, err := st.parser.Parse(buf[consumed:])
+		if err != nil {
+			// 报文坏了：回 400 然后关
+			ch.writeError(c, st, 400, err)
+			return len(buf), err
+		}
+		consumed += n
+
+		if !st.parser.Done() {
+			// 报文还没收全。已经解掉的那些字节算消化了（consumed），
+			// 剩下的（buf[consumed:]）留着——引擎会保留它们，下次多读到
+			// 一些再拼起来喂。
+			break
+		}
+
+		// 一个请求解完了
+		req := st.parser.Request()
+
+		if st.parser.Upgrade() {
+			// Upgrade 请求（websocket 握手）：交给外面处理，连接不再
+			// 按 HTTP 走
+			if ch.onUpgrade != nil {
+				ch.onUpgrade(c, req)
+				return consumed, nil
+			}
+			ch.writeError(c, st, 400, errNoUpgrade)
+			return consumed, errNoUpgrade
+		}
+
+		// 交给业务处理
+		if st.w == nil {
+			st.w = &ResponseWriter{}
+		}
+		st.w.reset(c)
+		ch.handler.ServeHTTP(st.w, req)
+
+		// keep-alive？
+		//
+		// HTTP/1.1 默认 keep-alive，除非请求里说 Connection: close
+		// （或者版本是 1.0 且没说 keep-alive）。这一条不实现的话，客户端
+		// 会一直等"响应之后服务端关连接"（很多客户端靠这个判断响应结束），
+		// 等到超时。
+		if wantClose(req) {
+			c.Close()
+			return len(buf), nil // 连接要关了，剩下的不用管
+		}
+
+		// 准备下一个请求
+		st.parser.Reset()
+	}
+
+	return consumed, nil
+}
+
+// OnClose 连接关闭。
+func (ch *ConnHandler) OnClose(c *engine.Conn, err error) {}
+
+// wantClose 判断这个请求之后连接要不要关。
+//
+// 规矩（RFC 9112 9.3）：
+//   - HTTP/1.1 默认复用，除非显式 Connection: close
+//   - HTTP/1.0 默认关，除非显式 Connection: keep-alive
+func wantClose(r *Request) bool {
+	conn, ok := r.Get("Connection")
+	if !ok {
+		// 没有这个头：1.1 复用，1.0 关
+		return r.Proto != "HTTP/1.1"
+	}
+	// 有的话按它说的来（大小写无关，值里可能有多个 token）
+	hasClose := containsFold(conn, "close")
+	hasKeepAlive := containsFold(conn, "keep-alive")
+	if hasClose {
+		return true
+	}
+	if hasKeepAlive && r.Proto != "HTTP/1.1" {
+		return false
+	}
+	return r.Proto != "HTTP/1.1"
+}
+
+// containsFold 是大小写无关的子串查找（ASCII）。
+func containsFold(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	if len(s) < len(sub) {
+		return false
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if equalFold(s[i:i+len(sub)], sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func (ch *ConnHandler) newState() *connState {
+	return &connState{
+		parser: NewParser(ch.maxHeaderSize),
+	}
+}
+
+func (ch *ConnHandler) writeError(c *engine.Conn, st *connState, code int, err error) error {
+	if st.w == nil {
+		st.w = &ResponseWriter{}
+	}
+	st.w.reset(c)
+	st.w.WriteHeader(code)
+	st.w.WriteRaw([]byte("HTTP/1.1 " + strconv.Itoa(code) + " " + StatusText(code) + "\r\n" +
+		"Content-Length: 0\r\nConnection: close\r\n\r\n"))
+	c.Close()
+	return err
+}
+
+// connState 是一个连接的 HTTP 状态。
+type connState struct {
+	parser *Parser
+	// w 是复用的响应写出器
+	w *ResponseWriter
+}
+
+// reset 把 ResponseWriter 复位到"新一个响应"的状态。
+func (w *ResponseWriter) reset(c *engine.Conn) {
+	w.conn = c
+	w.statusCode = 0
+	w.wroteHeader = false
+	w.headerSent = false
+	w.keepAlive = true // HTTP/1.1 默认 keep-alive
+	for k := range w.header {
+		delete(w.header, k)
+	}
+}
+
+// errNoUpgrade 没有 Upgrade 处理器时的错误。
+var errNoUpgrade = errors.New("http: upgrade request but no handler")

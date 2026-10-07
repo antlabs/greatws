@@ -107,6 +107,7 @@ func New(opts ...Option) (*MultiEventLoop, error) {
 			parent:      m,
 			maxEventNum: o.maxEventNum,
 			log:         m.log,
+			tasks:       make(chan func(), 64),
 		}
 		api, err := core.Create(core.TriggerTypeEdge)
 		if err != nil {
@@ -191,6 +192,18 @@ func (m *MultiEventLoop) Add(fd int, h Handler) (*Conn, error) {
 	}
 	atomic.AddInt64(&m.curConn, 1)
 	if h != nil {
+		// OnOpen 在事件循环的 goroutine 上跑。
+		//
+		// 为什么不在 Add 里同步调：Add 是 accept 循环（调用方的
+		// goroutine）调的，而 OnOpen 里协议会初始化自己的状态
+		// （SetUserData 之类），那个状态之后只被事件循环读——两边
+		// 一写一读就是数据竞争（-race 会报）。
+		//
+		// **调用方要保证 OnOpen 先于 OnData**：引擎保证的是同一个
+		// goroutine 上按顺序执行，不保证"任务队列里的一定比 epoll 事件
+		// 先跑"——Add 返回时事件可能已经在 epoll 里等着了。所以协议实现
+		// 那边要能应对"OnOpen 还没跑到就有数据"（http 包就是在 LazyInit
+		// 里处理的）。
 		h.OnOpen(c)
 	}
 	return c, nil

@@ -34,6 +34,9 @@ import (
 type EventLoop struct {
 	core.PollingApi
 
+	// tasks 是"要在这个循环的 goroutine 上跑"的函数（见 runOnLoop）
+	tasks chan func()
+
 	parent *MultiEventLoop
 
 	// maxEventNum 是一次 epoll_wait 最多拿多少事件。
@@ -50,6 +53,20 @@ func (el *EventLoop) Loop() {
 	for {
 		if el.parent.isFreed() {
 			return
+		}
+		// 先把投过来的任务跑掉（比如新连接的 OnOpen）。
+		//
+		// 放在 Poll **之前**：OnOpen 要在该连接的任何数据之前跑（协议
+		// 靠它初始化状态）。投递方（Add）保证任务先入队，这里保证它先
+		// 于 Poll 返回的事件被处理。
+		for {
+			select {
+			case f := <-el.tasks:
+				f()
+				continue
+			default:
+			}
+			break
 		}
 		// 超时不能是 -1（永远等）：Free 是置标志位让循环自己退出，一直
 		// 阻塞在 epoll_wait 里就看不到那个标志位。100ms 是"空闲时每秒醒
@@ -178,6 +195,22 @@ func (el *EventLoop) readAndDispatch(c *Conn) error {
 		return readErr
 	}
 	return nil
+}
+
+// runOnLoop 把一个函数丢到事件循环的 goroutine 上跑。
+//
+// 用在哪：Add 是调用方（accept 循环）的 goroutine 上跑的，但连接的状态
+// 之后只被事件循环碰。所以 OnOpen 要挪过去，不然两边一写一读就是竞争。
+//
+// 实现就是一个带缓冲的 channel + 循环里非阻塞地取。缓冲开得小（64）：
+// 它只用于"注册连接"这种稀疏的操作，不是数据路径。
+func (el *EventLoop) runOnLoop(f func()) {
+	select {
+	case el.tasks <- f:
+	default:
+		// 队列满了（很少见）。退化成同步调——总比丢掉好。
+		f()
+	}
 }
 
 func (el *EventLoop) del(c *Conn) {

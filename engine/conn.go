@@ -56,9 +56,14 @@ type Conn struct {
 	// 可写事件到了再补写。
 	wbufList []*[]byte
 
-	// 协议挂自己的状态。协议包在 OnOpen 里放, 在 OnClose 里别管——
-	// 连接对象本身会被复用池回收。
-	userData any
+	// userData 是协议挂自己的状态。协议包在 OnOpen 里放, 在 OnClose 里
+	// 别管——连接对象本身会被复用池回收。
+	//
+	// 用 atomic.Value 而不是普通字段: Add 是 accept 循环（调用方
+	// goroutine）调的, 而 OnOpen 里设的这个值之后被事件循环读——两个
+	// goroutine 一写一读就是竞争（-race 会报）。原型里早先是普通字段,
+	// 实测就是这么炸的。
+	userData atomic.Value // 存 any, 用 Load/Store
 
 	// packed 把几个状态位压进一个 uint32:
 	//
@@ -101,17 +106,40 @@ func (c *Conn) Init(fd int, h Handler, parent *EventLoop) {
 	c.rbuf = nil
 	c.rr, c.rw = 0, 0
 	c.wbufList = c.wbufList[:0]
-	c.userData = nil
+	// userData 是 atomic.Value，清成"没设过"（存一个 nil 指针）
+	c.userData.Store((*any)(nil))
 }
 
 // Fd 返回文件描述符。连接关掉之后返回 -1。
 func (c *Conn) Fd() int { return int(atomic.LoadInt64(&c.fd)) }
 
 // SetUserData 让协议挂自己的状态(解析器、握手上下文...)。
-func (c *Conn) SetUserData(v any) { c.userData = v }
+//
+// 可以在任意 goroutine 上调（内部用 atomic.Value）。协议通常在 OnOpen
+// 里设、在 OnData 里读，而这两者可能在不同的 goroutine 上。
+func (c *Conn) SetUserData(v any) {
+	if v == nil {
+		// atomic.Value 不允许存 nil
+		c.userData.Store((*any)(nil))
+		return
+	}
+	c.userData.Store(&v)
+}
 
-// UserData 取协议挂的状态。
-func (c *Conn) UserData() any { return c.userData }
+// UserData 取协议挂的状态。没设过返回 nil。
+func (c *Conn) UserData() any {
+	p := c.userData.Load()
+	if p == nil {
+		return nil
+	}
+	// 存的是 *any。Load 返回的接口里包着这个指针；没 Store 过的话
+	// p 是 nil（不是 (*any)(nil)，是接口本身为 nil），上面那行拦住了。
+	pp, ok := p.(*any)
+	if !ok || pp == nil {
+		return nil
+	}
+	return *pp
+}
 
 // IsClosed 连接关了没有。
 func (c *Conn) IsClosed() bool { return atomic.LoadInt32(&c.closed) == 1 }

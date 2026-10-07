@@ -118,12 +118,13 @@ func (b *requestBuilder) reset() {
 // 每个连接一个 builder，回调里不分配。
 func (b *requestBuilder) setting(p *Parser) *httparser.Setting {
 	return &httparser.Setting{
-		MessageBegin: func(p *httparser.Parser, _ int) {
-			if b.owner.done {
-				return
-			}
-			b.req.Proto = "HTTP/" + strconv.Itoa(int(p.Major)) + "." + strconv.Itoa(int(p.Minor))
-		},
+		// 注意：**不要**在 MessageBegin 里读 p.Major/p.Minor——那时候还是
+		// 0（版本号要等请求行解完才填），写出来是 "HTTP/0.0"。踩过一次：
+		// wantClose 按版本判断 keep-alive，proto 永远是 0.0 导致每个请求
+		// 都被当成 HTTP/1.0 关连接，pipelining 的响应全丢。
+		//
+		// 版本在 HeadersComplete 里读（见下面）。
+
 		URL: func(_ *httparser.Parser, buf []byte, _ int) {
 			// URL 可能回调多次（分段到的），累加。
 			//
@@ -162,6 +163,8 @@ func (b *requestBuilder) setting(p *Parser) *httparser.Setting {
 			if b.owner.done {
 				return
 			}
+			// 版本到这儿才准（请求行解完才有）
+			b.req.Proto = "HTTP/" + strconv.Itoa(int(p.Major)) + "." + strconv.Itoa(int(p.Minor))
 			b.req.Method = p.Method.String()
 			if cl, ok := b.req.Get("Content-Length"); ok {
 				if n, err := strconv.ParseInt(cl, 10, 64); err == nil {
