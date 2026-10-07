@@ -507,6 +507,28 @@ func boolToFlag(b bool, f uint8) uint8 {
 	return 0
 }
 
+// WriteTrailers 发 trailer：一个带 END_STREAM 的 HEADERS 帧。
+//
+// **这是 HTTP/2 才有的东西**。HTTP/1.1 的 trailer 藏在 chunked 编码后面，
+// HTTP/2 干脆就是一个"数据发完之后再来的 HEADERS"——它带 END_STREAM，
+// 表示这个流到此为止。
+//
+// gRPC 用它送调用状态：响应头里放 content-type，响应体放消息，最后这个
+// trailer 里放 grpc-status。为什么状态不放在响应头里：服务端可能要把
+// 数据流式发出去，发到最后才知道结果（或者半路才出错）。
+func (c *Conn) WriteTrailers(streamID uint32, fields []HeaderField) error {
+	block, err := c.encoder.Encode(fields)
+	if err != nil {
+		return err
+	}
+	// trailer 必须带 END_STREAM（不然接收端不知道流结束了）
+	max := int(c.peerMaxFrameSize)
+	if len(block) <= max {
+		return c.writeFrame(AppendHeaders(nil, streamID, block, true, true))
+	}
+	return c.writeHeaderBlock(streamID, block, true)
+}
+
 // WriteData 发一个 DATA 帧。
 func (c *Conn) WriteData(streamID uint32, data []byte, endStream bool) error {
 	max := int(c.peerMaxFrameSize)

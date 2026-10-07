@@ -21,12 +21,15 @@
 
 | 协议 | 包 | 状态 |
 |---|---|---|
-| WebSocket (rfc6455 / rfc7692) | `websocket/` | 已支持 |
-| HTTP/1.1 | `http/` | 解析器可用 |
-| HTTP/2 | `http2/` | 计划中 |
+| WebSocket (rfc6455 / rfc7692) | `websocket/` | 已支持，压测第一梯队 |
+| HTTP/1.1 | `http/` | 解析器可用，未接引擎 |
+| HTTP/2 (RFC 9113 + HPACK) | `http2/` | 帧层 + 流 + HPACK 可用 |
+| gRPC | `grpc/` | 消息分帧 + 状态，端到端可用 |
+| TLS | `tls/` | 可用（握手在独立 goroutine，不阻塞事件循环） |
 | HTTP/3 | `http3/` | 计划中 |
-| gRPC | `grpc/` | 计划中 |
-| TLS（状态机实现，不依赖 crypto/tls 的阻塞读） | `tls/` | 计划中 |
+
+引擎在 `engine/`，协议实现 `engine.Handler`。分层见
+[docs/architecture.md](docs/architecture.md)。
 
 分层和各协议的边界见 [docs/architecture.md](docs/architecture.md)。
 

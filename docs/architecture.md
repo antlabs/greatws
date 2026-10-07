@@ -120,18 +120,20 @@ fio/
 └── docs/
 ```
 
-## 接下去
+## 已完成 / 接下去
 
-`Conn` 现在两边都占：既是传输连接（fd、读缓冲区、积压写），又是 WebSocket
-状态机（帧头、分片缓冲、解压上下文）。拆的时候要保证两条已有路径不受影响：
+已落地：`engine/`（事件循环 + 连接 io + Handler 接口）、`tls/`（状态机
+TLS，用 goroutine 装 crypto/tls 的握手）、`http2/`（帧层 + 流 + HPACK）、
+`grpc/`（消息分帧 + trailer 状态，端到端跑通）。
 
-- **零拷贝**：payload 直接指向读缓冲区（`WithServerZeroCopyPayload`），生命周期
-  靠"回调返回前用完"这个契约撑着，换 buffer 所有权的时候容易出错
-- **攒包**（cork）：一轮 read 里多条 frame 的回包合成一次写，靠 `cflagCorking`
-  位和 `wbufList`，拆的时候状态位要跟着走
+接下去：
 
-拆的顺序：先让引擎的读回调从"调 `processWebsocketFrame`"变成"调 `handler.OnData`"
-（接口先立起来，实现还在原地），再把 WebSocket 的字段挪进 `websocket.Conn`。
-一步一验证，每步 build + test 全绿。
-
-现在不动它——等 `http/` 真写出东西来，哪些是公共的自然就清楚了。
+- **websocket/ 搬到 engine 上**：它的引擎和协议还焊在一起。搬的时候要保住
+  两条路径——零拷贝（payload 直接指向读缓冲区）和攒包（cork，一轮 read
+  里多条 frame 的回包合成一次写）。不急着做，那条路径是压测第一名。
+- **http/ 接引擎**：解析器（httparser）已经能用了，缺的是把它接到
+  `engine.Handler` 上、以及响应写出。
+- **http2 的流控和优先级**：现在收发都不做窗口管理，大流量下对端可能
+  因为窗口不动而卡住。要补 WINDOW_UPDATE 的收发。
+- **HTTP/3**：跑在 QUIC 上，是唯一不走 epoll 读事件的——UDP 收包后自己
+  做拥塞控制和流多路复用。
