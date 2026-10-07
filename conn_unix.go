@@ -155,8 +155,6 @@ func (c *Conn) closeWithoutLockOnClose(err error, onClose bool) {
 	atomic.StoreInt64(&c.fd, -1)
 	atomic.StoreInt32(&c.closed, 1)
 
-
-
 	// 这个必须要放在后面
 	if onClose {
 		c.onCloseOnce.Do(&c.mu2, func() {

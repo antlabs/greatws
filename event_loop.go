@@ -136,6 +136,7 @@ func (el *EventLoop) Loop() {
 					c:       c,
 					isRead:  state.IsRead(),
 					isWrite: state.IsWrite(),
+					ts:      probeMark(),
 				})
 				submitted = true
 				return

@@ -28,6 +28,9 @@ type parseTask struct {
 	c       *Conn
 	isRead  bool
 	isWrite bool
+	// ts 是投递时刻, 只有用 -tags greatws_latprobe 编译时才有值
+	// (见 lat_probe.go), 用来量"投递到开始处理"的等待。
+	ts int64
 }
 
 // parseTask 的 isRead/isWrite 和 pendingEvents 用同一套位。
@@ -74,6 +77,15 @@ func newTaskParsePinned(n int, pinned bool) *taskParse {
 func newTaskParseWorkers(n int, pinned bool, workers int) *taskParse {
 	if n <= 0 {
 		n = runtime.NumCPU()
+	}
+	// 强制 1: 多 worker 那条路要 Conn 的 busy 位做互斥(同一连接的两次
+	// 事件会被两个 worker 取到, 而连接的无锁状态只能被一个碰), 而完整
+	// 实现过之后实测比单 worker 慢——详见 event_loop.go 投递点的说明。
+	//
+	// 留着这个参数是为了让那条路的代码还在、以后想再试时不用重写;
+	// 但传 >1 也不会真的起多个 worker, 免得又踩崩溃。
+	if workers > 1 {
+		workers = 1
 	}
 	if workers <= 0 {
 		workers = 1
@@ -273,6 +285,7 @@ func (tpn *taskParseNode) notifyIfIdle() {
 // 用循环而不是递归/再投一次: 同一个连接连续有事件时(请求-响应就是这种),
 // 就地接着跑能省掉一次完整的投递 + 唤醒, 也保证同一连接还是串行的。
 func (tpn *taskParseNode) processOne(pt *parseTask) {
+	probeObserve(pt.ts)
 	if pt.isRead {
 		if err := pt.c.processWebsocketFrame(); err != nil {
 			pt.c.Close()
