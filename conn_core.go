@@ -86,6 +86,15 @@ const (
 	stateMask  uint32 = 0x3
 	flagClient uint32 = 1 << 2
 	flagBusy   uint32 = 1 << 3
+	// 处理期间又到了可读/可写事件。投递方发现 busy 已被占(说明有人在处理
+	// 这个连接)时, 不重复投任务, 只把事件记在这里; 正在处理的那个跑完
+	// 会取走它们再跑一轮。
+	//
+	// 为什么不能直接丢: ET 的边缘只来一次, 丢了就再也没有通知, 连接卡住
+	// (实测: 随机分片 + 只加 busy 位的版本, 服务端从 2,087,688 TPS 掉到
+	// 181,995)。
+	flagPendingRead  uint32 = 1 << 4
+	flagPendingWrite uint32 = 1 << 5
 )
 
 // 下面几个都走原子: packed 里既有"只有本 goroutine 碰"的状态位

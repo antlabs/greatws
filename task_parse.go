@@ -273,30 +273,13 @@ func (tpn *taskParseNode) notifyIfIdle() {
 // 用循环而不是递归/再投一次: 同一个连接连续有事件时(请求-响应就是这种),
 // 就地接着跑能省掉一次完整的投递 + 唤醒, 也保证同一连接还是串行的。
 func (tpn *taskParseNode) processOne(pt *parseTask) {
-	c := pt.c
-
-	// 单 worker 时不需要互斥(一个 fd 恒落一个分片, 一个分片一个 goroutine)。
-	// 多 worker 时同一连接的两次事件可能同时躺在环里, 被两个 worker 取到,
-	// 而连接的无锁状态(rbuf/rr/rw/curState)只能被一个碰——用 busy 位挡掉。
-	//
-	// 抢不到说明这个连接正被别人处理, 这次跳过: 它描述的事件要么已经被
-	// 处理了, 要么还在 socket 里(那个 goroutine 处理完会再读)。ET 模式下
-	// 新数据到达会重新触发边缘。
-	if tpn.owner.workersPerShard > 1 {
-		if !c.tryBusy() {
-			return
-		}
-		defer c.unbusy()
-	}
-
 	if pt.isRead {
-		if err := c.processWebsocketFrame(); err != nil {
-			c.Close()
+		if err := pt.c.processWebsocketFrame(); err != nil {
+			pt.c.Close()
 			return
 		}
 	}
-	if pt.isWrite && c.needFlush() {
-		c.flush()
+	if pt.isWrite && pt.c.needFlush() {
+		pt.c.flush()
 	}
 }
-
