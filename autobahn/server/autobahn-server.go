@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/antlabs/quicknet"
+	"github.com/antlabs/quicknet/websocket"
 )
 
 var runInEventLoop = flag.Bool("run-in-event-loop", false, "run in event loop")
@@ -26,15 +26,15 @@ var keyPEMBlock []byte
 
 type echoHandler struct{}
 
-func (e *echoHandler) OnOpen(c *quicknet.Conn) {
-	// err := c.WriteMessage(quicknet.Binary, make([]byte, 1<<28))
+func (e *echoHandler) OnOpen(c *websocket.Conn) {
+	// err := c.WriteMessage(websocket.Binary, make([]byte, 1<<28))
 	// if err != nil {
 	// 	fmt.Printf("%s\n", err)
 	// }
 	// fmt.Printf("OnOpen: %p\n", c)
 }
 
-func (e *echoHandler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
+func (e *echoHandler) OnMessage(c *websocket.Conn, op websocket.Opcode, msg []byte) {
 	// fmt.Printf("OnMessage: %s, len(%d), op:%d\n", msg, len(msg), op)
 	// if err := c.WriteTimeout(op, msg, 3*time.Second); err != nil {
 	// 	fmt.Println("write fail:", err)
@@ -44,7 +44,7 @@ func (e *echoHandler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte
 	}
 }
 
-func (e *echoHandler) OnClose(c *quicknet.Conn, err error) {
+func (e *echoHandler) OnClose(c *websocket.Conn, err error) {
 	defer c.Close()
 	errMsg := ""
 	if err != nil {
@@ -54,30 +54,30 @@ func (e *echoHandler) OnClose(c *quicknet.Conn, err error) {
 }
 
 type handler struct {
-	m         *quicknet.MultiEventLoop
-	parseLoop *quicknet.MultiEventLoop
+	m         *websocket.MultiEventLoop
+	parseLoop *websocket.MultiEventLoop
 }
 
 // 运行在业务线程
 
 // 运行在io线程
 func (h *handler) echoRunInIo(w http.ResponseWriter, r *http.Request) {
-	opts := []quicknet.ServerOption{
-		quicknet.WithServerReplyPing(),
-		quicknet.WithServerDecompression(),
-		quicknet.WithServerIgnorePong(),
-		quicknet.WithServerCallback(&echoHandler{}),
-		quicknet.WithServerEnableUTF8Check(),
-		quicknet.WithServerReadTimeout(5 * time.Second),
-		quicknet.WithServerMultiEventLoop(h.m),
-		quicknet.WithServerCallbackInEventLoop(),
+	opts := []websocket.ServerOption{
+		websocket.WithServerReplyPing(),
+		websocket.WithServerDecompression(),
+		websocket.WithServerIgnorePong(),
+		websocket.WithServerCallback(&echoHandler{}),
+		websocket.WithServerEnableUTF8Check(),
+		websocket.WithServerReadTimeout(5 * time.Second),
+		websocket.WithServerMultiEventLoop(h.m),
+		websocket.WithServerCallbackInEventLoop(),
 	}
 
 	if *runInEventLoop {
-		opts = append(opts, quicknet.WithServerCallbackInEventLoop())
+		opts = append(opts, websocket.WithServerCallbackInEventLoop())
 	}
 
-	c, err := quicknet.Upgrade(w, r, opts...)
+	c, err := websocket.Upgrade(w, r, opts...)
 	if err != nil {
 		slog.Error("Upgrade fail:", "err", err.Error())
 	}
@@ -85,22 +85,22 @@ func (h *handler) echoRunInIo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) echoRunOneByOne(w http.ResponseWriter, r *http.Request) {
-	opts := []quicknet.ServerOption{
-		quicknet.WithServerReplyPing(),
-		quicknet.WithServerDecompression(),
-		quicknet.WithServerIgnorePong(),
-		quicknet.WithServerCallback(&echoHandler{}),
-		quicknet.WithServerEnableUTF8Check(),
-		// quicknet.WithServerReadTimeout(5 * time.Second),
-		quicknet.WithServerMultiEventLoop(h.m),
-		quicknet.WithServerOneByOneMode(),
+	opts := []websocket.ServerOption{
+		websocket.WithServerReplyPing(),
+		websocket.WithServerDecompression(),
+		websocket.WithServerIgnorePong(),
+		websocket.WithServerCallback(&echoHandler{}),
+		websocket.WithServerEnableUTF8Check(),
+		// websocket.WithServerReadTimeout(5 * time.Second),
+		websocket.WithServerMultiEventLoop(h.m),
+		websocket.WithServerOneByOneMode(),
 	}
 
 	if *runInEventLoop {
-		opts = append(opts, quicknet.WithServerCallbackInEventLoop())
+		opts = append(opts, websocket.WithServerCallbackInEventLoop())
 	}
 
-	c, err := quicknet.Upgrade(w, r, opts...)
+	c, err := websocket.Upgrade(w, r, opts...)
 	if err != nil {
 		slog.Error("Upgrade fail:", "err", err.Error())
 	}
@@ -108,22 +108,22 @@ func (h *handler) echoRunOneByOne(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) echoRunElastic(w http.ResponseWriter, r *http.Request) {
-	opts := []quicknet.ServerOption{
-		quicknet.WithServerReplyPing(),
-		quicknet.WithServerDecompression(),
-		quicknet.WithServerIgnorePong(),
-		quicknet.WithServerCallback(&echoHandler{}),
-		quicknet.WithServerEnableUTF8Check(),
-		quicknet.WithServerReadTimeout(5 * time.Second),
-		quicknet.WithServerMultiEventLoop(h.m),
-		quicknet.WithServerElasticMode(),
+	opts := []websocket.ServerOption{
+		websocket.WithServerReplyPing(),
+		websocket.WithServerDecompression(),
+		websocket.WithServerIgnorePong(),
+		websocket.WithServerCallback(&echoHandler{}),
+		websocket.WithServerEnableUTF8Check(),
+		websocket.WithServerReadTimeout(5 * time.Second),
+		websocket.WithServerMultiEventLoop(h.m),
+		websocket.WithServerElasticMode(),
 	}
 
 	if *runInEventLoop {
-		opts = append(opts, quicknet.WithServerCallbackInEventLoop())
+		opts = append(opts, websocket.WithServerCallbackInEventLoop())
 	}
 
-	c, err := quicknet.Upgrade(w, r, opts...)
+	c, err := websocket.Upgrade(w, r, opts...)
 	if err != nil {
 		slog.Error("Upgrade fail:", "err", err.Error())
 	}
@@ -132,13 +132,13 @@ func (h *handler) echoRunElastic(w http.ResponseWriter, r *http.Request) {
 
 // 1.测试不接管上下文，只解压
 func (h *handler) echoNoContextDecompression(w http.ResponseWriter, r *http.Request) {
-	c, err := quicknet.Upgrade(w, r,
-		quicknet.WithServerReplyPing(),
-		quicknet.WithServerDecompression(),
-		quicknet.WithServerIgnorePong(),
-		quicknet.WithServerCallback(&echoHandler{}),
-		quicknet.WithServerEnableUTF8Check(),
-		quicknet.WithServerMultiEventLoop(h.m),
+	c, err := websocket.Upgrade(w, r,
+		websocket.WithServerReplyPing(),
+		websocket.WithServerDecompression(),
+		websocket.WithServerIgnorePong(),
+		websocket.WithServerCallback(&echoHandler{}),
+		websocket.WithServerEnableUTF8Check(),
+		websocket.WithServerMultiEventLoop(h.m),
 	)
 	if err != nil {
 		fmt.Println("Upgrade fail:", err)
@@ -150,13 +150,13 @@ func (h *handler) echoNoContextDecompression(w http.ResponseWriter, r *http.Requ
 
 // 2.测试不接管上下文，压缩和解压
 func (h *handler) echoNoContextDecompressionAndCompression(w http.ResponseWriter, r *http.Request) {
-	c, err := quicknet.Upgrade(w, r,
-		quicknet.WithServerReplyPing(),
-		quicknet.WithServerDecompressAndCompress(),
-		quicknet.WithServerIgnorePong(),
-		quicknet.WithServerCallback(&echoHandler{}),
-		quicknet.WithServerEnableUTF8Check(),
-		quicknet.WithServerMultiEventLoop(h.m),
+	c, err := websocket.Upgrade(w, r,
+		websocket.WithServerReplyPing(),
+		websocket.WithServerDecompressAndCompress(),
+		websocket.WithServerIgnorePong(),
+		websocket.WithServerCallback(&echoHandler{}),
+		websocket.WithServerEnableUTF8Check(),
+		websocket.WithServerMultiEventLoop(h.m),
 	)
 	if err != nil {
 		fmt.Println("Upgrade fail:", err)
@@ -168,14 +168,14 @@ func (h *handler) echoNoContextDecompressionAndCompression(w http.ResponseWriter
 
 // 3.测试接管上下文，解压
 func (h *handler) echoContextTakeoverDecompression(w http.ResponseWriter, r *http.Request) {
-	c, err := quicknet.Upgrade(w, r,
-		quicknet.WithServerReplyPing(),
-		quicknet.WithServerDecompression(),
-		quicknet.WithServerIgnorePong(),
-		quicknet.WithServerContextTakeover(),
-		quicknet.WithServerCallback(&echoHandler{}),
-		quicknet.WithServerEnableUTF8Check(),
-		quicknet.WithServerMultiEventLoop(h.m),
+	c, err := websocket.Upgrade(w, r,
+		websocket.WithServerReplyPing(),
+		websocket.WithServerDecompression(),
+		websocket.WithServerIgnorePong(),
+		websocket.WithServerContextTakeover(),
+		websocket.WithServerCallback(&echoHandler{}),
+		websocket.WithServerEnableUTF8Check(),
+		websocket.WithServerMultiEventLoop(h.m),
 	)
 	if err != nil {
 		fmt.Println("Upgrade fail:", err)
@@ -187,14 +187,14 @@ func (h *handler) echoContextTakeoverDecompression(w http.ResponseWriter, r *htt
 
 // 4.测试接管上下文，压缩/解压缩
 func (h *handler) echoContextTakeoverDecompressionAndCompression(w http.ResponseWriter, r *http.Request) {
-	c, err := quicknet.Upgrade(w, r,
-		quicknet.WithServerReplyPing(),
-		quicknet.WithServerDecompressAndCompress(),
-		quicknet.WithServerIgnorePong(),
-		quicknet.WithServerContextTakeover(),
-		quicknet.WithServerCallback(&echoHandler{}),
-		quicknet.WithServerEnableUTF8Check(),
-		quicknet.WithServerMultiEventLoop(h.m),
+	c, err := websocket.Upgrade(w, r,
+		websocket.WithServerReplyPing(),
+		websocket.WithServerDecompressAndCompress(),
+		websocket.WithServerIgnorePong(),
+		websocket.WithServerContextTakeover(),
+		websocket.WithServerCallback(&echoHandler{}),
+		websocket.WithServerEnableUTF8Check(),
+		websocket.WithServerMultiEventLoop(h.m),
 	)
 	if err != nil {
 		fmt.Println("Upgrade fail:", err)
@@ -215,21 +215,21 @@ func main() {
 	}()
 
 	// debug io-uring
-	// h.m = quicknet.NewMultiEventLoopMust(quicknet.WithEventLoops(0), quicknet.WithMaxEventNum(1000), quicknet.WithIoUring(), quicknet.WithLogLevel(slog.LevelDebug))
-	h.m = quicknet.NewMultiEventLoopMust(
-		quicknet.WithEventLoops(runtime.NumCPU()/2),
-		quicknet.WithBusinessGoNum(50, 10, 10000),
-		quicknet.WithMaxEventNum(256),
-		quicknet.WithLogLevel(slog.LevelError)) // epoll, kqueue
+	// h.m = websocket.NewMultiEventLoopMust(websocket.WithEventLoops(0), websocket.WithMaxEventNum(1000), websocket.WithIoUring(), websocket.WithLogLevel(slog.LevelDebug))
+	h.m = websocket.NewMultiEventLoopMust(
+		websocket.WithEventLoops(runtime.NumCPU()/2),
+		websocket.WithBusinessGoNum(50, 10, 10000),
+		websocket.WithMaxEventNum(256),
+		websocket.WithLogLevel(slog.LevelError)) // epoll, kqueue
 	h.m.Start()
 
-	parseLoopOpt := []quicknet.EvOption{
-		quicknet.WithBusinessGoNum(50, 10, 10000),
-		quicknet.WithMaxEventNum(1000),
-		quicknet.WithLogLevel(slog.LevelError),
+	parseLoopOpt := []websocket.EvOption{
+		websocket.WithBusinessGoNum(50, 10, 10000),
+		websocket.WithMaxEventNum(1000),
+		websocket.WithLogLevel(slog.LevelError),
 	}
 
-	h.parseLoop = quicknet.NewMultiEventLoopMust(parseLoopOpt...) // epoll, kqueue
+	h.parseLoop = websocket.NewMultiEventLoopMust(parseLoopOpt...) // epoll, kqueue
 	h.parseLoop.Start()
 
 	fmt.Printf("apiname:%s\n", h.m.GetApiName())

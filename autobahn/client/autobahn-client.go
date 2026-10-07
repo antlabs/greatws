@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/antlabs/quicknet"
+	"github.com/antlabs/quicknet/websocket"
 )
 
 // https://github.com/snapview/tokio-tungstenite/blob/master/examples/autobahn-client.rs
@@ -20,7 +20,7 @@ const (
 )
 
 type handler struct {
-	m *quicknet.MultiEventLoop
+	m *websocket.MultiEventLoop
 }
 
 type echoHandler struct {
@@ -28,13 +28,13 @@ type echoHandler struct {
 	done chan struct{}
 }
 
-func (e *echoHandler) OnOpen(c *quicknet.Conn) {
+func (e *echoHandler) OnOpen(c *websocket.Conn) {
 	fmt.Printf("OnOpen::%p\n", c)
 }
 
-func (e *echoHandler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
+func (e *echoHandler) OnMessage(c *websocket.Conn, op websocket.Opcode, msg []byte) {
 	// fmt.Printf("OnMessage: opcode:%s, msg.size:%d\n", op, len(msg))
-	if op == quicknet.Text || op == quicknet.Binary {
+	if op == websocket.Text || op == websocket.Binary {
 		// os.WriteFile("./debug.dat", msg, 0o644)
 		// if err := c.WriteMessage(op, msg); err != nil {
 		// 	fmt.Println("write fail:", err)
@@ -45,7 +45,7 @@ func (e *echoHandler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte
 	}
 }
 
-func (e *echoHandler) OnClose(c *quicknet.Conn, err error) {
+func (e *echoHandler) OnClose(c *websocket.Conn, err error) {
 	fmt.Println("OnClose:", c, err)
 	// defer e.wg.Done()
 	close(e.done)
@@ -54,8 +54,8 @@ func (e *echoHandler) OnClose(c *quicknet.Conn, err error) {
 func (h *handler) getCaseCount() int {
 	var count int
 	done := make(chan bool, 1)
-	c, err := quicknet.Dial(fmt.Sprintf("%s/getCaseCount", host), quicknet.WithClientMultiEventLoop(h.m), quicknet.WithClientOnMessageFunc(func() quicknet.OnMessageFunc {
-		return func(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
+	c, err := websocket.Dial(fmt.Sprintf("%s/getCaseCount", host), websocket.WithClientMultiEventLoop(h.m), websocket.WithClientOnMessageFunc(func() websocket.OnMessageFunc {
+		return func(c *websocket.Conn, op websocket.Opcode, msg []byte) {
 			var err error
 			count, err = strconv.Atoi(string(msg))
 			if err != nil {
@@ -79,14 +79,14 @@ func (h *handler) getCaseCount() int {
 
 func (h *handler) runTest(caseNo int, wg *sync.WaitGroup) {
 	done := make(chan struct{})
-	c, err := quicknet.Dial(fmt.Sprintf("%s/runCase?case=%d&agent=%s", host, caseNo, agent),
-		quicknet.WithClientReplyPing(),
-		quicknet.WithClientEnableUTF8Check(),
-		quicknet.WithClientDecompressAndCompress(),
-		quicknet.WithClientContextTakeover(),
-		quicknet.WithClientMaxWindowsBits(10),
-		quicknet.WithClientCallback(&echoHandler{done: done, wg: wg}),
-		quicknet.WithClientMultiEventLoop(h.m),
+	c, err := websocket.Dial(fmt.Sprintf("%s/runCase?case=%d&agent=%s", host, caseNo, agent),
+		websocket.WithClientReplyPing(),
+		websocket.WithClientEnableUTF8Check(),
+		websocket.WithClientDecompressAndCompress(),
+		websocket.WithClientContextTakeover(),
+		websocket.WithClientMaxWindowsBits(10),
+		websocket.WithClientCallback(&echoHandler{done: done, wg: wg}),
+		websocket.WithClientMultiEventLoop(h.m),
 	)
 	if err != nil {
 		fmt.Println("Dial fail:", err)
@@ -100,7 +100,7 @@ func (h *handler) runTest(caseNo int, wg *sync.WaitGroup) {
 }
 
 func (h *handler) updateReports() {
-	c, err := quicknet.Dial(fmt.Sprintf("%s/updateReports?agent=%s", host, agent), quicknet.WithClientMultiEventLoop(h.m))
+	c, err := websocket.Dial(fmt.Sprintf("%s/updateReports?agent=%s", host, agent), websocket.WithClientMultiEventLoop(h.m))
 	if err != nil {
 		fmt.Println("Dial fail:", err)
 		return
@@ -113,11 +113,11 @@ func (h *handler) updateReports() {
 // 2.运行测试客户端client
 func main() {
 	var h handler
-	h.m = quicknet.NewMultiEventLoopMust(
-		quicknet.WithEventLoops(runtime.NumCPU()/2),
-		quicknet.WithBusinessGoNum(50, 10, 10000),
-		quicknet.WithMaxEventNum(1000),
-		quicknet.WithLogLevel(slog.LevelError)) // epoll, kqueue
+	h.m = websocket.NewMultiEventLoopMust(
+		websocket.WithEventLoops(runtime.NumCPU()/2),
+		websocket.WithBusinessGoNum(50, 10, 10000),
+		websocket.WithMaxEventNum(1000),
+		websocket.WithLogLevel(slog.LevelError)) // epoll, kqueue
 
 	h.m.Start()
 	total := h.getCaseCount()

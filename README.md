@@ -19,14 +19,16 @@
 
 # 协议
 
-| 协议 | 状态 |
-|---|---|
-| WebSocket (rfc6455 / rfc7692) | 已支持 |
-| HTTP/1.1 | 计划中 |
-| HTTP/2 | 计划中 |
-| HTTP/3 | 计划中 |
-| gRPC | 计划中 |
-| TLS（状态机实现，不依赖 crypto/tls 的阻塞读） | 计划中 |
+| 协议 | 包 | 状态 |
+|---|---|---|
+| WebSocket (rfc6455 / rfc7692) | `websocket/` | 已支持 |
+| HTTP/1.1 | `http/` | 计划中 |
+| HTTP/2 | `http2/` | 计划中 |
+| HTTP/3 | `http3/` | 计划中 |
+| gRPC | `grpc/` | 计划中 |
+| TLS（状态机实现，不依赖 crypto/tls 的阻塞读） | `tls/` | 计划中 |
+
+分层和各协议的边界见 [docs/architecture.md](docs/architecture.md)。
 
 # 暂不支持
 
@@ -71,16 +73,16 @@ package main
 import (
  "fmt"
 
- "github.com/antlabs/quicknet"
+ "github.com/antlabs/quicknet/websocket"
 )
 
 type echoHandler struct{}
 
-func (e *echoHandler) OnOpen(c *quicknet.Conn) {
+func (e *echoHandler) OnOpen(c *websocket.Conn) {
  // fmt.Printf("OnOpen: %p\n", c)
 }
 
-func (e *echoHandler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
+func (e *echoHandler) OnMessage(c *websocket.Conn, op websocket.Opcode, msg []byte) {
  if err := c.WriteTimeout(op, msg, 3*time.Second); err != nil {
   fmt.Println("write fail:", err)
  }
@@ -89,7 +91,7 @@ func (e *echoHandler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte
  // }
 }
 
-func (e *echoHandler) OnClose(c *quicknet.Conn, err error) {
+func (e *echoHandler) OnClose(c *websocket.Conn, err error) {
  errMsg := ""
  if err != nil {
   errMsg = err.Error()
@@ -98,18 +100,18 @@ func (e *echoHandler) OnClose(c *quicknet.Conn, err error) {
 }
 
 type handler struct {
- m *quicknet.MultiEventLoop
+ m *websocket.MultiEventLoop
 }
 
 func (h *handler) echo(w http.ResponseWriter, r *http.Request) {
- c, err := quicknet.Upgrade(w, r,
-  quicknet.WithServerReplyPing(),
-  // quicknet.WithServerDecompression(),
-  quicknet.WithServerIgnorePong(),
-  quicknet.WithServerCallback(&echoHandler{}),
-  // quicknet.WithServerEnableUTF8Check(),
-  quicknet.WithServerReadTimeout(5*time.Second),
-  quicknet.WithServerMultiEventLoop(h.m),
+ c, err := websocket.Upgrade(w, r,
+  websocket.WithServerReplyPing(),
+  // websocket.WithServerDecompression(),
+  websocket.WithServerIgnorePong(),
+  websocket.WithServerCallback(&echoHandler{}),
+  // websocket.WithServerEnableUTF8Check(),
+  websocket.WithServerReadTimeout(5*time.Second),
+  websocket.WithServerMultiEventLoop(h.m),
  )
  if err != nil {
   slog.Error("Upgrade fail:", "err", err.Error())
@@ -121,7 +123,7 @@ func main() {
 
  var h handler
 
- h.m = quicknet.NewMultiEventLoopMust(quicknet.WithEventLoops(0), quicknet.WithMaxEventNum(256), quicknet.WithLogLevel(slog.LevelError)) // epoll, kqueue
+ h.m = websocket.NewMultiEventLoopMust(websocket.WithEventLoops(0), websocket.WithMaxEventNum(256), websocket.WithLogLevel(slog.LevelError)) // epoll, kqueue
  h.m.Start()
  fmt.Printf("apiname:%s\n", h.m.GetApiName())
 
@@ -147,19 +149,19 @@ package main
 import (
  "fmt"
 
- "github.com/antlabs/quicknet"
+ "github.com/antlabs/quicknet/websocket"
  "github.com/gin-gonic/gin"
 )
 
 type handler struct{
-    m *quicknet.MultiEventLoop
+    m *websocket.MultiEventLoop
 }
 
-func (h *handler) OnOpen(c *quicknet.Conn) {
+func (h *handler) OnOpen(c *websocket.Conn) {
  fmt.Printf("服务端收到一个新的连接")
 }
 
-func (h *handler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
+func (h *handler) OnMessage(c *websocket.Conn, op websocket.Opcode, msg []byte) {
  // 如果msg的生命周期不是在OnMessage中结束，需要拷贝一份
  // newMsg := make([]byte, len(msg))
  // copy(newMsg, msg)
@@ -169,18 +171,18 @@ func (h *handler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
  // os.Stdout.Write(msg)
 }
 
-func (h *handler) OnClose(c *quicknet.Conn, err error) {
+func (h *handler) OnClose(c *websocket.Conn, err error) {
  fmt.Printf("服务端连接关闭:%v\n", err)
 }
 
 func main() {
  r := gin.Default()
  var h handler
- h.m = quicknet.NewMultiEventLoopMust(quicknet.WithEventLoops(0), quicknet.WithMaxEventNum(256), quicknet.WithLogLevel(slog.LevelError)) // epoll, kqueue
+ h.m = websocket.NewMultiEventLoopMust(websocket.WithEventLoops(0), websocket.WithMaxEventNum(256), websocket.WithLogLevel(slog.LevelError)) // epoll, kqueue
  h.m.Start()
 
  r.GET("/", func(c *gin.Context) {
-  con, err := quicknet.Upgrade(c.Writer, c.Request, quicknet.WithServerCallback(h.m), quicknet.WithServerMultiEventLoop(h.m))
+  con, err := websocket.Upgrade(c.Writer, c.Request, websocket.WithServerCallback(h.m), websocket.WithServerMultiEventLoop(h.m))
   if err != nil {
    return
   }
@@ -201,17 +203,17 @@ import (
  "fmt"
  "time"
 
- "github.com/antlabs/quicknet"
+ "github.com/antlabs/quicknet/websocket"
 )
 
-var m *quicknet.MultiEventLoop
+var m *websocket.MultiEventLoop
 type handler struct{}
 
-func (h *handler) OnOpen(c *quicknet.Conn) {
+func (h *handler) OnOpen(c *websocket.Conn) {
  fmt.Printf("客户端连接成功\n")
 }
 
-func (h *handler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
+func (h *handler) OnMessage(c *websocket.Conn, op websocket.Opcode, msg []byte) {
  // 如果msg的生命周期不是在OnMessage中结束，需要拷贝一份
  // newMsg := make([]byte, len(msg))
  // copy(newMsg, msg)
@@ -221,21 +223,21 @@ func (h *handler) OnMessage(c *quicknet.Conn, op quicknet.Opcode, msg []byte) {
  time.Sleep(time.Second)
 }
 
-func (h *handler) OnClose(c *quicknet.Conn, err error) {
+func (h *handler) OnClose(c *websocket.Conn, err error) {
  fmt.Printf("客户端端连接关闭:%v\n", err)
 }
 
 func main() {
- m = quicknet.NewMultiEventLoopMust(quicknet.WithEventLoops(0), quicknet.WithMaxEventNum(256), quicknet.WithLogLevel(slog.LevelError)) // epoll, kqueue
+ m = websocket.NewMultiEventLoopMust(websocket.WithEventLoops(0), websocket.WithMaxEventNum(256), websocket.WithLogLevel(slog.LevelError)) // epoll, kqueue
  m.Start()
- c, err := quicknet.Dial("ws://127.0.0.1:8080/", quicknet.WithClientCallback(&handler{}), quicknet.WithServerMultiEventLoop(h.m))
+ c, err := websocket.Dial("ws://127.0.0.1:8080/", websocket.WithClientCallback(&handler{}), websocket.WithServerMultiEventLoop(h.m))
  if err != nil {
   fmt.Printf("连接失败:%v\n", err)
   return
  }
 
  c.WriteMessage(opcode.Text, []byte("hello"))
- time.Sleep(time.Hour) //demo里面等待下OnMessage 看下执行效果，因为quicknet.Dial和WriteMessage都是非阻塞的函数调用，不会卡住主go程
+ time.Sleep(time.Hour) //demo里面等待下OnMessage 看下执行效果，因为websocket.Dial和WriteMessage都是非阻塞的函数调用，不会卡住主go程
 }
 ```
 
@@ -249,7 +251,7 @@ func main() {
 
 ```go
 func main() {
- quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientHTTPHeader(http.Header{
+ websocket.Dial("ws://127.0.0.1:12345/test", websocket.WithClientHTTPHeader(http.Header{
   "h1": "v1",
   "h2":"v2", 
  }))
@@ -262,7 +264,7 @@ func main() {
 
 ```go
 func main() {
- quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientDialTimeout(2 * time.Second))
+ websocket.Dial("ws://127.0.0.1:12345/test", websocket.WithClientDialTimeout(2 * time.Second))
 }
 ```
 
@@ -272,7 +274,7 @@ func main() {
 
 ```go
 func main() {
- quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientReplyPing())
+ websocket.Dial("ws://127.0.0.1:12345/test", websocket.WithClientReplyPing())
 }
 ```
 
@@ -282,7 +284,7 @@ func main() {
 
 ```go
  // 限制客户端最大服务返回返回的最大包是1024，如果超过这个大小报错
- quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientReadMaxMessage(1024))
+ websocket.Dial("ws://127.0.0.1:12345/test", websocket.WithClientReadMaxMessage(1024))
 ```
 
 [返回](#内容)
@@ -291,7 +293,7 @@ func main() {
 
 ```go
 func main() {
- quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientDecompressAndCompress())
+ websocket.Dial("ws://127.0.0.1:12345/test", websocket.WithClientDecompressAndCompress())
 }
 ```
 
@@ -301,7 +303,7 @@ func main() {
 
 ```go
 func main() {
- quicknet.Dial("ws://127.0.0.1:12345/test", quicknet.WithClientContextTakeover())
+ websocket.Dial("ws://127.0.0.1:12345/test", websocket.WithClientContextTakeover())
 }
 ```
 
@@ -313,7 +315,7 @@ func main() {
 
 ```go
 func main() {
- c, err := quicknet.Upgrade(w, r, quicknet.WithServerReplyPing())
+ c, err := websocket.Upgrade(w, r, websocket.WithServerReplyPing())
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
@@ -328,7 +330,7 @@ func main() {
 ```go
 func main() {
  // 配置服务端读取客户端最大的包是1024大小, 超过该值报错
- c, err := quicknet.Upgrade(w, r, quicknet.WithServerReadMaxMessage(1024))
+ c, err := websocket.Upgrade(w, r, websocket.WithServerReadMaxMessage(1024))
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
@@ -343,7 +345,7 @@ func main() {
 ```go
 func main() {
  // 配置服务端读取客户端最大的包是1024大小, 超过该值报错
- c, err := quicknet.Upgrade(w, r, quicknet.WithServerDecompression())
+ c, err := websocket.Upgrade(w, r, websocket.WithServerDecompression())
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
@@ -357,7 +359,7 @@ func main() {
 
 ```go
 func main() {
- c, err := quicknet.Upgrade(w, r, quicknet.WithServerDecompressAndCompress())
+ c, err := websocket.Upgrade(w, r, websocket.WithServerDecompressAndCompress())
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
@@ -372,7 +374,7 @@ func main() {
 ```go
 func main() {
  // 配置服务端读取客户端最大的包是1024大小, 超过该值报错
- c, err := quicknet.Upgrade(w, r, quicknet.WithServerContextTakeover)
+ c, err := websocket.Upgrade(w, r, websocket.WithServerContextTakeover)
         if err != nil {
                 fmt.Println("Upgrade fail:", err)
                 return
