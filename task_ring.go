@@ -23,9 +23,15 @@ type ringCell struct {
 	// seq 是这一格到第几圈了。空闲时等于它下次要被写入的位置, 放进了
 	// 任务之后是那个位置加一, 被消费者取走并交回之后是位置加环长。
 	seq  atomic.Uint64
-	task []parseTask
+	task parseTask
 }
 
+// taskRing 是一个有界的多生产者多消费者队列, 装单个连接的任务。
+//
+// 装单个而不是一批: 一批要等这一轮 epoll 走完才投出去, 而一轮可能有
+// 几千个事件、走完要几毫秒, 轮尾那些连接就白等那几毫秒——那直接进
+// TP95/TP99。收到一个就投一个, 和 fnet 的做法一样。
+//
 // taskRing 是一个有界的多生产者多消费者队列, 出自 Dmitry Vyukov 的
 // bounded MPMC queue。
 //
@@ -62,7 +68,7 @@ func newTaskRing(limit int) *taskRing {
 
 // push 发布一批任务, 并报告有没有位置。生产者先把位置认下来再把任务
 // 写进去, 所以有一瞬间 tail 会越过一个还没落到格子里的任务; 见 pop。
-func (r *taskRing) push(tasks []parseTask) bool {
+func (r *taskRing) push(task parseTask) bool {
 	for {
 		tail := r.tail.Load()
 		head := r.head.Load()
@@ -86,7 +92,7 @@ func (r *taskRing) push(tasks []parseTask) bool {
 		if !r.tail.CompareAndSwap(tail, tail+1) {
 			continue
 		}
-		cell.task = tasks
+		cell.task = task
 		cell.seq.Store(tail + 1)
 		return true
 	}
@@ -95,7 +101,7 @@ func (r *taskRing) push(tasks []parseTask) bool {
 // pop 取最早的一批任务, 没有就报告没有。生产者认了位置但还没写完的
 // 那些算没有: 那个生产者写完之后会去叫醒一个消费者, 和每个生产者
 // 都会做的一样。
-func (r *taskRing) pop() ([]parseTask, bool) {
+func (r *taskRing) pop() (parseTask, bool) {
 	for {
 		head := r.head.Load()
 		cell := &r.cells[head&r.mask]
@@ -103,7 +109,7 @@ func (r *taskRing) pop() ([]parseTask, bool) {
 		if seq != head+1 {
 			if seq == head {
 				// 空的, 或者它的生产者还在写
-				return nil, false
+				return parseTask{}, false
 			}
 			// 另一个消费者先取走了这个位置
 			continue
@@ -111,10 +117,10 @@ func (r *taskRing) pop() ([]parseTask, bool) {
 		if !r.head.CompareAndSwap(head, head+1) {
 			continue
 		}
-		tasks := cell.task
-		cell.task = nil
+		task := cell.task
+		cell.task = parseTask{}
 		cell.seq.Store(head + r.mask + 1)
-		return tasks, true
+		return task, true
 	}
 }
 

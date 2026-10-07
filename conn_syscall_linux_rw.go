@@ -73,3 +73,12 @@ func socketWrite(fd int, p []byte) (int, error) {
 	}
 	return int(r), nil
 }
+
+// socketWritev / wsHeader 的兜底: 这些构建组合下没有 sendmsg 快路径,
+// 退回"拼成一块再写"。
+func socketWritev(fd int, header, payload []byte) (int, error) {
+	all := make([]byte, 0, len(header)+len(payload))
+	all = append(all, header...)
+	all = append(all, payload...)
+	return socketWrite(fd, all)
+}

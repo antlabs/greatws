@@ -13,7 +13,10 @@
 // limitations under the License.
 package greatws
 
-import "sync/atomic"
+import (
+	"os"
+	"sync/atomic"
+)
 
 // 统计信息
 type stat struct {
@@ -99,14 +102,27 @@ func (m *MultiEventLoop) addRealloc() {
 	atomic.AddInt64(&m.realloc, 1)
 }
 
+// statOff 关掉每消息的两次原子计数, 用于量这两次原子加值多少。
+//
+// 这两个计数是诊断用的(GetReadSyscallNum 给压测的控制口读), 但它们打在
+// 同一个 cache line 上, 而每条消息都要写两次、每个解析 goroutine 都在写
+// ——多核之间来回争抢那一行。关掉它跑一轮, 差值就是这层竞争的代价。
+var statOff = os.Getenv("GREATWS_NO_STAT") != ""
+
 // 系统调用计数。就是两个原子加, 没做本地批量——试过按分片本地累加再
 // 攒批上报, 但写路径可以从任意 go 程调(用户的 OnMessage、超时线程),
 // 本地字段就要跨 go 程写, 反而要加锁; 换来的是 1.7% 的吞吐, 不值。
 func (c *Conn) addReadSyscall() {
+	if statOff {
+		return
+	}
 	atomic.AddInt64(&c.multiEventLoop.readSyssall, 1)
 }
 
 func (c *Conn) addWriteSyscall() {
+	if statOff {
+		return
+	}
 	atomic.AddInt64(&c.multiEventLoop.writeSyscall, 1)
 }
 

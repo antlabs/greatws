@@ -43,6 +43,7 @@ type Config struct {
 	runInGoTask                     string            // 运行业务OnMessage的策略, 现在greatws集成三种OnMessage运行模式，分别是io, task
 	readMaxMessage                  int64             // 最大消息大小
 	flowBackPressureRemoveRead      bool              // 流控背压机制，移除读事件
+	zeroCopyPayload                 bool              // payload 直接指向读缓冲区, 见 WithServerZeroCopyPayload
 }
 
 // func (c *Config) useIoUring() bool {
@@ -74,7 +75,6 @@ func (c *Config) defaultSetting() {
 }
 
 func (c *Config) defaultSettingAfter() {
-
 	if c.multiEventLoop == nil {
 		c.multiEventLoop = getDefaultMultiEventLoop()
 	}

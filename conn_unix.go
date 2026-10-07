@@ -91,12 +91,14 @@ type Conn struct {
 func newConn(fd int64, client bool, conf *Config) (*Conn, error) {
 	c := &Conn{
 		conn: conn{
-			fd:     fd,
-			client: client,
+			fd: fd,
 		},
 		// 初始化不分配内存，只有在需要的时候才分配
 		Config: conf,
 		parent: conf.multiEventLoop.getEventLoop(int(fd)),
+	}
+	if client {
+		c.setClient(true)
 	}
 
 	// event loop 只分发时, 读和解析已经在解析 goroutine 上跑了, 回调
@@ -109,7 +111,11 @@ func newConn(fd int64, client bool, conf *Config) (*Conn, error) {
 	if conf.multiEventLoop.parseLoop != nil && taskName == "elastic" {
 		taskName = "io"
 	}
-	c.task = c.parent.localTask.newTask(taskName)
+	// io 模式下回调就地执行, 不需要 executor: 留着 nil 让 addTask 直接调。
+	// 别的模式照旧建。
+	if taskName != "io" {
+		c.task = c.parent.localTask.newTask(taskName)
+	}
 	if conf.readTimeout > 0 {
 		err := c.setReadDeadline(time.Now().Add(conf.readTimeout))
 		if err != nil {
@@ -148,6 +154,8 @@ func (c *Conn) closeWithoutLockOnClose(err error, onClose bool) {
 	c.parent.del(c)
 	atomic.StoreInt64(&c.fd, -1)
 	atomic.StoreInt32(&c.closed, 1)
+
+
 
 	// 这个必须要放在后面
 	if onClose {
@@ -208,6 +216,7 @@ func connWrite(c *Conn, b []byte) (n int, err error) {
 }
 
 func (c *Conn) needFlush() bool {
+	// 同上: wbufList 可能被并发的 Close 释放, 读它要拿锁。
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.wbufList) > 0
@@ -424,6 +433,8 @@ func (c *Conn) processWebsocketFrame() (err error) {
 		fd := atomic.LoadInt64(&c.fd)
 		// 这一次要读多少, 读之前先记下来: c.rw 会被下面改掉
 		readBuf := (*c.rbuf)[c.rw:]
+		// 这把锁要拿着: Close() 可能从任意 goroutine 来, 它会在锁里关掉
+		// fd 并释放 rbuf。不拿锁读就会读到已关闭的 fd / 已释放的缓冲区。
 		c.mu.Lock()
 		n, err = socketRead(int(fd), readBuf)
 		c.mu.Unlock()
@@ -431,15 +442,30 @@ func (c *Conn) processWebsocketFrame() (err error) {
 		// fmt.Printf("i = %d, n = %d, fd = %d, rbuf = %d, rw:%d, err = %v, %v, payload:%d\n",
 		// i, n, c.fd, len((*c.rbuf)[c.rw:]), c.rw+n, err, time.Now(), c.rh.PayloadLen)
 		if err != nil {
+			// 默认实现里 socketRead 直接返回内核的 errno(syscall.Errno,
+			// 就是个整数), 直接比整数即可——原来用 errors.Is 要递归展开
+			// error 链再做接口比较, 每消息至少跑一次(profile 里 flat 1.0s)。
+			//
+			// 断言失败就走 errors.Is: 别的构建组合(比如
+			// greatws_slowsyscall, 那里是 x/sys/unix 的 Read, 返回的是
+			// os.SyscallError 包着的)不会命中快路径。
+			if errno, ok := err.(syscall.Errno); ok {
+				if errno == syscall.EINTR {
+					continue
+				}
+				if errno != syscall.EAGAIN {
+					goto fail
+				}
+				err = nil
+				break
+			}
 			// 信号中断，继续读
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
-			// 出错返回
 			if !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EWOULDBLOCK) {
 				goto fail
 			}
-			// 缓冲区没有数据，等待可读
 			err = nil
 			break
 		}

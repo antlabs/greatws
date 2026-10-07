@@ -76,9 +76,12 @@ func socketWrite(fd int, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	// MSG_NOSIGNAL: 对端已经 reset 的连接, 写会返回 EPIPE 而不是抛
+	// SIGPIPE。不带这个标志时内核要生成并投递那个信号(Go runtime 还得
+	// 接住它), 在长连接被对端关掉的场景里是实打实的开销。
 	n, _, errno := unix.RawSyscall6(unix.SYS_SENDTO,
 		uintptr(fd), uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)),
-		0, 0, 0)
+		unix.MSG_NOSIGNAL, 0, 0)
 	if errno == unix.ENOTSOCK {
 		// 不是 socket, 退回 VFS
 		return rawWrite(fd, p)
@@ -104,6 +107,39 @@ func rawWrite(fd int, p []byte) (int, error) {
 		uintptr(fd), uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)))
 	if errno != 0 {
 		return 0, errno
+	}
+	return int(n), nil
+}
+
+// socketWritev 把 header 和 payload 作为两段交给内核, 由内核拼起来。
+//
+// 为什么不用 frame.WriteFrame: 它是"从池里取一块 buf, 把头写进去、把
+// payload 拷进去、再把整块交给 w.Write"——每条消息一次完整 memcpy。
+// 用 writev 就没有这次拷贝: header 在栈上构造, payload 直接用调用方的
+// 那块内存, 内核自己拼。
+//
+// fnet 用的就是这个(sendmsg + iovec)。1KB 消息下那次 memcpy 约
+// 30-50ns, 而一条消息的往返是 ~600ns。
+func socketWritev(fd int, header, payload []byte) (int, error) {
+	var iov [2]unix.Iovec
+	iov[0].Base = unsafe.SliceData(header)
+	iov[0].SetLen(len(header))
+	iov[1].Base = unsafe.SliceData(payload)
+	iov[1].SetLen(len(payload))
+
+	msg := unix.Msghdr{Iov: &iov[0]}
+	msg.SetIovlen(2)
+
+	n, _, errno := unix.RawSyscall6(unix.SYS_SENDMSG,
+		uintptr(fd), uintptr(unsafe.Pointer(&msg)), unix.MSG_NOSIGNAL, 0, 0, 0)
+	if errno == unix.ENOTSOCK {
+		all := make([]byte, 0, len(header)+len(payload))
+		all = append(all, header...)
+		all = append(all, payload...)
+		return rawWrite(fd, all)
+	}
+	if errno != 0 {
+		return int(n), errno
 	}
 	return int(n), nil
 }

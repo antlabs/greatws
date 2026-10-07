@@ -111,8 +111,12 @@ var (
 
 // cpusPerEventLoop 是一个 event loop 默认等几个 CPU 的事件。
 //
-// event loop 只等事件、分发, 占不满一个核, 但解析 goroutine 是实打实
-// 吃满的。默认按 4 个核一个 loop 算。
+// event loop 只等事件、分发, 占不满一个核(profile: Poll 只占总 CPU 的
+// 3.4%), 真正吃满核的是解析 goroutine。
+//
+// 试过调密(核数/2): 无 CPU 绑定下 6/12/24 个 loop 的 TPS 分别是
+// 2,097,158 / 2,098,981 / 2,115,475, 差在 1% 内; 显式设成 12 与保持 6
+// 的交替对照也无差异(2,123,040 vs 2,129,113)。所以维持 4 个核一个 loop。
 const cpusPerEventLoop = 4
 
 // defaultNumLoops 是没设置 WithEventLoops 时起的 event loop 数:
@@ -209,7 +213,7 @@ func NewMultiEventLoop(opts ...EvOption) (e *MultiEventLoop, err error) {
 		if pg <= 0 {
 			pg = defaultParseGoroutines(m.numLoops)
 		}
-		m.parseLoop = newTaskParse(pg)
+		m.parseLoop = newTaskParsePinned(pg, m.parsePinned)
 	}
 
 	m.ctx = context.Background()

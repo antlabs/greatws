@@ -71,12 +71,20 @@ func (el *EventLoop) Loop() {
 	// goroutine, 而不是每个 fd 单独投一次。
 	//
 	// 批次的内存从池里取, 投出去就交出了所有权, 解析 goroutine 用完归还。
-	batchSize := el.parent.batchSize
-	if batchSize <= 0 {
-		batchSize = parseBatchSize
-	}
-	batch := getBatch()
+	// 每个分片一个批次: event loop 收上来的连接按 fd 取模直接放进对应
+	// 分片的批里, 一轮结束一次性投出去。
+	//
+	// 这样投递时不用再分组(分组要一次 sync.Pool 的 Get/Put 加一遍复制),
+	// 而且同一分片的连接在同一个批里, 谁先谁后由同一个解析 go 程顺序跑。
+	//
 	for !el.shutdown {
+		// 这一轮有没有往解析分片投过任务。fnet 的做法(见它 loop.run
+		// 的注释): 投过就让出 P, 因为 runtime 把被唤醒的 goroutine 排进
+		// 唤醒它的那个 P 的 runqueue, 也就是这个事件循环自己的; 而它
+		// 立刻又回去等下一轮事件, 从不 park, 那些 goroutine 只能等着被
+		// 别的 P 偷走, 而别的 P 可能正闲着。没投过就不用让——让了也是
+		// 空转。
+		submitted := false
 		_, err := el.Poll(time.Duration(time.Second*100), func(fd int, state core.State, err error) {
 			c := el.parent.safeConns.Get(fd)
 			if err != nil {
@@ -95,20 +103,20 @@ func (el *EventLoop) Loop() {
 				return
 			}
 
-			// 开了解析池时这里只攒事件, 读取和解析都在解析 goroutine 上
-			// 做。读写合成一个任务, 让它们还是在一个 go 程上跑, 和没有
-			// 解析池时一样。
-			if el.parent.parseLoop != nil {
-				batch = append(batch, parseTask{
+			// 开了解析池时收到就投, 不在这一轮里攒: 攒到轮末才投的话,
+			// 轮尾那些连接要等这一轮 epoll 走完(可能几毫秒)才开始被处理,
+			// 那个等待直接进 TP95/TP99。读写合成一个任务, 让它们还是在
+			// 一个 go 程上跑。
+			//
+			// 同一个 fd 永远落到同一个分片, 那边按投递顺序取, 所以一个
+			// 连接的事件顺序还是它发生的顺序。
+			if pl := el.parent.parseLoop; pl != nil {
+				pl.send(fd%len(pl.allTaskParse), parseTask{
 					c:       c,
 					isRead:  state.IsRead(),
 					isWrite: state.IsWrite(),
 				})
-				// 攒够一批就先投, 免得一轮太长时后面的连接干等。
-				if len(batch) >= batchSize {
-					el.parent.parseLoop.addTask(batch)
-					batch = getBatch()
-				}
+				submitted = true
 				return
 			}
 
@@ -127,13 +135,10 @@ func (el *EventLoop) Loop() {
 			return
 		}
 
-		if el.parent.parseLoop != nil && len(batch) > 0 {
-			el.parent.parseLoop.addTask(batch)
-			batch = getBatch()
-			// 默认不让出 P, 见 multiEventLoopOption.gosched 的说明。
-			if el.parent.gosched {
-				runtime.Gosched()
-			}
+		// 只在真投过任务时让 P: 无条件让的话, 空闲轮也在白白交 P,
+		// 实测那一下把 TPS 从 2.5M 拉到 1.85M。
+		if submitted && el.parent.parseLoop != nil && el.parent.gosched {
+			runtime.Gosched()
 		}
 	}
 }

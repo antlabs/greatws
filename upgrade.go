@@ -30,6 +30,12 @@ type UpgradeServer struct {
 	config Config
 }
 
+// Config 返回这个 upgrader 的配置。
+//
+// 给 ListenAndServeWebSocket 用: 它要的就是 Upgrade 那条路上的同一份
+// 配置(事件循环、回调、压缩开关), 只是不经过 net/http。
+func (u *UpgradeServer) Config() *Config { return &u.config }
+
 func NewUpgrade(opts ...ServerOption) *UpgradeServer {
 	var conf ConnOption
 	conf.defaultSetting()

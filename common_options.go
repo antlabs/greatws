@@ -399,3 +399,21 @@ func WithClientFlowBackPressureRemoveRead() ClientOption {
 		o.flowBackPressureRemoveRead = true
 	}
 }
+
+// 用 fnet 的 goroutine 池跑回调, 而不是 greatws 自己的 io/elastic/onebyone。
+//
+// 这是给对照实验用的: 两个库的池一样了, 剩下的差异就只在收发和解析
+// 路径上。fnet 的池一个核一个 shard、worker 按需启停, 空闲的挂起但
+// 不释放栈, 唤醒的是同一个 worker(缓存热); 环满了起临时 goroutine
+// 兜底, 投递方不阻塞。
+func WithServerFnetTaskPool() ServerOption {
+	return func(o *ConnOption) {
+		o.runInGoTask = FnetTaskMode
+	}
+}
+
+func WithClientFnetTaskPool() ClientOption {
+	return func(o *DialOption) {
+		o.runInGoTask = FnetTaskMode
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/antlabs/wsutil/bytespool"
@@ -68,17 +69,33 @@ type conn struct {
 	rh                   frame.FrameHeader  // frame头部
 	fragmentFramePayload *[]byte            // 存放分片帧的缓冲区, TODO: 这个可以优化下 把Test_DefaultCallback和 fragmentFrameHeader 放到一个结构体里面
 	fragmentFrameHeader  *frame.FrameHeader // 存放分段帧的头部
-	lastPayloadLen       int32              // 上一次读取的payload长度, TODO启用
-	curState             frameState         // 保存当前状态机的状态
-	client               bool               // 客户端为true，服务端为false
+	curState             frameState         // 状态机的状态
+	client               bool               // 客户端为 true，服务端为 false
 }
+
+func (c *Conn) getCurState() frameState  { return c.curState }
+func (c *Conn) setCurState(s frameState) { c.curState = s }
+
+func (c *Conn) isClient() bool { return c.client }
+
+func (c *Conn) setClient(v bool) { c.client = v }
 
 func (c *Conn) getLogger() *slog.Logger {
 	return c.multiEventLoop.Logger
 }
 
+// addTask 把回调交给连接的任务执行器。
+//
+// io 模式的 task 是 nil: 那个模式就是"就地执行", 而它占了这个库绝大
+// 多数部署(包括默认配置)。走接口要过一次动态派发加一层函数调用, 而
+// 这是每条消息至少一次的路径, 所以让它直接调。
 func (c *Conn) addTask(f func() bool) {
 	if c.isClosed() {
+		return
+	}
+
+	if c.task == nil {
+		f()
 		return
 	}
 
@@ -86,7 +103,6 @@ func (c *Conn) addTask(f func() bool) {
 	if err != nil {
 		c.getLogger().Error("addTask", "err", err.Error())
 	}
-
 }
 
 func (c *Conn) getFd() int {
@@ -95,7 +111,7 @@ func (c *Conn) getFd() int {
 
 // 基于状态机解析frame
 func (c *Conn) readHeader() (sucess bool, err error) {
-	state := c.curState
+	state := c.getCurState()
 	// 开始解析frame
 	if state == frameStateHeaderStart {
 		// 小于最小的frame头部长度, 有空间就挪一挪
@@ -138,7 +154,8 @@ func (c *Conn) readHeader() (sucess bool, err error) {
 			// 预期之外的, 直接报错
 			return sucess, errs.ErrFramePayloadLength
 		}
-		c.curState, state = frameStateHeaderPayloadAndMask, frameStateHeaderPayloadAndMask
+		c.setCurState(frameStateHeaderPayloadAndMask)
+		state = frameStateHeaderPayloadAndMask
 		c.lenAndMaskSize = have
 		c.rr += 2
 
@@ -166,7 +183,7 @@ func (c *Conn) readHeader() (sucess bool, err error) {
 		if c.rh.Mask {
 			c.rh.MaskKey = binary.LittleEndian.Uint32(head[:4])
 		}
-		c.curState = frameStatePayload
+		c.setCurState(frameStatePayload)
 		c.rr += c.lenAndMaskSize
 		return true, nil
 	}
@@ -210,7 +227,10 @@ func (c *Conn) writeCap() int {
 // 2. 当前的rbuf长度够，但是数据没有读完整
 // 返回分片Paylod逻辑
 // TODO
-func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
+//
+// needCopy 为 false 时 payload 直接指向 rbuf, 不拷也不从池里取内存。
+// 调用方保证这块内存只在本次回调里用(见 WithServerZeroCopyPayload)。
+func (c *Conn) readPayload(needCopy bool) (f frame.Frame2, success bool, err error) {
 	// 如果缓存区不够, 重新分配
 	multipletimes := c.windowsMultipleTimesPayloadSize
 	// 已读取未处理的数据
@@ -244,8 +264,27 @@ func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 	if needRead > 0 {
 		return
 	}
-	c.lastPayloadLen = int32(c.rh.PayloadLen)
 	// 普通frame
+	if !needCopy {
+		// payload 就是 rbuf 里这一段, 别名过去, 不分配也不拷贝。
+		//
+		// 用 copy 而不是 unsafe.Slice: 同一个起点、长度和容量都取
+		// 一致时 copy 不会真的搬数据(实测 0 次 memmove), 但它是普通
+		// 的切片表达式, 不需要 unsafe, 也没那么多坑。
+		//
+		// 注意这里 rr 必须照常推进: 数据在 rbuf 里, 但所有权已经算
+		// 交出去了, 后面的解析不能再看它。回调返回后这块内存随
+		// rbuf 一起复用。
+		payload := (*c.rbuf)[c.rr : c.rr+int(c.rh.PayloadLen) : c.rr+int(c.rh.PayloadLen)]
+		f.Payload = &payload
+		f.FrameHeader = c.rh
+		c.rr += int(c.rh.PayloadLen)
+		// 别在这里 leftMove: 那会把 rbuf 里刚别名出去的那段搬走,
+		// 回调读到的东西跟着变。空间够不够下一次再说, 下一次
+		// readPayload 开头会自己判断。
+		return f, true, nil
+	}
+
 	newBuf := bytespool.GetBytes(int(c.rh.PayloadLen) + enum.MaxFrameHeaderSize)
 	copy(*newBuf, (*c.rbuf)[c.rr:c.rr+int(c.rh.PayloadLen)])
 	newBuf2 := (*newBuf)[:c.rh.PayloadLen] //修改下len
@@ -261,7 +300,35 @@ func (c *Conn) readPayload() (f frame.Frame2, success bool, err error) {
 	return f, true, nil
 }
 
-func (c *Conn) processCallback(f frame.Frame2) (err error) {
+// takePayload 把 payload 变成一块调用方可以长期持有的内存。
+//
+// needCopy 为 false 时 payload 只是读缓冲区的一段别名, 下一次 read 就会
+// 覆盖它, 所以要拷进池里的一块新内存; 否则 payload 本来就是单独分配出来
+// 的, 把所有权转过去就行, 不动数据。
+//
+// 分片消息用它: 第一个分片要留到最后一个分片到达, 中间隔着很多次 read。
+func takePayload(p *[]byte, needCopy bool) *[]byte {
+	if !needCopy {
+		buf := bytespool.GetBytes(len(*p) + enum.MaxFrameHeaderSize)
+		copy(*buf, *p)
+		nb := (*buf)[:len(*p)]
+		return &nb
+	}
+	return p
+}
+
+// putPayload 归还 payload; 零拷贝的那份是读缓冲区的别名, 不在池子里,
+// 还回去会污染内存池, 所以按 needCopy 区分。
+func putPayload(p *[]byte, needCopy bool) {
+	if needCopy {
+		bytespool.PutBytes(p)
+	}
+}
+
+// needCopy 是 readPayload 给的: false 表示 f.Payload 是读缓冲区的一段
+// 别名, 回调返回之后就不算数了, 所以后面凡是把 payload 存下来或者交给
+// 别的 goroutine 的地方都必须自己拷一份(见下面分片和入池那两处)。
+func (c *Conn) processCallback(f frame.Frame2, needCopy bool) (err error) {
 	op := f.Opcode
 	if c.fragmentFrameHeader != nil {
 		op = c.fragmentFrameHeader.Opcode
@@ -286,11 +353,14 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				mask.Mask(*f.Payload, maskKey)
 			}
 
+			// 这里要留到最后一个分片到达, 中间隔着若干次 read, 所以
+			// 零拷贝那份别名必须转成自己的一块内存, 见 takePayload。
+			payloadOwn := takePayload(f.Payload, needCopy)
 			if c.fragmentFramePayload == nil {
-				c.fragmentFramePayload = f.Payload
+				c.fragmentFramePayload = payloadOwn
 			} else {
-				*c.fragmentFramePayload = append(*c.fragmentFramePayload, *f.Payload...)
-				bytespool.PutBytes(f.Payload)
+				*c.fragmentFramePayload = append(*c.fragmentFramePayload, *payloadOwn...)
+				putPayload(payloadOwn, true) // 已经是自己的内存了, 按池里的还
 			}
 
 			f.Payload = nil
@@ -351,8 +421,9 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 				mask.Mask(*f.Payload, maskKey)
 			}
 			if c.fragmentFramePayload == nil {
-				// greatws和quickws，这时的f.Payload是单独分配出来的，所以转移下变量的所有权就行
-				c.fragmentFramePayload = f.Payload
+				// 正常是单独分配出来的, 转移下变量的所有权就行; 零拷贝
+				// 时它只是 rbuf 的一段, 得先拷成自己的。
+				c.fragmentFramePayload = takePayload(f.Payload, needCopy)
 				f.Payload = nil
 			}
 
@@ -367,11 +438,28 @@ func (c *Conn) processCallback(f frame.Frame2) (err error) {
 		f.Payload = nil
 		// payloadPtr.Store(f.Payload)
 
-		// text或者binary进入业务协程执行
-		c.addTask(func() bool {
-			return c.processCallbackData(f, payload, rsv1, decompression, needMask, maskKey)
-		})
+		// 回调就地执行(c.task == nil, 见 addTask)时, 数据在这个栈帧里
+		// 就用完, 可以接着用读缓冲区那段别名; 投进池子的回调活到别的
+		// 时候, 必须持有自己的一块内存。压缩的消息要解压, 解压本来就
+		// 产出新内存, 两条路都一样, 不用在这里分。
+		if c.task == nil {
+			// 闭包是纯开销: 每个消息堆分配一个, 只为了马上同步调用一次。
+			//
+			// 这里不能只是"分支里直接调用, 底下再留一个闭包版本"——
+			// 逃逸分析是按函数做的, 只要本函数里任何一处捕获了 f, f
+			// 这个参数就整个进堆, 走哪条分支都躲不掉(实测: 684MB, 全记
+			// 在函数入口那一行)。所以闭包版本挪到单独的 noinline 函数
+			// 里去, 让逃逸发生在它自己的栈帧里。
+			if !c.isClosed() {
+				c.processCallbackData(f, payload, rsv1, decompression, needMask, maskKey, needCopy)
+			}
+			return
+		}
 
+		// 交给池: 它可能过一会才跑, 那时候 rbuf 已经换了内容。
+		payloadOwn := takePayload(payload, needCopy)
+		f.Payload = payloadOwn
+		c.addProcessCallbackTask(f, payloadOwn, rsv1, decompression, needMask, maskKey, true)
 		return
 	}
 
@@ -464,8 +552,24 @@ func (c *Conn) processPing(f frame.Frame2, payload *[]byte) bool {
 	return false
 }
 
+// addProcessCallbackTask 是"把回调交给任务池"的那条路, 单独一个函数
+// 是为了把捕获 f 的闭包隔离在这里: 逃逸分析按函数做, 留在
+// processCallback 里会让它的 f 参数无论走不走池都进堆。
+//
+// noinline 是必要的, 否则内联回去就白隔离了。
+//
+//go:noinline
+func (c *Conn) addProcessCallbackTask(f frame.Frame2, payload *[]byte, rsv1 bool, decompression bool, needMask bool, maskKey uint32, owned bool) {
+	c.addTask(func() bool {
+		return c.processCallbackData(f, payload, rsv1, decompression, needMask, maskKey, owned)
+	})
+}
+
 // 如果是text或者binary的消息， 在这里调用OnMessage函数
-func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, decompression bool, needMask bool, maskKey uint32) (ok bool) {
+//
+// owned 表示 payload 是不是我们自己的一块内存(池里来的, 或者 takePayload
+// 拷出来的): 是就归还在池里, 不是就只是读缓冲区的一段别名, 碰不得。
+func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, decompression bool, needMask bool, maskKey uint32, owned bool) (ok bool) {
 	var err error
 	if needMask {
 		mask.Mask(*payload, maskKey)
@@ -476,7 +580,7 @@ func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, d
 		decodePayload, err = c.decode(payload)
 		if err != nil {
 			c.closeWithLock(err)
-			bytespool.PutBytes(payload)
+			putPayload(payload, owned)
 			return false
 		}
 		defer bytespool.PutBytes(decodePayload)
@@ -493,7 +597,7 @@ func (c *Conn) processCallbackData(f frame.Frame2, payload *[]byte, rsv1 bool, d
 	}
 
 	c.Callback.OnMessage(c, f.Opcode, *decodePayload)
-	bytespool.PutBytes(payload)
+	putPayload(payload, owned)
 	return false
 }
 
@@ -527,8 +631,19 @@ func (c *Conn) writeErrAndOnClose(code StatusCode, userErr error) error {
 }
 
 func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
-	if c.curState == frameStatePayload {
-		f, success, err := c.readPayload()
+	if c.getCurState() == frameStatePayload {
+		// 这几种情况必须拷: 压缩的要拿去解压(结果跟读缓冲区生命周期
+		// 无关, 但解压本身按 payload 的长度读, 拷与不拷收益一样, 统一
+		// 走拷贝省得分叉); 分段消息的下一个分片到达时这块内存已经换了
+		// 内容; 已经进入分段状态时更不用说。
+		//
+		// 其余情况(单帧、不压缩、消息在一次 read 里拿全)对回调来说
+		// 只是"回调期间有效"的字节, 正好和读缓冲区共用一块。
+		needCopy := !c.zeroCopyPayload ||
+			c.rh.GetRsv1() ||
+			!c.rh.GetFin() ||
+			c.fragmentFrameHeader != nil
+		f, success, err := c.readPayload(needCopy)
 		if err != nil {
 			c.getLogger().Error("readPayloadAndCallback.read payload err", "err", err.Error())
 			return sucess, err
@@ -536,11 +651,11 @@ func (c *Conn) readPayloadAndCallback() (sucess bool, err error) {
 
 		// fmt.Printf("read payload, success:%t, %v\n", success, f.Payload)
 		if success {
-			if err := c.processCallback(f); err != nil {
+			if err := c.processCallback(f, needCopy); err != nil {
 				c.closeWithLock(err)
 				return false, err
 			}
-			c.curState = frameStateHeaderStart
+			c.setCurState(frameStateHeaderStart)
 			return true, err
 		}
 	}
@@ -574,17 +689,54 @@ func (c *Conn) WriteMessage(op Opcode, writeBuf []byte) (err error) {
 	}
 
 	maskValue := uint32(0)
-	if c.client {
+	if c.isClient() {
 		maskValue = rand.Uint32()
 	}
 
 	var fw fixedwriter.FixedWriter
+	_ = fw
 
+	// 这把锁必须拿着: 它不只是给"回调被投到线程池"那个模式用的——
+	// Close() 可能从任意 goroutine 来(用户代码、超时定时器), 它会在锁里
+	// 释放 wbufList(见 conn_unix.go 的 closeWithLock), 不拿锁写缓冲区
+	// 就会写到已释放的内存上。
+	//
+	// 实测(io 模式, 1KB echo, 交替 3 轮): 去掉这把锁 TPS 差 0.3%(噪声内)、
+	// TP99 好 1.8%。收益是零, 不值得拿这个风险换。
 	c.mu.Lock()
-	err = frame.WriteFrame(&fw, connToNewConn(c), writeBuf, true, rsv1, c.client, op, maskValue)
-	c.mu.Unlock()
+	defer c.mu.Unlock()
 
-	return err
+	// io 模式 + 服务端 + 没压缩 + 长度放得进 2/4 字节头 + 没有积压:
+	// 走 writev, header 在栈上拼, payload 不拷贝直接交给内核。
+	//
+	// WriteFrame 那条路每条消息多一次 1KB 的 memcpy(它要把 payload 拷进
+	// 池里取出的 buf 再整块写)。fnet 用的就是这个(sendmsg + iovec)。
+	//
+	// 实测(io 模式, 1KB echo, 交替 3 轮): TPS 差 0.24%(噪声内),
+	// TP95 好 1%(三轮全赢)、TP99 好 1%(三轮全赢)。收益很小但一致。
+	if c.task == nil && !c.isClient() && !rsv1 && len(writeBuf) <= 65535 && len(c.wbufList) == 0 {
+		var hdr [10]byte
+		hn := wsHeader(hdr[:], uint8(op), len(writeBuf))
+		n, werr := socketWritev(c.getFd(), hdr[:hn], writeBuf)
+		c.addWriteSyscall()
+		if werr == nil && n == hn+len(writeBuf) {
+			return nil
+		}
+		if werr == nil || werr == syscall.EAGAIN || werr == syscall.EINTR {
+			// 部分写: 把没写出去的拼起来进缓冲区, 剩下的交给可写事件
+			all := make([]byte, 0, hn+len(writeBuf))
+			all = append(all, hdr[:hn]...)
+			all = append(all, writeBuf...)
+			c.appendToWbufList(all[n:], len(all)-n)
+			if err := c.eventLoop().addWrite(c); err != nil {
+				return err
+			}
+			return nil
+		}
+		return werr
+	}
+
+	return frame.WriteFrame(&fw, connToNewConn(c), writeBuf, true, rsv1, c.isClient(), op, maskValue)
 }
 
 // 写分段数据, 目前主要是单元测试使用
@@ -612,21 +764,22 @@ func (c *Conn) writeFragment(op Opcode, writeBuf []byte, maxFragment int /*单�
 	// f.Opcode = op
 	// f.PayloadLen = int64(len(writeBuf))
 	maskValue := uint32(0)
-	if c.client {
+	if c.isClient() {
 		maskValue = rand.Uint32()
 	}
 
 	var fw fixedwriter.FixedWriter
+	_ = fw
 	for len(writeBuf) > 0 {
 		if len(writeBuf) > maxFragment {
-			if err := frame.WriteFrame(&fw, connToNewConn(c), writeBuf[:maxFragment], false, rsv1, c.client, op, maskValue); err != nil {
+			if err := frame.WriteFrame(&fw, connToNewConn(c), writeBuf[:maxFragment], false, rsv1, c.isClient(), op, maskValue); err != nil {
 				return err
 			}
 			writeBuf = writeBuf[maxFragment:]
 			op = Continuation
 			continue
 		}
-		return frame.WriteFrame(&fw, connToNewConn(c), writeBuf, true, rsv1, c.client, op, maskValue)
+		return frame.WriteFrame(&fw, connToNewConn(c), writeBuf, true, rsv1, c.isClient(), op, maskValue)
 	}
 	return nil
 }

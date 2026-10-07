@@ -24,10 +24,10 @@ import (
 // 压缩的入口函数
 func (c *Conn) encoode(payload *[]byte) (encodePayload *[]byte, err error) {
 
-	ct := (c.pd.ClientContextTakeover && c.client || !c.client && c.pd.ServerContextTakeover) && c.pd.Compression
+	ct := (c.pd.ClientContextTakeover && c.isClient() || !c.isClient() && c.pd.ServerContextTakeover) && c.pd.Compression
 	// 上下文接管
 	bit := uint8(0)
-	if c.client {
+	if c.isClient() {
 		bit = c.pd.ClientMaxWindowBits
 	} else {
 		bit = c.pd.ServerMaxWindowBits
@@ -61,14 +61,14 @@ decode:
 // 解压缩入口函数
 // 解压目前只在一个go程里面按序列处理，所以不需要加锁
 func (c *Conn) decode(payload *[]byte) (decodePayload *[]byte, err error) {
-	ct := (c.pd.ClientContextTakeover && c.client || !c.client && c.pd.ServerContextTakeover) && c.pd.Decompression
+	ct := (c.pd.ClientContextTakeover && c.isClient() || !c.isClient() && c.pd.ServerContextTakeover) && c.pd.Decompression
 	// 上下文接管
 	if ct {
 		if c.deCtx == nil {
 
 			bit := uint8(0)
 
-			if c.client {
+			if c.isClient() {
 				bit = c.pd.ClientMaxWindowBits
 			} else {
 				bit = c.pd.ServerMaxWindowBits

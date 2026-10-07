@@ -1,7 +1,5 @@
 github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515 h1:+n3rv2k7ygjOxWeu5imRXKzNEiC6EZNlA0ZY+BLYJo4=
 github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515/go.mod h1:CR7Uwu/iaQvySMEXk44joshcjkxDS6hRFW8lp8Zq8rg=
-github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515 h1:+n3rv2k7ygjOxWeu5imRXKzNEiC6EZNlA0ZY+BLYJo4=
-github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515/go.mod h1:CR7Uwu/iaQvySMEXk44joshcjkxDS6hRFW8lp8Zq8rg=
 github.com/antlabs/task v0.0.0-20250706071410-2137462668b9 h1:fNu1p6qI8qGdbmMnxwmsCHPMs6pBm5m3UeCcMkjYSyA=
 github.com/antlabs/task v0.0.0-20250706071410-2137462668b9/go.mod h1:6YSWbWdHmW/4s9L0RkmiSCqAf0qmhmb119yzaSbJXww=
 github.com/antlabs/wsutil v0.1.13 h1:3kWvUhBApta8af4QrS95dV4kLCarNOnCeN1Vby2JnN8=
@@ -10,5 +8,9 @@ github.com/ebitengine/purego v0.8.4 h1:CF7LEKg5FFOsASUj0+QwaXf8Ht6TlFxg09+S9wz0o
 github.com/ebitengine/purego v0.8.4/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/klauspost/compress v1.17.8 h1:YcnTYrq7MikUT7k0Yb5eceMmALQPYBW/Xltxn0NAMnU=
 github.com/klauspost/compress v1.17.8/go.mod h1:Di0epgTjJY877eYKx5yC51cX2A2Vl2ibi7bDH9ttBbw=
+github.com/linfeip/fnet v0.0.0-20261003114910-5d263089eb00 h1:BjDxc0GQ+GANxeNnV/8TzA58t2FiVYn8Slqa8+aCK0k=
+github.com/linfeip/fnet v0.0.0-20261003114910-5d263089eb00/go.mod h1:/youPy1U2FM3bGN/znfhmmaAaE91dzqt4o+8aDbcHjw=
 golang.org/x/sys v0.31.0 h1:ioabZlmFYtWhL+TRYpcnNlLwhyxaM9kWTDEmfnprqik=
 golang.org/x/sys v0.31.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=
+golang.org/x/sys v0.33.0 h1:q3i8TbbEz+JRD9ywIRlyRAQbM0qF7hu24q3teo2hbuw=
+golang.org/x/sys v0.33.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=

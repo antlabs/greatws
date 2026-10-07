@@ -6,10 +6,11 @@ require (
 	github.com/antlabs/pulse v0.0.0-20261006064421-8fe38114c515
 	github.com/antlabs/task v0.0.0-20250706071410-2137462668b9
 	github.com/antlabs/wsutil v0.1.13
-	golang.org/x/sys v0.31.0
+	golang.org/x/sys v0.33.0
 )
 
 require (
 	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/klauspost/compress v1.17.8 // indirect
+	github.com/linfeip/fnet v0.0.0-20261003114910-5d263089eb00 // indirect
 )
