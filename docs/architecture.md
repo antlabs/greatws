@@ -90,7 +90,7 @@ type Handler interface {
 ```
 fio/
 ├── websocket/     全部代码（引擎 + 协议）
-├── http/          骨架，只有 doc.go
+├── http/          HTTP/1.1（解析器已可用，连接还没接引擎）
 ├── grpc/          骨架，只有 doc.go
 ├── autobahn/      RFC 合规测试
 └── docs/

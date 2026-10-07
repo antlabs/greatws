@@ -22,7 +22,7 @@
 | 协议 | 包 | 状态 |
 |---|---|---|
 | WebSocket (rfc6455 / rfc7692) | `websocket/` | 已支持 |
-| HTTP/1.1 | `http/` | 计划中 |
+| HTTP/1.1 | `http/` | 解析器可用 |
 | HTTP/2 | `http2/` | 计划中 |
 | HTTP/3 | `http3/` | 计划中 |
 | gRPC | `grpc/` | 计划中 |
