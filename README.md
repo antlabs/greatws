@@ -1,6 +1,6 @@
 # fio
 
-基于 epoll/kqueue 的网络库，callback 写法。起点是 WebSocket，正在往多协议走。
+基于 epoll/kqueue 的网络库，callback 写法。起点是 WebSocket，已经有 HTTP/1.1、HTTP/2、HTTP/3、gRPC 和 TLS。
 
 ![Go](https://github.com/antlabs/fio/workflows/Go/badge.svg)
 [![codecov](https://codecov.io/gh/antlabs/fio/branch/master/graph/badge.svg)](https://codecov.io/gh/antlabs/fio)
@@ -14,30 +14,40 @@
 
 * 支持 epoll/kqueue
 * 低内存占用
-* 高tps
-* 对websocket的兼容性较高，完整实现rfc6455, rfc7692
+* 高tps（详见 [docs/bench-vs-fnet.md](docs/bench-vs-fnet.md)）
+* WebSocket 完整实现 rfc6455 / rfc7692，Autobahn 517 用例零失败
+* 多协议共用一套引擎：HTTP/1.1、HTTP/2、HTTP/3、gRPC、TLS
 
 # 协议
 
 | 协议 | 包 | 状态 |
 |---|---|---|
-| WebSocket (rfc6455 / rfc7692) | `websocket/` | 已支持，压测第一梯队 |
-| HTTP/1.1 | `http/` | 解析器可用，未接引擎 |
-| HTTP/2 (RFC 9113 + HPACK) | `http2/` | 帧层 + 流 + HPACK 可用 |
-| gRPC | `grpc/` | 消息分帧 + 状态，端到端可用 |
-| TLS | `tls/` | 可用（握手在独立 goroutine，不阻塞事件循环） |
+| WebSocket (rfc6455 / rfc7692) | `websocket/` | 完整实现，Autobahn 517 用例零失败 |
+| HTTP/1.1 | `http/` | 端到端可用（`net/http` 的 handler 直接能用） |
+| HTTP/2 (RFC 9113 + HPACK) | `http2/` | 帧层 + 流 + HPACK，和官方 Framer 双向对测通过 |
+| gRPC | `grpc/` | 消息分帧 + trailer 状态，端到端可用 |
+| TLS 1.3 | `tls/` | **状态机实现**，不启动 goroutine、不阻塞事件循环 |
 | HTTP/3 | `http3/` | 端到端可用（QUIC 用 quic-go，帧层自己实现） |
 
-引擎在 `engine/`，协议实现 `engine.Handler`。分层见
-[docs/architecture.md](docs/architecture.md)。
+引擎在 `engine/`（epoll/kqueue + 非阻塞 io + `Handler` 接口），
+每个协议包实现它。分层和边界见 [docs/architecture.md](docs/architecture.md)。
 
-分层和各协议的边界见 [docs/architecture.md](docs/architecture.md)。
+## 关于 TLS
+
+`tls/` 是**自己实现的状态机**，不是包 `crypto/tls`。原因：`crypto/tls`
+的握手不支持分步——它内部的 `handshakeErr` 一旦置上，后面每次
+`Handshake()` 都直接返回那个错误，不会再尝试读。套在非阻塞 fd 上，
+第一次"数据不够"那条连接就废了。
+
+状态机版是"喂一段密文、推进一点、吐一段密文"，每一步都能停，所以能和
+普通连接一样跑在同一个 epoll 上（海量连接场景需要的）。已经和标准库的
+`crypto/tls` 服务端握手成功。
 
 # 暂不支持
 
-* ssl
 * windows
 * io-uring
+* QUIC 的完整实现（`http3/` 用 quic-go 做传输，自己实现的是帧层）
 
 # 警告⚠️
 
@@ -64,6 +74,12 @@
   		* [配置服务端解压消息](#配置服务端解压消息)
   		* [配置服务端压缩和解压消息](#配置服务端压缩和解压消息)
   		* [配置服务端上下文接管](#配置服务端上下文接管)
+
+# 安装
+
+```bash
+go get github.com/antlabs/fio/websocket
+```
 
 # 例子-服务端
 
