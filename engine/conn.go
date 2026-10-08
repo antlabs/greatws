@@ -257,22 +257,55 @@ func (c *Conn) ConsumeRead(n int) {
 	}
 }
 
+// maxReadBufferSize 是读缓冲区能长到多大。
+//
+// 为什么要有这个数而不是"无限长": 缓冲区是**每个连接一块**，长到多大
+// 就占多大内存（10000 连接 × 1MB = 10GB）。所以给它一个上限，超了就
+// 不再收——但那意味着那条连接会卡住（见 Read 里的说明），所以这个值
+// 要明显大于"正常一条报文能有多大"。
+//
+// 4MB：比常见的大 body（上传文件、gRPC 消息）都大，又不至于一条连接
+// 吃掉太多内存。
+const maxReadBufferSize = 4 * 1024 * 1024
+
 // growReadBuffer 把读缓冲区换大。返回是否换成了。
 //
-// 只在"这次读满了"或者"缓冲区满了但协议还没消费完"时调——两种情况都
-// 说明后面的数据比当前这块大。Echo 那种一次一条的连接读不满, 一直用
-// 小块, 不白占内存(10000 连接 × 16KB 是 160MB)。
+// 生长分两段:
+//
+//	< 16KB(batchReadBufferSize)  一次跳到 16KB。目的不是"装更多数据",
+//	                             是"一次读能把一个批次读完"(见
+//	                             batchReadBufferSize 的注释)
+//	>= 16KB                      翻倍。这是"协议还没消费完、缓冲区就满了"
+//	                             那条路, 必须长——不然会卡死(见下)
+//
+// **翻倍这段是必须的, 而且曾经漏掉过**: 早先这里写的是"到了 16KB 就
+// 不再长", 结果是——一个 32KB 的 HTTP body, 缓冲区被填满、解析器还在
+// 等剩下的数据、又没有空间读新的 → Read 每次都返回 0 字节, 连接永久
+// 卡住。自己写的测试撞不到(那些 body 都在一次 read 里能装下), 是拿
+// 标准库的 http.Client 打 64KB POST 才打出来的。
 func (c *Conn) growReadBuffer() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.rbuf == nil {
 		return false
 	}
-	if len(*c.rbuf) >= batchReadBufferSize {
+	cur := len(*c.rbuf)
+	if cur >= maxReadBufferSize {
 		return false
 	}
+
+	var want int
+	if cur < batchReadBufferSize {
+		want = batchReadBufferSize
+	} else {
+		want = cur * 2 // 翻倍
+		if want > maxReadBufferSize {
+			want = maxReadBufferSize
+		}
+	}
+
 	old := c.rbuf
-	nb := bytespool.GetBytes(batchReadBufferSize)
+	nb := bytespool.GetBytes(want)
 	copy(*nb, (*old)[:c.rw])
 	c.rbuf = nb
 	bytespool.PutBytes(old)
