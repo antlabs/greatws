@@ -89,7 +89,7 @@ type CloseErrMsg struct {
 func (c CloseErrMsg) Error() string {
 	var out strings.Builder
 
-	out.WriteString("<quicknet close: code:")
+	out.WriteString("<fio close: code:")
 
 	out.WriteString(strconv.Itoa(int(c.Code)))
 

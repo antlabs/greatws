@@ -25,7 +25,7 @@ import "golang.org/x/sys/unix"
 // read/write 与 recvfrom/sendto 走的是同一套 soreceive/sosend 逻辑,
 // 没有可供省掉的间接层。既然没有收益, 就不动它, 少一处行为差异。
 //
-// 这里不受 quicknet_recvsend 标签影响: 该标签只用来在 Linux 上切换
+// 这里不受 fio_recvsend 标签影响: 该标签只用来在 Linux 上切换
 // 两套实现, 这些平台上两套本来就是同一套。
 
 func socketRead(fd int, p []byte) (int, error) {

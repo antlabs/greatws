@@ -28,7 +28,7 @@ type parseTask struct {
 	c       *Conn
 	isRead  bool
 	isWrite bool
-	// ts 是投递时刻, 只有用 -tags quicknet_latprobe 编译时才有值
+	// ts 是投递时刻, 只有用 -tags fio_latprobe 编译时才有值
 	// (见 lat_probe.go), 用来量"投递到开始处理"的等待。
 	ts int64
 }

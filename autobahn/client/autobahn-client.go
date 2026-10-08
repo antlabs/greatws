@@ -16,7 +16,7 @@ import (
 const (
 	// host = "ws://192.168.128.44:9003"
 	host  = "ws://127.0.0.1:9005"
-	agent = "quicknet"
+	agent = "fio"
 )
 
 type handler struct {

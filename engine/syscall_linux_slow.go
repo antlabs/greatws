@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build linux && quicknet_slowsyscall
+//go:build linux && fio_slowsyscall
 
 package engine
 
 import "golang.org/x/sys/unix"
 
-// 走标准库 syscall.Syscall 的对照实现, 用 -tags quicknet_slowsyscall 启用。
+// 走标准库 syscall.Syscall 的对照实现, 用 -tags fio_slowsyscall 启用。
 //
 // 这是 greatws(改名前)历史上的行为, 保留下来只为对照实验: 它和默认实现的唯一
 // 区别是用了 x/sys/unix 的 Read/Write, 而后者内部是

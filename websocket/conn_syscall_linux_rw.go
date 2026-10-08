@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build linux && quicknet_rwsyscall
+//go:build linux && fio_rwsyscall
 
 package websocket
 
@@ -40,7 +40,7 @@ import (
 //
 // 用 RawSyscall 的前提是 syscall 不会阻塞: 一旦某个 syscall 阻塞在内核里,
 // 占住的 P 无法被调度给其他 goroutine, liveness 会受影响。这里成立, 因为:
-//   - fd 是非阻塞的。quicknet 的连接来自 http.Server 的 Hijack,
+//   - fd 是非阻塞的。fio 的连接来自 http.Server 的 Hijack,
 //     Go 标准库 accept 出来的 fd 自带 O_NONBLOCK(实测 flags=0x6);
 //     unix.Dup 复制 fd 时共享同一份 file description, 非阻塞属性一并继承
 //   - 调用点都在 epoll 报告可读/可写之后, 正常路径下立即返回

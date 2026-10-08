@@ -58,7 +58,7 @@ func (s *selectTasks) newTask(taskName string) driver.TaskExecutor {
 		}
 	}
 
-	panic("quicknet: no task driver found:" + taskName)
+	panic("fio: no task driver found:" + taskName)
 }
 
 func (s *selectTasks) GetGoroutines() int {
