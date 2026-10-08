@@ -14,15 +14,17 @@
 
 //go:build linux || darwin
 
-// Package fio_test 是跨实现的正确性测试：拿**别人的**客户端打我们的
-// 服务端，拿别人的服务端验我们的客户端。
+// 跨实现的正确性测试：拿**别人的**客户端打我们的服务端。
 //
-// 为什么单独一个包、单独一组测试：自己写的测试只能验证"我以为要想的
-// 那些点"。真正能说明问题的是——标准库的 http.Client、golang.org/x/net
-// 的 websocket、grpc-go 这些**别人实现的、被广泛使用的**客户端，能不能
-// 跟我们的服务端正常对话。它们对协议的实现是独立的，不共享我们的任何
-// 假设，所以能打到我们自己想不到的地方。
-package fio_test
+// 为什么要有：自己写的测试只能验证"我以为要想的那些点"。真正能说明
+// 问题的是——标准库的 http.Client 这种**别人实现的、被广泛使用的**
+// 客户端，能不能跟我们的服务端正常对话。它对协议的实现是独立的，
+// 不共享我们的任何假设，所以能打到我们自己想不到的地方。
+//
+// （这个文件放在 http 包里而不是仓库根目录：放根目录的话它会 import
+// 自己的子包，而这个仓库被别人 replace 成别的路径时，那种自引用就
+// 解析不了——go mod tidy 会跑去网上找 github.com/antlabs/fio/http。）
+package http
 
 import (
 	"crypto/tls"
@@ -36,12 +38,11 @@ import (
 	"time"
 
 	"github.com/antlabs/fio/engine"
-	fiohttp "github.com/antlabs/fio/http"
 	"golang.org/x/sys/unix"
 )
 
 // startHTTPServer 起一个 fio 的 HTTP/1.1 服务端，返回地址。
-func startHTTPServer(t *testing.T, h fiohttp.Handler) (string, func()) {
+func startHTTPServer(t *testing.T, h Handler) (string, func()) {
 	t.Helper()
 
 	m, err := engine.NewAndStart(engine.WithEventLoops(2))
@@ -74,7 +75,7 @@ func startHTTPServer(t *testing.T, h fiohttp.Handler) (string, func()) {
 				return
 			}
 			unix.SetNonblock(nfd, true)
-			if _, err := m.Add(nfd, fiohttp.NewConnHandler(h, 0)); err != nil {
+			if _, err := m.Add(nfd, NewConnHandler(h, 0)); err != nil {
 				unix.Close(nfd)
 			}
 		}
@@ -97,7 +98,7 @@ func TestStdlibClientAgainstOurServer(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string
 
-	addr, stop := startHTTPServer(t, fiohttp.HandlerFunc(func(w *fiohttp.ResponseWriter, r *fiohttp.Request) {
+	addr, stop := startHTTPServer(t, HandlerFunc(func(w *ResponseWriter, r *Request) {
 		mu.Lock()
 		paths = append(paths, r.Target)
 		mu.Unlock()
@@ -153,7 +154,7 @@ func TestStdlibPostAgainstOurServer(t *testing.T) {
 	type got struct{ method, path, body, ctype string }
 	gotCh := make(chan got, 1)
 
-	addr, stop := startHTTPServer(t, fiohttp.HandlerFunc(func(w *fiohttp.ResponseWriter, r *fiohttp.Request) {
+	addr, stop := startHTTPServer(t, HandlerFunc(func(w *ResponseWriter, r *Request) {
 		ct, _ := r.Get("Content-Type")
 		select {
 		case gotCh <- got{r.Method, r.Target, string(r.Body), ct}:
@@ -203,7 +204,7 @@ func TestStdlibHeaders(t *testing.T) {
 	}
 	gotCh := make(chan hdrs, 1)
 
-	addr, stop := startHTTPServer(t, fiohttp.HandlerFunc(func(w *fiohttp.ResponseWriter, r *fiohttp.Request) {
+	addr, stop := startHTTPServer(t, HandlerFunc(func(w *ResponseWriter, r *Request) {
 		a, _ := r.Get("X-Custom-A")
 		b, _ := r.Get("x-custom-b") // 小写查
 		m, _ := r.Get("X-Multi")
@@ -259,7 +260,7 @@ func TestStdlibHeaders(t *testing.T) {
 func TestLargeBody(t *testing.T) {
 	gotCh := make(chan int, 8)
 
-	addr, stop := startHTTPServer(t, fiohttp.HandlerFunc(func(w *fiohttp.ResponseWriter, r *fiohttp.Request) {
+	addr, stop := startHTTPServer(t, HandlerFunc(func(w *ResponseWriter, r *Request) {
 		select {
 		case gotCh <- len(r.Body):
 		default:
@@ -305,7 +306,7 @@ func TestOurClientAgainstStdlibServer(t *testing.T) {
 
 // 多个客户端并发打（标准库的 Transport 会开多条连接）。
 func TestConcurrentClients(t *testing.T) {
-	addr, stop := startHTTPServer(t, fiohttp.HandlerFunc(func(w *fiohttp.ResponseWriter, r *fiohttp.Request) {
+	addr, stop := startHTTPServer(t, HandlerFunc(func(w *ResponseWriter, r *Request) {
 		body := "ok:" + r.Target
 		w.Header()["Content-Length"] = []string{fmt.Sprint(len(body))}
 		w.Write([]byte(body))
