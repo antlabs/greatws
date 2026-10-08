@@ -23,8 +23,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // echoHandler 是给测试用的协议：收到什么原样写回去。
@@ -92,70 +90,24 @@ func startServer(t *testing.T, h Handler) (string, func()) {
 		t.Fatal(err)
 	}
 
-	// 监听 socket
-	// 监听 fd 用阻塞模式: accept 阻塞在内核里等连接, 有连接立刻被唤醒,
-	// 不用自旋。新连接再设成非阻塞交给引擎。
-	lfd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
+	// 监听 socket 和 accept 循环交给 engine.Listener。
+	//
+	// **不能用"阻塞 accept + close(lfd) 唤醒"那套**：Linux 上 close()
+	// 不唤醒另一个线程里已经阻塞在 accept() 的调用（那个线程持有文件
+	// 描述的引用），于是 stop() 里 <-acceptDone 永远等不到，测试挂到
+	// 超时；darwin 的 kqueue 会唤醒，所以本机跑得通——这种平台差异
+	// 只有跨平台跑才打得出来。Listener 用非阻塞 accept + 停止标志，
+	// 两个平台行为一致（见那个类型的说明）。
+	ln, err := ListenAndServe(m, "127.0.0.1:0", func() Handler { return h })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := unix.SetsockoptInt(lfd, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
-		t.Fatal(err)
-	}
-	sa := &unix.SockaddrInet4{Port: 0}
-	copy(sa.Addr[:], []byte{127, 0, 0, 1})
-	if err := unix.Bind(lfd, sa); err != nil {
-		t.Fatal(err)
-	}
-	if err := unix.Listen(lfd, 128); err != nil {
-		t.Fatal(err)
-	}
-	bound, err := unix.Getsockname(lfd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := bound.(*unix.SockaddrInet4).Port
-
-	// accept 循环。阻塞 accept, 关掉 lfd 它就返回错误退出——生产里
-	// accept 该挂到事件循环上（那是 TcpServer 的事）。
-	acceptDone := make(chan struct{})
-	go func() {
-		defer close(acceptDone)
-		for {
-			nfd, _, err := unix.Accept(lfd)
-			if err != nil {
-				return
-			}
-			if err := unix.SetNonblock(nfd, true); err != nil {
-				unix.Close(nfd)
-				continue
-			}
-			if _, err := m.Add(nfd, h); err != nil {
-				unix.Close(nfd)
-			}
-		}
-	}()
 
 	stop := func() {
-		unix.Close(lfd) // 让 accept 返回
-		<-acceptDone    // 等 accept 循环真的退出，再 Free
+		ln.Close() // 停 accept 循环、关监听 fd
 		m.Free()
 	}
-	return "127.0.0.1:" + itoa(port), stop
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [8]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
+	return ln.Addr(), stop
 }
 
 // TestEcho 最基本的一条：连上、发数据、原样收回来。

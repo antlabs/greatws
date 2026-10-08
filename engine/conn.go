@@ -86,6 +86,13 @@ type Conn struct {
 	// mu 保护 rbuf/wbufList: Close 可能从任意 goroutine 来, 它要在锁里
 	// 释放这两块内存。
 	mu sync.Mutex
+
+	// writeHookFn 是写拦截器（TLS 用），见 SetWriteHook。
+	writeHookFn func([]byte) error
+
+	// releaseReadBuf 上一轮读缓冲区已经消费完、等着下次 Read 时释放。
+	// 见 ConsumeRead 里"为什么不能马上还"的说明。
+	releaseReadBuf bool
 }
 
 const (
@@ -94,6 +101,17 @@ const (
 	flagPendingRead  uint32 = 1 << 2
 	flagPendingWrite uint32 = 1 << 3
 	flagCorking      uint32 = 1 << 4
+	// flagActivated 表示 OnOpen 已经跑过了（在事件循环的 goroutine 上）。
+	//
+	// 为什么要有：Add 是调用方（accept 循环）的 goroutine 调的，而
+	// OnOpen 要挪到事件循环上去跑（协议的初始化状态只该被一个 goroutine
+	// 碰）。但投递和 epoll 事件之间没有先后保证——Add 返回时那个 fd
+	// 可能已经有数据可读、事件已经排在 epoll 里了。这时候如果直接跑
+	// OnData，就和还没跑的 OnOpen 撞上（-race 实测：http2.ConnHandler
+	// 的 ch.conn 字段一边写一边读）。
+	//
+	// 所以事件里看到这个位没置就记成 pending，等 OnOpen 跑完自己再取走。
+	flagActivated uint32 = 1 << 5
 )
 
 // Init 初始化一条连接。fd 必须是已经设成非阻塞的 socket。
@@ -144,6 +162,60 @@ func (c *Conn) UserData() any {
 // IsClosed 连接关了没有。
 func (c *Conn) IsClosed() bool { return atomic.LoadInt32(&c.closed) == 1 }
 
+// SetWriteHook 装一个写拦截器。
+//
+// **给 TLS 那层用的**：TLS 包在内层协议（http2、http1）外面，内层调
+// c.Write 是想发它自己的字节，但那要**先加密**再出去。装个拦截器之后，
+// 内层的 Write 会走这里，由拦截器加密再调用 conn.Write 发到 fd。
+//
+// hook 传 nil 就摘掉（握手完成、或者不用 TLS 的连接）。
+//
+// **不要在里面调 c.Write** —— 会无限递归。拦截器应该调
+// c.WriteRaw 发真正要出去的字节。
+func (c *Conn) SetWriteHook(h func([]byte) error) {
+	c.mu.Lock()
+	c.writeHookFn = h
+	c.mu.Unlock()
+}
+
+func (c *Conn) writeHook() func([]byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.writeHookFn
+}
+
+// WriteRaw 绕过写拦截器，直接写 fd。
+//
+// 拦截器自己发数据用它（否则递归）。普通业务代码用 Write。
+func (c *Conn) WriteRaw(data []byte) error {
+	if c.IsClosed() {
+		return ErrClosed
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.wbufList) > 0 {
+		c.appendToWbufList(data, len(data))
+		c.flushLocked()
+		return nil
+	}
+	n, err := c.writeToSocket(data)
+	if err == nil && n == len(data) {
+		return nil
+	}
+	if err == nil || err == syscall.EAGAIN || err == syscall.EINTR {
+		if n < len(data) {
+			c.appendToWbufList(data[n:], len(data)-n)
+		}
+		c.parent.addWrite(c)
+		return nil
+	}
+	return err
+}
+
 // ---------------------------------------------------------------------------
 // 读
 
@@ -158,6 +230,20 @@ func (c *Conn) Read() (int, error) {
 	if c.IsClosed() {
 		return 0, ErrClosed
 	}
+
+	// 上一轮消费完、但当时还没法安全释放的读缓冲区，在这里还掉。
+	//
+	// 时机是安全的：调用方（事件循环）跑完上一轮 OnData 才回到这里，
+	// 上一轮指向那块内存的 buf 已经没人用了。
+	c.mu.Lock()
+	if c.releaseReadBuf && c.rbuf != nil {
+		bytespool.PutBytes(c.rbuf)
+		c.rbuf = nil
+		c.rr, c.rw = 0, 0
+	}
+	c.releaseReadBuf = false
+	c.mu.Unlock()
+
 	if c.rbuf == nil {
 		c.rbuf = bytespool.GetBytes(8 * 1024)
 	}
@@ -245,16 +331,27 @@ func (c *Conn) ConsumeRead(n int) {
 	if c.rr > c.rw {
 		c.rr = c.rw
 	}
-	// 全消费完了就整块还回池子(下一次 Read 再取)
-	if c.rr == c.rw {
-		c.mu.Lock()
-		if c.rbuf != nil {
-			bytespool.PutBytes(c.rbuf)
-			c.rbuf = nil
-		}
-		c.rr, c.rw = 0, 0
-		c.mu.Unlock()
+	if c.rr != c.rw {
+		return
 	}
+
+	// 全消费完了：**不在这里马上把缓冲区还回池子**。
+	//
+	// 为什么不能马上还：协议在 OnData 里拿到的 buf 就指向这块内存，
+	// 而 OnData 可能还在一层层往下传（TLS 解密 -> 内层 http2 解析 ->
+	// 业务回调）。调用方调 ConsumeRead 的时候那一层可能还没走完——
+	// 这时候把缓冲区还给池子，**同一个事件循环上的另一条连接下一次
+	// Read 就会拿到同一块内存**，正在被读的数据当场被覆盖。
+	//
+	// 症状：随机性极强、只在连接多的时候出现——TLS 握手偶尔莫名其妙
+	// 卡住（h2spec 复现过：同一个用例十次里挂一两次，而明文模式
+	// 100% 通过）。
+	//
+	// 所以只把索引推到底；真正的释放留给下一次 Read（那时候上一轮的
+	// 栈肯定已经退干净了）和 Close。
+	c.mu.Lock()
+	c.releaseReadBuf = true
+	c.mu.Unlock()
 }
 
 // maxReadBufferSize 是读缓冲区能长到多大。
@@ -324,6 +421,12 @@ func (c *Conn) Write(data []byte) error {
 	}
 	if len(data) == 0 {
 		return nil
+	}
+
+	// 有写拦截器就先给它：TLS 那层用它把内层协议写出来的明文加密，
+	// 而不是直接发到 fd 上（见 SetWriteHook）。
+	if h := c.writeHook(); h != nil {
+		return h(data)
 	}
 
 	c.mu.Lock()
@@ -486,6 +589,24 @@ func (c *Conn) closeWith(err error) {
 		return
 	}
 	c.closeOnce.Do(func() {
+		// **先把攒着的写出去，再关**。
+		//
+		// 为什么：协议在出错时要发一个"最后的话"再走——HTTP/2 是
+		// GOAWAY、WebSocket 是 close 帧。那些字节是刚写进写缓冲的
+		// （Write 没写全是常态：socket 缓冲满了、刚才那次是 EAGAIN），
+		// 直接 close 就把它们丢了。
+		//
+		// 实测：h2spec 的"帧格式错要回 GOAWAY"那几条，h2c（明文）全过、
+		// 过了 TLS 就全挂——因为 TLS 那边多了一层，字节先要经过
+		// 状态机加密再进写缓冲，等 OnData 返回 error 时缓冲里还压着
+		// 加密后的 GOAWAY，而 close 把它们连同 wbufList 一起丢了。
+		//
+		// 尽力而为：不保证送到（对端可能已经关了、socket 缓冲可能还是
+		// 满的），但"刚才还能写、只是没写全"这种最常见的情况能救回来。
+		c.mu.Lock()
+		_ = c.flushLocked()
+		c.mu.Unlock()
+
 		atomic.StoreInt32(&c.closed, 1)
 
 		c.mu.Lock()
@@ -545,6 +666,16 @@ func (c *Conn) takePendingRead() bool {
 
 func (c *Conn) takePendingWrite() bool {
 	return atomic.AndUint32(&c.packed, ^flagPendingWrite)&flagPendingWrite != 0
+}
+
+// isActivated OnOpen 跑过了没有。
+func (c *Conn) isActivated() bool { return atomic.LoadUint32(&c.packed)&flagActivated != 0 }
+
+// setActivated 标记 OnOpen 跑完了。返回"之前有没有待处理的事件"
+// ——有的话调用方要接着处理（见 eventloop 里 activate 的用法）。
+func (c *Conn) setActivated() (pendingRead, pendingWrite bool) {
+	old := atomic.OrUint32(&c.packed, flagActivated)
+	return old&flagPendingRead != 0, old&flagPendingWrite != 0
 }
 
 func (c *Conn) isCorking() bool { return atomic.LoadUint32(&c.packed)&flagCorking != 0 }

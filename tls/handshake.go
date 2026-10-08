@@ -105,6 +105,13 @@ type ClientHello struct {
 	CipherSuites []uint16
 	// ServerName 是 SNI（从 server_name 扩展里来）
 	ServerName string
+	// ALPN 是客户端支持的协议名列表（从
+	// application_layer_protocol_negotiation 扩展里来），按偏好排序。
+	//
+	// **HTTP/2 靠这个决定用不用 h2**：RFC 9113 要求跑在 TLS 上的 HTTP/2
+	// 必须通过 ALPN 协商出 "h2"。协商不出来的话，标准库的客户端会直接
+	// 拒绝："unexpected ALPN protocol"——它连试都不试。
+	ALPN []string
 }
 
 // ServerHello 是服务端的回应。
@@ -207,6 +214,24 @@ func ParseClientHello(b []byte) (*ClientHello, error) {
 			if 5+nameLen <= len(data) {
 				ch.ServerName = string(data[5 : 5+nameLen])
 			}
+		case extALPN:
+			// ALPN: 2 字节总长度 + 若干个 (1 字节长度 + 名字)
+			if len(data) < 2 {
+				return
+			}
+			listLen := int(data[0])<<8 | int(data[1])
+			if 2+listLen > len(data) {
+				return
+			}
+			p := data[2 : 2+listLen]
+			for len(p) > 0 {
+				n := int(p[0])
+				if 1+n > len(p) {
+					return
+				}
+				ch.ALPN = append(ch.ALPN, string(p[1:1+n]))
+				p = p[1+n:]
+			}
 		}
 	})
 	return ch, nil
@@ -252,6 +277,9 @@ func AppendClientHello(dst []byte, ch *ClientHello, keyShare []byte) []byte {
 	exts = appendExtension(exts, extSignatureAlgorithms, appendSignatureAlgorithms())
 	if ch.ServerName != "" {
 		exts = appendExtension(exts, extServerName, appendServerName(ch.ServerName))
+	}
+	if len(ch.ALPN) > 0 {
+		exts = appendExtension(exts, extALPN, appendALPNList(ch.ALPN))
 	}
 
 	body = append(body, byte(len(exts)>>8), byte(len(exts)))
@@ -304,8 +332,16 @@ func AppendServerHello(dst []byte, sh *ServerHello, keyShare []byte) []byte {
 	var exts []byte
 	// supported_versions：选 1.3
 	exts = appendExtension(exts, extSupportedVersions, []byte{0x03, 0x04})
-	// key_share：服务端的公钥
-	exts = appendExtension(exts, extKeyShare, appendKeyShare(keyShare))
+	// key_share：服务端的公钥。
+	//
+	// **服务端的格式和客户端的不一样**（RFC 8446 4.2.8）：客户端是"列表"
+	// （2 字节总长 + 若干 entry），服务端是**单个 entry**（组号 + 长度 +
+	// 公钥），外面没有列表长度。
+	//
+	// 之前这里错用了客户端的 appendKeyShare，多包了一层 2 字节长度——
+	// 标准库的客户端收到之后解不出 key_share，握手卡住（症状是客户端
+	// 报 "error decoding message" 或者干脆不回 Finished）。
+	exts = appendExtension(exts, extKeyShare, appendKeyShareEntry(keyShare))
 
 	body = append(body, byte(len(exts)>>8), byte(len(exts)))
 	body = append(body, exts...)
@@ -320,9 +356,39 @@ const (
 	extServerName          uint16 = 0
 	extSupportedGroups     uint16 = 10
 	extSignatureAlgorithms uint16 = 13
-	extSupportedVersions   uint16 = 43
-	extKeyShare            uint16 = 51
+	// extALPN 是 ALPN（RFC 7301）。TLS 1.3 里服务端把协商结果放在
+	// EncryptedExtensions 里回（不是 ServerHello——那条是明文的，
+	// 协商结果在里面会被中间设备看见并利用）。
+	extALPN              uint16 = 16
+	extSupportedVersions uint16 = 43
+	extKeyShare          uint16 = 51
 )
+
+// ALPNProtoH2 是 HTTP/2 在 TLS 上的协议名（RFC 9113 3.1）。
+//
+// HTTP/3 是 "h3"。这两个都不是 "http/1.1" 那种带斜杠的老式名字。
+const ALPNProtoH2 = "h2"
+
+// negotiateALPN 从客户端给的列表里挑一个服务端也支持的。
+//
+// **按服务端的偏好挑，不是客户端的**：客户端列的顺序是它的偏好，但选哪个
+// 是服务端的事（RFC 7301：服务端可以按自己的偏好，客户端必须接受结果）。
+// 这里的偏好是"服务端 Config.ALPN 的顺序"。
+//
+// 客户端没给 ALPN 扩展（老客户端）就返回空——调用方按"没协商"处理。
+func negotiateALPN(clientProtos, serverProtos []string) string {
+	if len(clientProtos) == 0 || len(serverProtos) == 0 {
+		return ""
+	}
+	for _, sp := range serverProtos {
+		for _, cp := range clientProtos {
+			if sp == cp {
+				return sp
+			}
+		}
+	}
+	return ""
+}
 
 // parseExtensions 遍历扩展列表（每项是 2 字节类型 + 2 字节长度 + 数据）。
 func parseExtensions(b []byte, fn func(typ uint16, data []byte)) {
@@ -341,6 +407,15 @@ func parseExtensions(b []byte, fn func(typ uint16, data []byte)) {
 func appendExtension(dst []byte, typ uint16, data []byte) []byte {
 	dst = append(dst, byte(typ>>8), byte(typ), byte(len(data)>>8), byte(len(data)))
 	return append(dst, data...)
+}
+
+// appendKeyShareEntry 拼**服务端**的 key_share 内容（单个 entry）。
+//
+//	group(2) + key_exchange<1..2^16-1>
+func appendKeyShareEntry(pub []byte) []byte {
+	out := make([]byte, 0, 4+len(pub))
+	out = append(out, 0, byte(x25519Group), byte(len(pub)>>8), byte(len(pub)))
+	return append(out, pub...)
 }
 
 // appendKeyShare 拼 key_share 扩展的内容（一个 x25519 的公钥）。
@@ -395,6 +470,27 @@ func appendServerName(name string) []byte {
 	inner = append(inner, 0) // 类型 0 = host_name
 	inner = append(inner, byte(len(name)>>8), byte(len(name)))
 	inner = append(inner, name...)
+	out = append(out, byte(len(inner)>>8), byte(len(inner)))
+	return append(out, inner...)
+}
+
+// appendALPNList 拼 ALPN 的协议名列表（RFC 7301 section 3.1）。
+//
+// 格式（ClientHello 和 EncryptedExtensions 里是同一个）：
+//
+//	opaque ProtocolNameList<2..2^16-1>:
+//	    ProtocolName<1..2^8-1> ...   每项是 1 字节长度 + 名字
+//
+// **列表外面套一层 2 字节总长度**，所以是"长度 + 长度"的两层。这一层很
+// 容易漏——漏了对端解出来就是空的，而 TLS 里这种错不会有明确报错，只会
+// 表现成"协商不出协议"。
+func appendALPNList(protos []string) []byte {
+	var inner []byte
+	for _, p := range protos {
+		inner = append(inner, byte(len(p)))
+		inner = append(inner, p...)
+	}
+	out := make([]byte, 0, 2+len(inner))
 	out = append(out, byte(len(inner)>>8), byte(len(inner)))
 	return append(out, inner...)
 }
@@ -580,4 +676,66 @@ func parseClientKeyShare(data []byte) ([]byte, error) {
 		b = b[4+length:]
 	}
 	return nil, errors.New("tls: no x25519 key share")
+}
+
+// ---------------------------------------------------------------------------
+// ALPN 的服务端侧
+
+// appendALPNServerExtension 拼 EncryptedExtensions 的**消息体**。
+//
+// 和客户端那边**稍微不同**：服务端只能回**一个**协议（协商结果），所以
+// 列表里就一项。
+//
+// 没协商出东西（客户端没给 ALPN、或者两边没有交集）就返回一个空列表
+// ——RFC 7301 说这种情况服务端可以不回这个扩展，客户端自己知道没谈成。
+//
+// **注意返回的是整个消息体**：EncryptedExtensions 的结构是
+//
+//	Extension extensions<0..2^16-1>    <- 这里的 2 字节长度不能省
+//
+// 漏了那 2 个字节的话 body 就是空的，对端按"长度字段"去读会读越界，
+// 报的是 "error decoding message" 这种和 ALPN 八竿子打不着的错。
+func appendALPNServerExtension(proto string) []byte {
+	var exts []byte
+	if proto != "" {
+		exts = appendExtension(exts, extALPN, appendALPNList([]string{proto}))
+	}
+	body := make([]byte, 0, 2+len(exts))
+	body = append(body, byte(len(exts)>>8), byte(len(exts)))
+	return append(body, exts...)
+}
+
+// parseALPNServerExtension 从 EE 的消息体里读出协商结果（客户端用）。
+//
+// 输入是整个消息体（开头是 2 字节的扩展列表长度）。
+func parseALPNServerExtension(body []byte) string {
+	if len(body) < 2 {
+		return ""
+	}
+	// 先剥掉"扩展列表"那层 2 字节长度（EncryptedExtensions 的结构：
+	// 2 字节列表长度 + 若干 (类型 + 长度 + 数据)）。不剥的话
+	// parseExtensions 会把长度字段当成第一个扩展的类型，整个列表错位。
+	listLen := int(body[0])<<8 | int(body[1])
+	if 2+listLen > len(body) {
+		return ""
+	}
+	exts := body[2 : 2+listLen]
+
+	var got string
+	parseExtensions(exts, func(typ uint16, data []byte) {
+		if typ != extALPN || len(data) < 2 {
+			return
+		}
+		n := int(data[0])<<8 | int(data[1])
+		if 2+n > len(data) || n < 1 {
+			return
+		}
+		p := data[2 : 2+n]
+		nameLen := int(p[0])
+		if 1+nameLen > len(p) {
+			return
+		}
+		got = string(p[1 : 1+nameLen])
+	})
+	return got
 }

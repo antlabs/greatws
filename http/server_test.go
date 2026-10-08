@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/antlabs/fio/engine"
-	"golang.org/x/sys/unix"
 )
 
 // startServer 起一个真实的 HTTP 服务端（engine 的 epoll 循环 + 这个包的
@@ -40,59 +39,21 @@ func startServer(t *testing.T, h Handler) (string, func()) {
 		t.Fatal(err)
 	}
 
-	lfd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
+	// accept 循环交给 engine.Listener：非阻塞 accept + 停止标志，
+	// 两个平台的 Close 行为一致（见那个类型的说明）。
+	ln, err := engine.ListenAndServe(m, "127.0.0.1:0", func() engine.Handler {
+		// 每个连接一个 ConnHandler（各自的解析器和状态）
+		return NewConnHandler(h, 0)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	unix.SetsockoptInt(lfd, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
-	sa := &unix.SockaddrInet4{}
-	copy(sa.Addr[:], []byte{127, 0, 0, 1})
-	if err := unix.Bind(lfd, sa); err != nil {
-		t.Fatal(err)
-	}
-	if err := unix.Listen(lfd, 128); err != nil {
-		t.Fatal(err)
-	}
-	bound, _ := unix.Getsockname(lfd)
-	port := bound.(*unix.SockaddrInet4).Port
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			nfd, _, err := unix.Accept(lfd)
-			if err != nil {
-				return
-			}
-			unix.SetNonblock(nfd, true)
-			// 每个连接一个 ConnHandler（各自的解析器和状态）
-			ch := NewConnHandler(h, 0)
-			if _, err := m.Add(nfd, ch); err != nil {
-				unix.Close(nfd)
-			}
-		}
-	}()
 
 	stop := func() {
-		unix.Close(lfd)
-		<-done
+		ln.Close()
 		m.Free()
 	}
-	return "127.0.0.1:" + itoa(port), stop
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [8]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
+	return ln.Addr(), stop
 }
 
 // 一个最简单的 GET，校验响应行、头、体。

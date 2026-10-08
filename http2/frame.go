@@ -109,6 +109,9 @@ var (
 	ErrBadFrameHeader  = errors.New("http2: malformed frame header")
 	ErrBadFrameLength  = errors.New("http2: frame length does not match its type")
 	ErrUnexpectedFrame = errors.New("http2: unexpected frame")
+	// ErrFlowControl 对端超出了我们给的窗口（RFC 9113 6.9.1 的
+	// FLOW_CONTROL_ERROR）。这是协议错误，要拆连接。
+	ErrFlowControl = errors.New("http2: flow control error")
 )
 
 // Frame 是一个解析出来的帧头 + 载荷。
@@ -157,6 +160,9 @@ type FrameParser struct {
 	lastStreamID uint32
 	lastType     FrameType
 	haveLast     bool
+
+	// awaitingContinuation 上一个头块还没结束（在等同流的 CONTINUATION）
+	awaitingContinuation bool
 }
 
 // NewFrameParser 建一个帧解析器。
@@ -222,10 +228,15 @@ func (p *FrameParser) Parse(buf []byte, fn func(*Frame) error) (int, error) {
 		}
 
 		p.lastStreamID, p.lastType, p.haveLast = streamID, ftype, true
-		if ftype != FrameContinuation {
-			// CONTINUATION 之后允许还是 CONTINUATION
-		} else {
-			p.lastType = FrameContinuation
+		// 头块还没结束（HEADERS/CONTINUATION 没带 END_HEADERS）就记下来，
+		// 下一帧必须是同流的 CONTINUATION
+		switch ftype {
+		case FrameHeaders, FramePushPromise:
+			p.awaitingContinuation = f.Flags&FlagHeadersEndHeaders == 0
+		case FrameContinuation:
+			p.awaitingContinuation = f.Flags&FlagContinuationEndHeaders == 0
+		default:
+			p.awaitingContinuation = false
 		}
 
 		consumed += frameHeaderLen + int(length)
@@ -239,18 +250,34 @@ func (p *FrameParser) Parse(buf []byte, fn func(*Frame) error) (int, error) {
 // 是为了让头块不被穿插——两个流同时发头块的话，接收端没法区分哪段属于
 // 哪个（HPACK 是有状态的，必须按顺序解）。
 func (p *FrameParser) checkContinuation(f *Frame) error {
+	// 上一帧也是"还没结束的头块"（HEADERS 没带 END_HEADERS，或者
+	// CONTINUATION 没带）——那这一段必须是同流的 CONTINUATION。
+	//
+	// **中间任何别的帧都是协议错误**（RFC 9113 6.10），包括另一个流的
+	// HEADERS、未知类型的帧、甚至一个空的 DATA。原因是 HPACK 有状态：
+	// 头块必须被完整、连续地交给解码器，中间插了别的东西就没法保证
+	// 解码顺序和编码顺序一致。
+	if p.awaitingContinuation {
+		if f.Type != FrameContinuation || f.StreamID != p.lastStreamID {
+			return connError(ErrCodeProtocol,
+				"expected CONTINUATION on stream %d, got %v on stream %d",
+				p.lastStreamID, f.Type, f.StreamID)
+		}
+		return nil
+	}
 	if f.Type != FrameContinuation {
 		return nil
 	}
+	// 没在等 CONTINUATION 却收到一个——也是连接级错误
 	if !p.haveLast {
-		return fmt.Errorf("%w: CONTINUATION without a preceding HEADERS", ErrUnexpectedFrame)
+		return connError(ErrCodeProtocol, "CONTINUATION without a preceding HEADERS")
 	}
 	if p.lastType != FrameHeaders && p.lastType != FrameContinuation && p.lastType != FramePushPromise {
-		return fmt.Errorf("%w: CONTINUATION after %v", ErrUnexpectedFrame, p.lastType)
+		return connError(ErrCodeProtocol, "CONTINUATION after %v", p.lastType)
 	}
 	if f.StreamID != p.lastStreamID {
-		return fmt.Errorf("%w: CONTINUATION on stream %d, previous frame on %d",
-			ErrUnexpectedFrame, f.StreamID, p.lastStreamID)
+		return connError(ErrCodeProtocol,
+			"CONTINUATION on stream %d, previous frame on %d", f.StreamID, p.lastStreamID)
 	}
 	return nil
 }
@@ -263,58 +290,63 @@ func checkFrameShape(f *Frame) error {
 	switch f.Type {
 	case FrameData:
 		if f.StreamID == 0 {
-			return fmt.Errorf("%w: DATA on stream 0", ErrBadFrameLength)
+			return connError(ErrCodeFrameSize, "DATA on stream 0")
 		}
 	case FrameHeaders:
 		if f.StreamID == 0 {
-			return fmt.Errorf("%w: HEADERS on stream 0", ErrBadFrameLength)
+			return connError(ErrCodeFrameSize, "HEADERS on stream 0")
 		}
 	case FramePriority:
 		if f.StreamID == 0 {
-			return fmt.Errorf("%w: PRIORITY on stream 0", ErrBadFrameLength)
+			return connError(ErrCodeFrameSize, "PRIORITY on stream 0")
 		}
 		if len(f.Payload) != 5 {
-			return fmt.Errorf("%w: PRIORITY payload %d != 5", ErrBadFrameLength, len(f.Payload))
+			return connError(ErrCodeFrameSize, "PRIORITY payload %d != 5", len(f.Payload))
 		}
 	case FrameRSTStream:
 		if f.StreamID == 0 {
-			return fmt.Errorf("%w: RST_STREAM on stream 0", ErrBadFrameLength)
+			return connError(ErrCodeFrameSize, "RST_STREAM on stream 0")
 		}
 		if len(f.Payload) != 4 {
-			return fmt.Errorf("%w: RST_STREAM payload %d != 4", ErrBadFrameLength, len(f.Payload))
+			return connError(ErrCodeFrameSize, "RST_STREAM payload %d != 4", len(f.Payload))
 		}
 	case FrameSettings:
 		if f.StreamID != 0 {
-			return fmt.Errorf("%w: SETTINGS on stream %d", ErrBadFrameLength, f.StreamID)
+			return connError(ErrCodeFrameSize, "SETTINGS on stream %d", f.StreamID)
 		}
 		// ACK 的 SETTINGS 没有载荷
 		if f.Flags&FlagSettingsAck != 0 && len(f.Payload) != 0 {
-			return fmt.Errorf("%w: SETTINGS ACK with payload", ErrBadFrameLength)
+			return connError(ErrCodeFrameSize, "SETTINGS ACK with %d bytes of payload", len(f.Payload))
 		}
 		if f.Flags&FlagSettingsAck == 0 && len(f.Payload)%6 != 0 {
-			return fmt.Errorf("%w: SETTINGS payload %d not a multiple of 6", ErrBadFrameLength, len(f.Payload))
+			return connError(ErrCodeFrameSize,
+				"SETTINGS payload %d not a multiple of 6", len(f.Payload))
 		}
 	case FramePing:
 		if f.StreamID != 0 {
-			return fmt.Errorf("%w: PING on stream %d", ErrBadFrameLength, f.StreamID)
+			return connError(ErrCodeFrameSize, "PING on stream %d", f.StreamID)
 		}
 		if len(f.Payload) != 8 {
-			return fmt.Errorf("%w: PING payload %d != 8", ErrBadFrameLength, len(f.Payload))
+			return connError(ErrCodeFrameSize, "PING payload %d != 8", len(f.Payload))
 		}
 	case FrameGoAway:
 		if f.StreamID != 0 {
-			return fmt.Errorf("%w: GOAWAY on stream %d", ErrBadFrameLength, f.StreamID)
+			return connError(ErrCodeFrameSize, "GOAWAY on stream %d", f.StreamID)
 		}
 		if len(f.Payload) < 8 {
-			return fmt.Errorf("%w: GOAWAY payload %d < 8", ErrBadFrameLength, len(f.Payload))
+			return connError(ErrCodeFrameSize, "GOAWAY payload %d < 8", len(f.Payload))
 		}
 	case FrameWindowUpdate:
 		if len(f.Payload) != 4 {
-			return fmt.Errorf("%w: WINDOW_UPDATE payload %d != 4", ErrBadFrameLength, len(f.Payload))
+			return connError(ErrCodeFrameSize, "WINDOW_UPDATE payload %d != 4", len(f.Payload))
 		}
 	case FrameContinuation:
 		if f.StreamID == 0 {
-			return fmt.Errorf("%w: CONTINUATION on stream 0", ErrBadFrameLength)
+			return connError(ErrCodeFrameSize, "CONTINUATION on stream 0")
+		}
+	case FramePushPromise:
+		if f.StreamID == 0 {
+			return connError(ErrCodeFrameSize, "PUSH_PROMISE on stream 0")
 		}
 	}
 	return nil

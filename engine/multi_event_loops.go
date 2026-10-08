@@ -107,7 +107,10 @@ func New(opts ...Option) (*MultiEventLoop, error) {
 			parent:      m,
 			maxEventNum: o.maxEventNum,
 			log:         m.log,
-			tasks:       make(chan func(), 64),
+			// 注册连接（OnOpen 投递）走这条路，不是数据路径。
+			// 压测里的 connect 风暴会瞬时挤进来一批，缓冲开大点，
+			// 免得 accept 循环被卡住（见 runOnLoop）。
+			tasks: make(chan func(), 4096),
 		}
 		api, err := core.Create(core.TriggerTypeEdge)
 		if err != nil {
@@ -192,21 +195,80 @@ func (m *MultiEventLoop) Add(fd int, h Handler) (*Conn, error) {
 	}
 	atomic.AddInt64(&m.curConn, 1)
 	if h != nil {
-		// OnOpen 在事件循环的 goroutine 上跑。
+		// OnOpen 投到事件循环的 goroutine 上跑。
 		//
-		// 为什么不在 Add 里同步调：Add 是 accept 循环（调用方的
-		// goroutine）调的，而 OnOpen 里协议会初始化自己的状态
-		// （SetUserData 之类），那个状态之后只被事件循环读——两边
-		// 一写一读就是数据竞争（-race 会报）。
+		// **不能在这里同步调**：Add 是 accept 循环（调用方的 goroutine）
+		// 调的，而 OnOpen 里协议要初始化自己的状态（http2 建 Conn、
+		// tls 建状态机、SetUserData……），那些状态之后只被事件循环碰
+		// ——两边一写一读就是数据竞争。实测过：http2.ConnHandler 的
+		// ch.conn 字段在 -race 下必报。
 		//
-		// **调用方要保证 OnOpen 先于 OnData**：引擎保证的是同一个
-		// goroutine 上按顺序执行，不保证"任务队列里的一定比 epoll 事件
-		// 先跑"——Add 返回时事件可能已经在 epoll 里等着了。所以协议实现
-		// 那边要能应对"OnOpen 还没跑到就有数据"（http 包就是在 LazyInit
-		// 里处理的）。
-		h.OnOpen(c)
+		// 也不能往任务队列一扔就完事：投递和 epoll 事件之间**没有先后
+		// 保证**——Add 返回时数据可能已经到了、事件已经排进 epoll。那
+		// 就成了先跑 OnData、再跑 OnOpen，和上面那个竞争是一回事。
+		//
+		// 所以：任务里跑 OnOpen，跑完置 activated 位；事件处理那边看到
+		// 位没置就把事件记成 pending，由 OnOpen 跑完时自己取走（见
+		// activate 和 processConn）。
+		el.runOnLoop(func() {
+			el.activate(c)
+		})
 	}
 	return c, nil
+}
+
+// activate 在事件循环的 goroutine 上跑 OnOpen，再把它跑完之前攒下的事件
+// 补处理掉。
+//
+// 它跑在事件循环的 goroutine 上（runOnLoop 投过来的），所以和事件处理
+// 是同一个 goroutine 串行的。
+//
+// **可重入**：Add 投的任务和事件处理两条路都可能调它（后者是"事件比
+// 任务先到"的情况，见 EventLoop.processConn），谁先到谁跑 OnOpen，
+// 后到的直接返回。两次调用都在同一个 goroutine 上，没有竞争。
+func (el *EventLoop) activate(c *Conn) {
+	if c.IsClosed() || c.isActivated() {
+		return
+	}
+
+	// **busy 位归调用方管，这里不碰**。
+	//
+	// 两条路都会走到这儿，而它们对 busy 的所有权不一样：
+	//
+	//	1. Add 投的任务（runOnLoop -> activate）
+	//	   这条路是自己进来的，没人持有 busy——但要占上，因为后面
+	//	   processConn 也要占（见下面），而且"正在处理这个连接"的语义
+	//	   本来就该成立。
+	//
+	//	2. processConn 里调（事件比任务先到）
+	//	   这条路**调用方已经持有 busy 了**（Poll 回调里 tryBusy 拿的）。
+	//	   这里要是再 tryBusy/unbusy 一次，会把人家持有的位清掉——之后
+	//	   另一个 goroutine 就能同时进来处理同一条连接，状态直接乱掉
+	//	   （实测：多线程下大量 TLS 握手卡在 Start，因为连接被两个
+	//	   goroutine 交错处理）。
+	//
+	// 所以用"进来的时候有没有人持有"来判断：没有就自己占（并负责还），
+	// 有就什么都别动。
+	owned := c.tryBusy() // 返回 true 表示"之前没人持有，现在归我了"
+	if c.handler != nil {
+		c.handler.OnOpen(c)
+	}
+	if owned {
+		c.unbusy()
+	}
+
+	// 置位并取回"OnOpen 之前就到的事件"。
+	//
+	// 有 pending 的话要接着处理（那些是 epoll 边缘，丢了就没有下一次
+	// 通知了）。这时候自己要占 busy——但如果**调用方本来就持有**
+	// （processConn 那条路），就不能再占：processConn 自己会接着跑，
+	// 它拿着循环去取 pending。
+	pendingRead, pendingWrite := c.setActivated()
+	if (pendingRead || pendingWrite) && owned {
+		if c.tryBusy() {
+			el.processConn(c, pendingRead, pendingWrite)
+		}
+	}
 }
 
 func (m *MultiEventLoop) getConn(fd int) *Conn {
@@ -225,7 +287,11 @@ func (m *MultiEventLoop) delConn(fd int) {
 }
 
 func (m *MultiEventLoop) addWrite(c *Conn) {
-	// ET 下 AddRead 已经带了 EPOLLOUT，不用再注册
+	// 委托给连接所在的那个事件循环（见 EventLoop.addWrite 里
+	// "为什么不能是空操作"的说明）
+	if c.parent != nil {
+		_ = c.parent.addWrite(c)
+	}
 }
 
 func (m *MultiEventLoop) err(msg string, args ...any) {

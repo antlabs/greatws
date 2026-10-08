@@ -17,6 +17,7 @@ package http
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/antlabs/fio/engine"
 )
@@ -44,6 +45,11 @@ type ResponseWriter struct {
 
 	// keepAlive 这个响应之后连接要不要留着
 	keepAlive bool
+
+	// chunked 这个响应用 chunked（调用方没设 Content-Length）
+	chunked bool
+	// finished chunked 的收尾块发过没有
+	finished bool
 }
 
 // Header 返回可以设置的头。
@@ -76,14 +82,44 @@ func (w *ResponseWriter) Write(body []byte) (int, error) {
 	if len(body) == 0 {
 		return 0, nil
 	}
-	// 用 chunked 还是 Content-Length？
-	//
-	// 这里**先按 Content-Length 写**：调用方在 Write 之前设了
-	// Content-Length 就用它，没设的话……就得用 chunked。
-	//
-	// TODO: chunked 还没实现。现在没设 Content-Length 的话按"写完就关"
-	// 处理（HTTP/1.0 那种），连接不能复用。
+
+	// 没设 Content-Length 的就是 chunked（见 flushHeader），每段要
+	// 自己带长度前缀。
+	if w.chunked {
+		if err := w.writeChunk(body); err != nil {
+			return 0, err
+		}
+		return len(body), nil
+	}
 	return len(body), w.conn.Write(body)
+}
+
+// writeChunk 按 chunked 格式写一段体：`<十六进制长度>\r\n<数据>\r\n`。
+func (w *ResponseWriter) writeChunk(body []byte) error {
+	var head [18]byte
+	n := copy(head[:], strconv.AppendInt(head[:0], int64(len(body)), 16))
+	head[n] = '\r'
+	head[n+1] = '\n'
+	if err := w.conn.Write(head[:n+2]); err != nil {
+		return err
+	}
+	if err := w.conn.Write(body); err != nil {
+		return err
+	}
+	return w.conn.Write([]byte("\r\n"))
+}
+
+// finish 响应收尾：chunked 的补一个"最后一块"（长度 0 的 chunk）。
+//
+// **这一步不能省**：chunked 的报文靠这个 0 长度的块收尾，客户端读到它
+// 才知道体结束了。漏了的话客户端会一直等——实测标准库的 http 客户端
+// 报 context deadline exceeded，而数据其实早就到了。
+func (w *ResponseWriter) finish() error {
+	if !w.chunked || w.finished {
+		return nil
+	}
+	w.finished = true
+	return w.conn.Write([]byte("0\r\n\r\n"))
 }
 
 // flushHeader 把状态行 + 头拼出来发出去。只发一次。
@@ -108,6 +144,22 @@ func (w *ResponseWriter) flushHeader() error {
 	buf = append(buf, StatusText(w.statusCode)...)
 	buf = append(buf, '\r', '\n')
 
+	// **体的长度怎么界定**（RFC 9112 6.3）：有 Content-Length 就按它，
+	// 没有就得用 chunked。
+	//
+	// 两种都不给的话客户端没法知道体到哪儿结束——它会一直等连接关闭
+	// （或者超时）。这不是"可选优化"，是报文合法性的问题：标准库的
+	// http 客户端会一直挂到 deadline。早先这里只有 Content-Length 的
+	// 路径，body 边界靠"写完就关"，但没人真的去关，于是每个没设
+	// Content-Length 的响应都会把客户端吊死。
+	//
+	// 状态码 204/304 和 HEAD 响应是例外：它们按定义没有体，不需要
+	// 任何长度标记（也不需要 chunked）。
+	if !hasContentLength(w.header) && !bodylessStatus(w.statusCode) {
+		w.chunked = true
+		buf = append(buf, "Transfer-Encoding: chunked\r\n"...)
+	}
+
 	for name, values := range w.header {
 		for _, v := range values {
 			buf = append(buf, name...)
@@ -125,6 +177,30 @@ func (w *ResponseWriter) flushHeader() error {
 
 // WriteRaw 直接把一段字节写出去（给需要手写响应的地方用）。
 func (w *ResponseWriter) WriteRaw(b []byte) error { return w.conn.Write(b) }
+
+// hasContentLength 调用方设了 Content-Length 没有（大小写无关）。
+func hasContentLength(header map[string][]string) bool {
+	return hasHeaderName(header, "Content-Length")
+}
+
+// hasHeaderName 头 map 里有没有这个名字（大小写无关）。
+func hasHeaderName(header map[string][]string, want string) bool {
+	if _, ok := header[want]; ok {
+		return true
+	}
+	for name := range header {
+		if len(name) == len(want) && strings.EqualFold(name, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// bodylessStatus 这个状态码按定义没有响应体（RFC 9110）。
+func bodylessStatus(code int) bool {
+	// 1xx 是中间响应，204 是"没有内容"，304 是"用你的缓存"
+	return (code >= 100 && code < 200) || code == 204 || code == 304
+}
 
 // Conn 返回底层连接（写 trailer、拿对端地址之类的场景）。
 func (w *ResponseWriter) Conn() *engine.Conn { return w.conn }
@@ -250,6 +326,22 @@ func (ch *ConnHandler) OnData(c *engine.Conn, buf []byte) (int, error) {
 		st.w.reset(c)
 		ch.handler.ServeHTTP(st.w, req)
 
+		// 响应收尾。
+		//
+		// 业务可能一个字都没写（比如只调了 WriteHeader(204)、或者干脆
+		// 什么都没做）——那**状态行和头还没发出去**（头是第一次 Write
+		// 时才拼的）。这里必须补上，不然客户端收不到任何响应，一直等
+		// 到超时（实测：标准库客户端报 context deadline exceeded）。
+		//
+		// flushHeader 里会按"有没有 Content-Length"决定要不要 chunked，
+		// 没写过体的话自然一个 chunk 都不发，finish 补个终止块就到底了。
+		if err := st.w.flushHeader(); err != nil {
+			return consumed, err
+		}
+		if err := st.w.finish(); err != nil {
+			return consumed, err
+		}
+
 		// keep-alive？
 		//
 		// HTTP/1.1 默认 keep-alive，除非请求里说 Connection: close
@@ -341,6 +433,8 @@ func (w *ResponseWriter) reset(c *engine.Conn) {
 	w.statusCode = 0
 	w.wroteHeader = false
 	w.headerSent = false
+	w.chunked = false
+	w.finished = false
 	w.keepAlive = true // HTTP/1.1 默认 keep-alive
 	for k := range w.header {
 		delete(w.header, k)

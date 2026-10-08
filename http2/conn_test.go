@@ -17,10 +17,15 @@ package http2
 import (
 	"bytes"
 	"strings"
+	"sync"
 	"testing"
 )
 
 // recorder 收流事件。
+//
+// 这个结构体本身**不加锁**——包里的测试都是单 goroutine 跑的（手工喂
+// Feed），不需要。跑在 engine 上的测试用 syncRecorder（回调在事件循环
+// 的 goroutine 上，和在测试 goroutine 上读它的代码是两个 goroutine）。
 type recorder struct {
 	headers []struct {
 		streamID  uint32
@@ -49,6 +54,53 @@ func (r *recorder) OnRSTStream(c *Conn, streamID uint32, code ErrCode) {
 	r.rstCode = code
 }
 
+// syncRecorder 是 recorder 的加锁版，给跑在 engine 上的测试用。
+//
+// 事件循环的 goroutine 调回调，测试 goroutine 读——不加锁 -race 必报。
+// 真实的 StreamHandler 实现也该这么写。
+type syncRecorder struct {
+	mu      sync.Mutex
+	headers []struct {
+		streamID  uint32
+		fields    []HeaderField
+		endStream bool
+	}
+	data []byte
+}
+
+func (r *syncRecorder) OnHeaders(c *Conn, streamID uint32, headers []HeaderField, endStream bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.headers = append(r.headers, struct {
+		streamID  uint32
+		fields    []HeaderField
+		endStream bool
+	}{streamID, append([]HeaderField(nil), headers...), endStream})
+}
+
+func (r *syncRecorder) OnData(c *Conn, streamID uint32, data []byte, endStream bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.data = append(r.data, data...)
+}
+
+func (r *syncRecorder) OnRSTStream(c *Conn, streamID uint32, code ErrCode) {}
+
+func (r *syncRecorder) headerCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.headers)
+}
+
+func (r *syncRecorder) headerAt(i int) (uint32, []HeaderField) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i >= len(r.headers) {
+		return 0, nil
+	}
+	return r.headers[i].streamID, r.headers[i].fields
+}
+
 // 完整走一遍：客户端发请求头 + 数据，服务端解出来。
 func TestRequestResponse(t *testing.T) {
 	srvRec := &recorder{}
@@ -69,7 +121,7 @@ func TestRequestResponse(t *testing.T) {
 		}, false)...)
 
 	// 服务端收
-	out, err := server.Feed(clientOut)
+	_, out, err := server.Feed(clientOut)
 	if err != nil {
 		t.Fatalf("服务端 Feed: %v", err)
 	}
@@ -104,7 +156,7 @@ func TestRequestResponse(t *testing.T) {
 
 	// 客户端发数据
 	dataOut := client.MustData(1, []byte("hello grpc"), true)
-	if _, err := server.Feed(dataOut); err != nil {
+	if _, _, err := server.Feed(dataOut); err != nil {
 		t.Fatalf("服务端 Feed 数据: %v", err)
 	}
 	if string(srvRec.data) != "hello grpc" {
@@ -119,8 +171,21 @@ func TestResponse(t *testing.T) {
 	client := NewConn(true, cliRec)
 
 	// 先把序言喂了，让服务端进入正常状态
-	if _, err := server.Feed(clientPreface); err != nil {
+	if _, _, err := server.Feed(clientPreface); err != nil {
 		t.Fatal(err)
+	}
+
+	// **客户端先开流 1**（发请求），服务端才有得回。
+	//
+	// 流 ID 是"谁开的谁那侧管"：客户端开的流，服务端只能在上面回响应。
+	// 直接给客户端发一个它没开过的流上的 HEADERS，是"服务端开了个奇数
+	// 流"——协议上的连接级错误（RFC 9113 5.1.1）。
+	if _, _, err := server.Feed(client.MustHeaders(1, []HeaderField{
+		{Name: ":method", Value: "POST"},
+		{Name: ":scheme", Value: "https"},
+		{Name: ":path", Value: "/svc/method"},
+	}, false)); err != nil {
+		t.Fatalf("服务端收请求头: %v", err)
 	}
 
 	// 服务端发响应头 + 数据
@@ -130,7 +195,7 @@ func TestResponse(t *testing.T) {
 	}, false)
 	out = AppendData(out, 1, []byte("response body"), true)
 
-	if _, err := client.Feed(out); err != nil {
+	if _, _, err := client.Feed(out); err != nil {
 		t.Fatalf("客户端 Feed: %v", err)
 	}
 	if len(cliRec.headers) != 1 {
@@ -148,13 +213,13 @@ func TestResponse(t *testing.T) {
 // PING 要回 PING ACK（原样带上 8 字节）。
 func TestPing(t *testing.T) {
 	server := NewConn(false, &recorder{})
-	if _, err := server.Feed(clientPreface); err != nil {
+	if _, _, err := server.Feed(clientPreface); err != nil {
 		t.Fatal(err)
 	}
 
 	var payload [8]byte
 	copy(payload[:], "12345678")
-	out, err := server.Feed(AppendPing(nil, payload, false))
+	_, out, err := server.Feed(AppendPing(nil, payload, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +247,7 @@ func TestPing(t *testing.T) {
 func TestBadPreface(t *testing.T) {
 	server := NewConn(false, &recorder{})
 	// GET / HTTP/1.1 是 HTTP/1.1 的请求，不是 HTTP/2 序言
-	_, err := server.Feed([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
+	_, _, err := server.Feed([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
 	if err == nil {
 		t.Fatal("错误的序言应该被拒绝")
 	}
@@ -196,7 +261,7 @@ func TestGoAway(t *testing.T) {
 	server := NewConn(false, &recorder{})
 	server.Feed(clientPreface)
 
-	if _, err := server.Feed(AppendGoAway(nil, 3, uint32(ErrCodeEnhanceCalm), []byte("slow down"))); err != nil {
+	if _, _, err := server.Feed(AppendGoAway(nil, 3, uint32(ErrCodeEnhanceCalm), []byte("slow down"))); err != nil {
 		t.Fatal(err)
 	}
 	if !server.GoAway() {
@@ -213,13 +278,17 @@ func TestRSTStream(t *testing.T) {
 	server := NewConn(false, rec)
 	server.Feed(clientPreface)
 
-	// 先建一个流
-	server.Feed(server.MustHeaders(1, []HeaderField{{Name: ":method", Value: "GET"}}, false))
+	// 先建一个流（头要合法：:method/:scheme/:path 一个都不能少）
+	server.Feed(server.MustHeaders(1, []HeaderField{
+		{Name: ":method", Value: "GET"},
+		{Name: ":scheme", Value: "http"},
+		{Name: ":path", Value: "/"},
+	}, false))
 	if server.GetStream(1) == nil {
 		t.Fatal("流 1 没建起来")
 	}
 
-	if _, err := server.Feed(AppendRSTStream(nil, 1, uint32(ErrCodeCancel))); err != nil {
+	if _, _, err := server.Feed(AppendRSTStream(nil, 1, uint32(ErrCodeCancel))); err != nil {
 		t.Fatal(err)
 	}
 	if rec.rst != 1 || rec.rstCode != ErrCodeCancel {
@@ -241,6 +310,7 @@ func TestContinuationRoundTrip(t *testing.T) {
 
 	fields := []HeaderField{
 		{Name: ":method", Value: "GET"},
+		{Name: ":scheme", Value: "http"},
 		{Name: ":path", Value: "/a/very/long/path/that/will/not/fit/in/one/frame"},
 		{Name: "user-agent", Value: "fio-test/1.0 (this is a long user agent string)"},
 	}
@@ -270,7 +340,7 @@ func TestContinuationRoundTrip(t *testing.T) {
 	}
 
 	// 喂回去，头要能解出来
-	if _, err := server.Feed(buf); err != nil {
+	if _, _, err := server.Feed(buf); err != nil {
 		t.Fatal(err)
 	}
 	if len(rec.headers) != 1 {

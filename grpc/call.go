@@ -78,9 +78,18 @@ func RequestHeaders(service, method string, extra []http2.HeaderField) []http2.H
 }
 
 // ResponseHeaders 拼响应的头（不含 trailer，trailer 在数据之后单独发）。
+//
+// **必须带 :status**：HTTP/2 的响应没有它是不合法的（官方 Framer 解出来
+// 的帧里就没有状态码，客户端无从判断）。gRPC 的响应**永远是 200**——
+// 调用的成败在 trailer 的 grpc-status 里，不在 HTTP 状态码里。这不是
+// 省事，是规范：服务端可能已经流式发了很多数据才发现要失败，那时候
+// 改 HTTP 状态码已经来不及了。
 func ResponseHeaders(extra []http2.HeaderField) []http2.HeaderField {
-	headers := make([]http2.HeaderField, 0, 1+len(extra))
-	headers = append(headers, http2.HeaderField{Name: headerContentType, Value: ContentType})
+	headers := make([]http2.HeaderField, 0, 2+len(extra))
+	headers = append(headers,
+		http2.HeaderField{Name: ":status", Value: "200"},
+		http2.HeaderField{Name: headerContentType, Value: ContentType},
+	)
 	return append(headers, extra...)
 }
 

@@ -124,7 +124,7 @@ func TestEndToEndCall(t *testing.T) {
 	wire = append(wire, client.TakeOutput()...)
 
 	// 服务端收
-	srvOut, err := server.Feed(wire)
+	_, srvOut, err := server.Feed(wire)
 	if err != nil {
 		t.Fatalf("服务端 Feed: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestEndToEndCall(t *testing.T) {
 	}
 
 	// 客户端收响应
-	if _, err := client.Feed(srvOut); err != nil {
+	if _, _, err := client.Feed(srvOut); err != nil {
 		t.Fatalf("客户端 Feed: %v", err)
 	}
 
@@ -266,11 +266,24 @@ func TestStreamingMessages(t *testing.T) {
 	}
 }
 
-// 响应头的 content-type 要是 gRPC 的。
+// 响应头要有 :status 和 gRPC 的 content-type。
+//
+// **:status 是必须的**：HTTP/2 的响应少了它不合法（客户端解出来没有
+// 状态码，无从判断）。gRPC 的响应永远是 200——成败在 trailer 的
+// grpc-status 里，不在 HTTP 状态码里。
 func TestResponseHeaders(t *testing.T) {
 	h := ResponseHeaders(nil)
-	if len(h) != 1 || h[0].Name != "content-type" || h[0].Value != ContentType {
-		t.Errorf("ResponseHeaders = %v", h)
+	want := map[string]string{
+		":status":      "200",
+		"content-type": ContentType,
+	}
+	if len(h) != len(want) {
+		t.Fatalf("ResponseHeaders = %v, want %d 个头", h, len(want))
+	}
+	for _, f := range h {
+		if want[f.Name] != f.Value {
+			t.Errorf("%s = %q, want %q", f.Name, f.Value, want[f.Name])
+		}
 	}
 }
 

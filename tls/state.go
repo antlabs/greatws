@@ -83,6 +83,23 @@ type StateMachine struct {
 	hsWriteSecret []byte
 	hsReadSecret  []byte
 
+	// --- 应用阶段的流量密钥（secret 本身）---
+	//
+	// **这两个也必须在"server Finished 刚进 transcript"那一刻算好**：
+	//
+	//	client_application_traffic_secret_0 =
+	//	    Derive-Secret(Master Secret, "c ap traffic", CH..server Finished)
+	//
+	// 之后 transcript 还会继续长（客户端的 Finished 也要写进去），
+	// 那时再 derive 就是**另一个值**了。
+	//
+	// 踩过的坑：原先是在收完对端 Finished 之后才 derive，而那时候
+	// transcript 已经含了对端那条 Finished。自己和自己测能过（两边错得
+	// 一样，算出来还是同一个值），一接标准库就露馅——
+	// 实测 "tls: record authentication failed"，而握手本身是好的。
+	appWriteSecret []byte
+	appReadSecret  []byte
+
 	// --- 输出缓冲 ---
 	// out 是要发给对端的密文（握手消息 + 记录头）
 	out []byte
@@ -98,6 +115,12 @@ type StateMachine struct {
 	serverHello *ServerHello
 	// suite 是协商出来的密码套件
 	suite uint16
+	// negotiatedALPN 是协商出来的应用层协议（"h2"、"http/1.1"……）。
+	// 没协商出东西就是空串。
+	//
+	// 服务端：从客户端的 ALPN 列表和服务端配置里挑，放在 EncryptedExtensions。
+	// 客户端：从服务端回的 EncryptedExtensions 里读。
+	negotiatedALPN string
 
 	// err 是握手失败的原因
 	err error
@@ -143,6 +166,10 @@ func (sm *StateMachine) Established() bool { return sm.state == StateEstablished
 
 // CipherSuite 协商出来的密码套件（握手完成后有效）。
 func (sm *StateMachine) CipherSuite() uint16 { return sm.suite }
+
+// ALPN 返回协商出来的应用层协议（"h2"、"http/1.1"……）。
+// 没协商出东西返回空串。
+func (sm *StateMachine) ALPN() string { return sm.negotiatedALPN }
 
 // ClientHello 返回收到的 ClientHello（服务端用；客户端返回 nil）。
 func (sm *StateMachine) ClientHello() *ClientHello { return sm.clientHello }
@@ -192,6 +219,13 @@ func (sm *StateMachine) Start() error {
 	if sm.config != nil && sm.config.ServerName != "" {
 		ch.ServerName = sm.config.ServerName
 	}
+	// ALPN：客户端声明自己想要的协议（HTTP/2 是 "h2"）。
+	//
+	// 服务端挑哪个由它决定，客户端要接受结果——所以这里报的是**偏好
+	// 顺序**，不是一个请求。标准库的 Transport 走 h2 时这一步是必须的。
+	if sm.config != nil {
+		ch.ALPN = sm.config.NextProtos
+	}
 
 	msg := AppendClientHello(nil, ch, sm.kx.pub)
 	// ClientHello 是明文的（握手第一条，还没有密钥）
@@ -205,24 +239,32 @@ func (sm *StateMachine) Start() error {
 
 // Feed 喂对端发来的密文（从 fd 读到的原始字节）。
 //
-// 不阻塞：不够一条记录的字节留在内部，下次接着喂。
-func (sm *StateMachine) Feed(data []byte) error {
+// 返回消化了多少字节。**契约和 engine.Handler.OnData 一致**：
+//
+//	consumed == len(data)  全收下了（不够一条记录的攒着）
+//	consumed <  len(data)  只吃下这么多，剩下的调用方下次再喂
+//
+// 不阻塞：不够一条记录的字节留在内部的 RecordParser 里，下次接着拼。
+func (sm *StateMachine) Feed(data []byte) (int, error) {
 	if sm.err != nil {
-		return sm.err
+		return 0, sm.err
 	}
 	if len(data) == 0 {
-		return nil
+		return 0, nil
 	}
 
-	_, err := sm.records.Parse(data, func(r *Record) error {
+	n, err := sm.records.Parse(data, func(r *Record) error {
 		return sm.onRecord(r)
 	})
 	if err != nil {
 		sm.err = err
-		return err
+		return n, err
 	}
-	return nil
+	return n, nil
 }
+
+// Buffered 还有多少字节攒在内部没成记录。
+func (sm *StateMachine) Buffered() int { return sm.records.Buffered() }
 
 // onRecord 处理一条记录。
 func (sm *StateMachine) onRecord(r *Record) error {
@@ -298,8 +340,14 @@ func (sm *StateMachine) onHandshake(h *Handshake) error {
 		return sm.onServerHello(h.Payload)
 
 	case hsEncryptedExtensions:
-		// 内容我们不看（扩展都支持），但**必须进 transcript**
-		// ——Finished 的校验值依赖它
+		// 大部分扩展我们不看（都支持），但 **ALPN 的协商结果在这里**，
+		// 得读出来（HTTP/2 靠它知道该不该说 h2）。
+		//
+		// 不管看不看内容，**都必须进 transcript**——Finished 的校验值
+		// 依赖它，漏了就是 "Finished verify data mismatch"。
+		if sm.isClient {
+			sm.negotiatedALPN = parseALPNServerExtension(h.Payload)
+		}
 		sm.keys.transcript.write(AppendHandshake(nil, h.Type, h.Payload))
 		if sm.state == StateWaitEncryptedExtensions {
 			sm.state = StateWaitCertificate
@@ -367,6 +415,14 @@ func (sm *StateMachine) onClientHello(payload []byte) error {
 	}
 	sm.peerKeyShare = ks
 
+	// ALPN：从客户端的列表和我们配置的交集里挑一个。
+	//
+	// 服务端的偏好顺序来自 config.NextProtos（和 crypto/tls 是同一个
+	// 字段，所以配置方式对使用者是一样的）。
+	if sm.config != nil {
+		sm.negotiatedALPN = negotiateALPN(ch.ALPN, sm.config.NextProtos)
+	}
+
 	// ClientHello 进 transcript
 	sm.keys.transcript.write(AppendHandshake(nil, hsClientHello, payload))
 
@@ -431,8 +487,15 @@ func (sm *StateMachine) onClientHello(payload []byte) error {
 	// 收到的一方必须忽略它（我们客户端那边就是这么做的）。
 	sm.out = append(sm.out, AppendRecord(nil, recordChangeCipherSpec, 0x0303, []byte{1})...)
 
-	// 发 EncryptedExtensions（空扩展列表）
-	ee := AppendHandshake(nil, hsEncryptedExtensions, []byte{0, 0})
+	// 发 EncryptedExtensions。
+	//
+	// **ALPN 的协商结果放在这里，不在 ServerHello 里**。为什么：
+	// ServerHello 是明文的（密钥还没派生），协商结果放那儿中间设备能看见
+	// ——它就能据此干预（比如强制降级到它看得懂的协议）。TLS 1.3 把
+	// "服务端要告诉客户端的一切"都挪进了加密的 EncryptedExtensions
+	// （RFC 8446 4.3.1）。
+	eeExts := appendALPNServerExtension(sm.negotiatedALPN)
+	ee := AppendHandshake(nil, hsEncryptedExtensions, eeExts)
 	sm.writeHandshake(ee)
 	sm.keys.transcript.write(ee)
 
@@ -453,12 +516,6 @@ func (sm *StateMachine) onClientHello(payload []byte) error {
 	sm.writeHandshake(cv)
 	sm.keys.transcript.write(cv)
 
-	// 派生 master secret，为应用密钥做准备
-	// （Finished 之后才用，但密钥计划的顺序要求现在派生）
-	if err := sm.keys.deriveMaster(); err != nil {
-		return err
-	}
-
 	// 发 Finished。
 	//
 	// **顺序**：先算校验值（用的 transcript 是 CH..CertificateVerify），
@@ -472,6 +529,13 @@ func (sm *StateMachine) onClientHello(payload []byte) error {
 	fin := sm.finishedMessage(false)
 	sm.writeHandshake(fin)
 	sm.keys.transcript.write(fin)
+
+	// **应用密钥就在这一刻算**（见 cacheApplicationSecrets 的说明）：
+	// transcript 此刻正好是 CH..server Finished。等服务端收完客户端的
+	// Finished 再算，那条消息已经进了 transcript，算出来是另一个值。
+	if err := sm.cacheApplicationSecrets(); err != nil {
+		return err
+	}
 
 	sm.state = StateWaitFinished
 	return nil
@@ -557,9 +621,13 @@ func (sm *StateMachine) onFinished(payload []byte) error {
 		// 派生应用密钥，然后发自己的 Finished
 		sm.keys.transcript.write(AppendHandshake(nil, hsFinished, payload))
 
-		if err := sm.keys.deriveMaster(); err != nil {
+		// **要在发自己 Finished 之前算**：此刻 transcript 是
+		// CH..server Finished，正是 RFC 8446 要的上下文；再往后写一条
+		// 就错位了（见 cacheApplicationSecrets 的说明）。
+		if err := sm.cacheApplicationSecrets(); err != nil {
 			return err
 		}
+
 		// 客户端也发一条 CCS（兼容模式，RFC 8446 5）
 		sm.out = append(sm.out, AppendRecord(nil, recordChangeCipherSpec, 0x0303, []byte{1})...)
 
@@ -590,33 +658,53 @@ func (sm *StateMachine) onFinished(payload []byte) error {
 	return nil
 }
 
+// cacheApplicationSecrets 在 **server Finished 刚写进 transcript 之后**
+// 调用，把两个方向的应用流量密钥算好缓存起来。
+//
+// **调用的时机是这件事的全部要害**（RFC 8446 7.1）：
+//
+//	client/server_application_traffic_secret_0 =
+//	    Derive-Secret(Master Secret, "c ap traffic" / "s ap traffic",
+//	                  CH..server Finished)
+//
+// 服务端在发完自己 Finished 时调用；客户端在收到服务端 Finished、
+// 把它写进 transcript 之后、发自己 Finished 之前调用。两边看到的
+// transcript 都是 CH..server Finished，算出来才是同一对密钥。
+func (sm *StateMachine) cacheApplicationSecrets() error {
+	if err := sm.keys.deriveMaster(); err != nil {
+		return err
+	}
+	th := sm.keys.transcript.sum()
+
+	// 方向：客户端写的是 "c ap traffic"，服务端写的读的是 "s ap traffic"
+	if sm.isClient {
+		sm.appWriteSecret = deriveSecret(sm.keys.masterSecret, "c ap traffic", th)
+		sm.appReadSecret = deriveSecret(sm.keys.masterSecret, "s ap traffic", th)
+	} else {
+		sm.appWriteSecret = deriveSecret(sm.keys.masterSecret, "s ap traffic", th)
+		sm.appReadSecret = deriveSecret(sm.keys.masterSecret, "c ap traffic", th)
+	}
+	return nil
+}
+
 // switchToApplicationKeys 握手完成，把读写保护器换成应用密钥。
+//
+// 密钥来自 cacheApplicationSecrets 缓存的 secret——**不是现场 derive**：
+// 走到这里时 transcript 已经又长了几条消息了。
 //
 // **换密钥时序列号要归零**（RFC 8446 5.3）：nonce 是"iv 异或序号"，
 // 每个密钥有自己的序号空间——握手密钥用过的序号不影响应用密钥。
 // 新建 recordProtector 时 seq 默认就是 0，所以这里"换一个新的"就对了。
 func (sm *StateMachine) switchToApplicationKeys() error {
-	// **方向不要搞反**：applicationTrafficKeys(true) 是 "c ap traffic"
-	// （客户端写、服务端读），false 是 "s ap traffic"（服务端写、
-	// 客户端读）。
-	//
-	// 踩过的坑：这里写反过，症状是"IV 不一样"（客户端 writeKeys.iv =
-	// 6143fbdc, 服务端 readKeys.iv = f7381c9c）——加解密用的是不同的
-	// 密钥，AEAD 直接认证失败。
-	var w, r trafficKeys
-	if sm.isClient {
-		w = sm.keys.applicationTrafficKeys(true)  // c ap traffic：客户端写
-		r = sm.keys.applicationTrafficKeys(false) // s ap traffic：客户端读
-	} else {
-		w = sm.keys.applicationTrafficKeys(false) // s ap traffic：服务端写
-		r = sm.keys.applicationTrafficKeys(true)  // c ap traffic：服务端读
+	if sm.appWriteSecret == nil || sm.appReadSecret == nil {
+		return errors.New("tls: application secrets not cached")
 	}
 
-	wp, err := newRecordProtector(w)
+	wp, err := newRecordProtector(keysFromSecret(sm.appWriteSecret))
 	if err != nil {
 		return err
 	}
-	rp, err := newRecordProtector(r)
+	rp, err := newRecordProtector(keysFromSecret(sm.appReadSecret))
 	if err != nil {
 		return err
 	}

@@ -93,13 +93,27 @@ func (el *EventLoop) Loop() {
 			}
 
 			if eof {
-				// 先把缓冲区里剩的数据交给协议，再关。协议那边可能还有
-				// 半条报文要处理，直接关就丢了。
-				if b := c.ReadBuffer(); len(b) > 0 && c.handler != nil {
-					if n, derr := c.handler.OnData(c, b); derr == nil && n > 0 {
-						c.ConsumeRead(n)
-					}
+				// **必须先读**：kqueue 会把"对端最后一段数据 + FIN"合并成
+				// 一个事件报过来（而且状态是 WRITE，不是 READ），这时候
+				// 还没有任何人调过 Read()，ReadBuffer() 是空的——但内核
+				// 缓冲区里躺着对端最后发的那段数据，直接 close 就一起丢了。
+				//
+				// 实测：TLS 场景下内层协议发的 "ping"（以及回显）都在 FIN
+				// 前面一点点到，对端 write+close 几乎同时，这边 OnData 就
+				// 永远不调——一个字节都收不到。而对端把 close 推迟 50ms 就
+				// "好了"（那 50ms 让数据单独成了一个可读事件）。
+				//
+				// **先补 activation**：连接可能刚 Add 进来，Add 投的
+				// OnOpen 任务还没轮到，而 FIN 已经到了（客户端连上就
+				// close）。不激活就跑 OnData 就是和 OnOpen 抢。
+				el.activate(c) // 幂等：已经激活过就直接返回
+				if c.IsClosed() {
+					return
 				}
+
+				// readAndDispatch 返回的 io.EOF 不用管：下面就 closeWith(io.EOF)，
+				// 这里只是要把最后的数据喂给协议、让它把该处理的处理完。
+				_ = el.readAndDispatch(c)
 				c.closeWith(io.EOF)
 				return
 			}
@@ -137,6 +151,19 @@ func (el *EventLoop) processConn(c *Conn, isRead, isWrite bool) {
 		if c.IsClosed() {
 			return
 		}
+		// OnOpen 还没跑（Add 投的任务还排在队列里）就先把 OnOpen 补上。
+		//
+		// **不把事件记成 pending 等任务**：那个任务可能排在队列很后面
+		// （比如一批新连接一起进来的 connect 风暴），而 epoll 的边缘只
+		// 来一次——等着等着就没有下一次通知了。这里本来就是事件循环的
+		// goroutine，和那个任务是同一个执行者，直接跑掉最省事。
+		//
+		// 这条路径实测撞到过：Add 返回后立刻有数据的连接（客户端连上
+		// 就发）在 -race 下必报 http2.ConnHandler.conn 的竞争。
+		el.activate(c) // 幂等
+		if c.IsClosed() {
+			return
+		}
 		if isWrite && c.NeedFlush() {
 			if err := c.Flush(); err != nil {
 				c.closeWith(err)
@@ -144,7 +171,8 @@ func (el *EventLoop) processConn(c *Conn, isRead, isWrite bool) {
 			}
 		}
 		if isRead {
-			if err := el.readAndDispatch(c); err != nil {
+			err := el.readAndDispatch(c)
+			if err != nil {
 				c.closeWith(err)
 				return
 			}
@@ -202,15 +230,15 @@ func (el *EventLoop) readAndDispatch(c *Conn) error {
 // 用在哪：Add 是调用方（accept 循环）的 goroutine 上跑的，但连接的状态
 // 之后只被事件循环碰。所以 OnOpen 要挪过去，不然两边一写一读就是竞争。
 //
-// 实现就是一个带缓冲的 channel + 循环里非阻塞地取。缓冲开得小（64）：
-// 它只用于"注册连接"这种稀疏的操作，不是数据路径。
+// **必须是"一定在事件循环的 goroutine 上"**，不能有"队列满就退回同步
+// 调"这种降级：那会让协议的状态在两个 goroutine 上被碰，正是要避免的
+// 事。队列满（很少见，容量远大于正常的注册速率）就阻塞等，语义不变。
+//
+// 缓冲开得大（4096）：投递方是 accept 循环，瞬时可能有一批新连接
+// （压测里的 connect 风暴），缓冲小了会把 accept 卡在这儿。真满了就
+// 等一下——反正只有"注册"走这条路，不是数据路径。
 func (el *EventLoop) runOnLoop(f func()) {
-	select {
-	case el.tasks <- f:
-	default:
-		// 队列满了（很少见）。退化成同步调——总比丢掉好。
-		f()
-	}
+	el.tasks <- f
 }
 
 func (el *EventLoop) del(c *Conn) {
@@ -218,9 +246,23 @@ func (el *EventLoop) del(c *Conn) {
 	el.parent.delConn(fd)
 }
 
-// addWrite 把 fd 的可写事件注册上去。
+// addWrite 让 fd 的可写事件再触发一次。
+//
+// **不能是空操作**——这是踩过的一个大坑。
+//
+// 注册的时候确实带了 EPOLLOUT（见 pulse 的 etAddRead），所以"第一次
+// 变可写"会有事件。但 **ET 只在状态变化时报一次**：写缓冲里有数据要发
+// 的时候，socket 通常**本来就是可写的**（没人灌满它），这时候内核不会
+// 产生新的边缘——事件永远不来，数据就永远躺在 wbufList 里。
+//
+// 症状是随机性的、极难查：h2spec 的 TLS 模式十次里挂一两次，每次挂的
+// 用例都不一样（缓存的 GOAWAY 有时发得出去、有时发不出去），而明文
+// 模式几乎不挂（少一层加密，写入的时机不同）。
+//
+// 修法：用 EPOLL_CTL_MOD 重新注册一次（pulse 的 ResetRead 干的就是
+// 这个）——**MOD 会重新触发一次边缘**，哪怕 fd 一直是可写的。
 func (el *EventLoop) addWrite(c *Conn) error {
-	return nil // ET 下 AddRead 已经带了 EPOLLOUT，见 multi_event_loops.go
+	return el.PollingApi.ResetRead(c.Fd())
 }
 
 // AddRead 给一条连接注册读事件。

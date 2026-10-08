@@ -85,6 +85,21 @@ func (d *hpackDecoder) Decode(block []byte) ([]HeaderField, error) {
 	if _, err := d.dec.Write(block); err != nil {
 		return nil, err
 	}
+	// **Close 是必须的**，不是"清理资源"那种可选的。
+	//
+	// x/net 的解码器是流式的：Write 遇到"这段还不够解出一个字段"时会
+	// 把字节留在内部缓冲里、返回一个 nil 错误（意思是"再多给点"）。
+	// 但**一个头块到这里就结束了**（HEADERS/CONTINUATION 带了
+	// END_HEADERS），不该再等——还留着没解完的字节就是**块本身是坏的**
+	// （截断的、或者 Huffman 编码里有非法符号）。
+	//
+	// Close 就是干这个的：没解完就报 "truncated headers"。不调它的话，
+	// 那些坏块会被当成"合法的空头块"放过去——实测：h2spec 的
+	// "Huffman 里含 EOS 符号"那条用例，我们回的是正常响应而不是
+	// COMPRESSION_ERROR 的 GOAWAY。
+	if err := d.dec.Close(); err != nil {
+		return nil, err
+	}
 	if d.err != nil {
 		return nil, d.err
 	}

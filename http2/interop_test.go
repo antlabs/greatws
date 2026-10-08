@@ -79,7 +79,7 @@ func TestOfficialFramerHeaders(t *testing.T) {
 	conn := NewConn(false, rec)
 
 	// 服务端要先看到连接序言
-	if _, err := conn.Feed(append(append([]byte(nil), clientPreface...), raw...)); err != nil {
+	if _, _, err := conn.Feed(append(append([]byte(nil), clientPreface...), raw...)); err != nil {
 		t.Fatalf("Feed: %v", err)
 	}
 
@@ -105,13 +105,31 @@ func TestOfficialFramerHeaders(t *testing.T) {
 
 // 官方编的 DATA，我们要原样收到。
 func TestOfficialFramerData(t *testing.T) {
+	rec := &recorder{}
+	conn := NewConn(false, rec)
+	if _, _, err := conn.Feed(clientPreface); err != nil {
+		t.Fatal(err)
+	}
+
+	// **先建流再发 DATA**：DATA 只能发在已经开了的流上（RFC 9113 5.1，
+	// idle 上收 DATA 是连接级错误）。这条以前是直接往 stream 3 发 DATA
+	// ——在没做状态检查的时候能过，加了检查之后就是"正确地把协议错误
+	// 报出来"了。
 	raw := officialFrame(t, func(fr *http2.Framer) error {
+		block := hpackBlock(t,
+			hpack.HeaderField{Name: ":method", Value: "POST"},
+			hpack.HeaderField{Name: ":scheme", Value: "http"},
+			hpack.HeaderField{Name: ":path", Value: "/data"},
+		)
+		if err := fr.WriteHeaders(http2.HeadersFrameParam{
+			StreamID: 3, BlockFragment: block, EndHeaders: true,
+		}); err != nil {
+			return err
+		}
 		return fr.WriteData(3, true, []byte("hello from the official framer"))
 	})
 
-	rec := &recorder{}
-	conn := NewConn(false, rec)
-	if _, err := conn.Feed(append(append([]byte(nil), clientPreface...), raw...)); err != nil {
+	if _, _, err := conn.Feed(raw); err != nil {
 		t.Fatal(err)
 	}
 	if string(rec.data) != "hello from the official framer" {
@@ -126,7 +144,7 @@ func TestOfficialFramerControlFrames(t *testing.T) {
 			return fr.WriteSettings(http2.Setting{ID: http2.SettingMaxFrameSize, Val: 32768})
 		})
 		conn := NewConn(false, &recorder{})
-		out, err := conn.Feed(append(append([]byte(nil), clientPreface...), raw...))
+		_, out, err := conn.Feed(append(append([]byte(nil), clientPreface...), raw...))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,7 +158,7 @@ func TestOfficialFramerControlFrames(t *testing.T) {
 			return fr.WritePing(false, payload)
 		})
 		conn := NewConn(false, &recorder{})
-		out, err := conn.Feed(append(append([]byte(nil), clientPreface...), raw...))
+		_, out, err := conn.Feed(append(append([]byte(nil), clientPreface...), raw...))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -168,9 +186,9 @@ func TestOfficialFramerControlFrames(t *testing.T) {
 		rec := &recorder{}
 		conn := NewConn(false, rec)
 		// 先建个流
-		_, _ = conn.Feed(clientPreface)
+		_, _, _ = conn.Feed(clientPreface)
 		conn.stream(5)
-		if _, err := conn.Feed(raw); err != nil {
+		if _, _, err := conn.Feed(raw); err != nil {
 			t.Fatal(err)
 		}
 		if rec.rst != 5 || rec.rstCode != ErrCodeCancel {
@@ -183,8 +201,8 @@ func TestOfficialFramerControlFrames(t *testing.T) {
 			return fr.WriteGoAway(9, http2.ErrCodeEnhanceYourCalm, []byte("slow down"))
 		})
 		conn := NewConn(false, &recorder{})
-		conn.Feed(clientPreface)
-		if _, err := conn.Feed(raw); err != nil {
+		_, _, _ = conn.Feed(clientPreface)
+		if _, _, err := conn.Feed(raw); err != nil {
 			t.Fatal(err)
 		}
 		if !conn.GoAway() {
@@ -218,7 +236,7 @@ func assertIsSettingsAck(t *testing.T, out []byte) {
 // 自己的实现解我们的帧，解不了就是连接直接断。
 func TestOurFramesDecodableByOfficial(t *testing.T) {
 	server := NewConn(false, &recorder{})
-	if _, err := server.Feed(clientPreface); err != nil {
+	if _, _, err := server.Feed(clientPreface); err != nil {
 		t.Fatal(err)
 	}
 
@@ -293,7 +311,7 @@ func TestOurFramesDecodableByOfficial(t *testing.T) {
 // 大响应体（跨多个 DATA 帧）官方 Framer 也要能拼回来。
 func TestOurLargeDataDecodableByOfficial(t *testing.T) {
 	server := NewConn(false, &recorder{})
-	_, _ = server.Feed(clientPreface)
+	_, _, _ = server.Feed(clientPreface)
 
 	// 让分片小一点，逼它拆帧
 	server.peerMaxFrameSize = 1024
@@ -340,7 +358,7 @@ func TestOfficialSettingsVariants(t *testing.T) {
 	})
 
 	conn := NewConn(false, &recorder{})
-	out, err := conn.Feed(append(append([]byte(nil), clientPreface...), raw...))
+	_, out, err := conn.Feed(append(append([]byte(nil), clientPreface...), raw...))
 	if err != nil {
 		t.Fatalf("处理官方 SETTINGS 报错: %v", err)
 	}

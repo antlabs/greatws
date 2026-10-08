@@ -139,6 +139,16 @@ type Status struct {
 	Message string
 }
 
+// 常用的状态构造。
+//
+// **名字不能和 Code 的常量重名**（OK、Internal 这些已经是常量了），
+// 所以用 StatusOK / StatusInternal 这种前缀。
+func StatusOK() *Status                        { return &Status{Code: OK} }
+func StatusNotFound(msg string) *Status        { return &Status{Code: NotFound, Message: msg} }
+func StatusUnimplemented(msg string) *Status   { return &Status{Code: Unimplemented, Message: msg} }
+func StatusInternal(msg string) *Status        { return &Status{Code: Internal, Message: msg} }
+func StatusInvalidArgument(msg string) *Status { return &Status{Code: InvalidArgument, Message: msg} }
+
 // Error 实现 error 接口，Code 不是 OK 的时候用它。
 func (s *Status) Error() string {
 	if s == nil || s.Code == OK {

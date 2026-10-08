@@ -30,7 +30,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,7 +37,7 @@ import (
 	"time"
 
 	"github.com/antlabs/fio/engine"
-	"golang.org/x/sys/unix"
+	fiotls "github.com/antlabs/fio/tls"
 )
 
 // startHTTPServer 起一个 fio 的 HTTP/1.1 服务端，返回地址。
@@ -50,43 +49,20 @@ func startHTTPServer(t *testing.T, h Handler) (string, func()) {
 		t.Fatal(err)
 	}
 
-	lfd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
+	// accept 循环交给 engine.Listener：非阻塞 accept + 停止标志，
+	// 两个平台的 Close 行为一致（见那个类型的说明）。
+	ln, err := engine.ListenAndServe(m, "127.0.0.1:0", func() engine.Handler {
+		return NewConnHandler(h, 0)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	unix.SetsockoptInt(lfd, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
-	sa := &unix.SockaddrInet4{}
-	copy(sa.Addr[:], []byte{127, 0, 0, 1})
-	if err := unix.Bind(lfd, sa); err != nil {
-		t.Fatal(err)
-	}
-	if err := unix.Listen(lfd, 128); err != nil {
-		t.Fatal(err)
-	}
-	bound, _ := unix.Getsockname(lfd)
-	port := bound.(*unix.SockaddrInet4).Port
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			nfd, _, err := unix.Accept(lfd)
-			if err != nil {
-				return
-			}
-			unix.SetNonblock(nfd, true)
-			if _, err := m.Add(nfd, NewConnHandler(h, 0)); err != nil {
-				unix.Close(nfd)
-			}
-		}
-	}()
 
 	stop := func() {
-		unix.Close(lfd)
-		<-done
+		ln.Close()
 		m.Free()
 	}
-	return fmt.Sprintf("127.0.0.1:%d", port), stop
+	return ln.Addr(), stop
 }
 
 // **标准库的 http.Client 打我们的服务端**。
@@ -346,13 +322,148 @@ func TestConcurrentClients(t *testing.T) {
 	}
 }
 
-// TLS：用标准库的 tls.Client 打我们的 TLS 服务端（用 fio 的 tls 包）。
+// **HTTP/1.1 over TLS**：标准库的 tls.Client 打我们的服务端。
+//
+// 叠的顺序（和 gRPC 那条路一样，只是内层换成 HTTP/1.1）：
+//
+//	engine（epoll/kqueue）
+//	  ↕ 密文
+//	tls.ConnHandler        握手、记录层、AEAD
+//	  ↕ 明文
+//	http.ConnHandler       请求解析、keep-alive
+//	  ↕
+//	业务 HandlerFunc
+//
+// 客户端用 net/http（标准库里最成熟的 HTTP 客户端），它会自己做
+// TLS 握手、写请求、算 Content-Length、读响应——整条链路都被它验过。
 func TestStdlibTLSClient(t *testing.T) {
-	// 这条需要 fio 的 tls 包和 engine 组合起来用，现在还没接
-	// （tls 包是独立的，接进 engine 是下一步）
-	t.Skip("fio 的 tls 包还没和 engine 接起来")
-	if false {
-		_ = tls.Config{}
+	cert, err := fiotls.SelfSignedCert()
+	if err != nil {
+		t.Fatal(err)
 	}
-	_ = net.Dial
+
+	m, err := engine.NewAndStart(engine.WithEventLoops(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Free()
+
+	app := HandlerFunc(func(w *ResponseWriter, r *Request) {
+		fmt.Fprintf(w, "you asked for %s", r.Target)
+	})
+
+	// accept 交给 engine.Listener（非阻塞 accept + 停止标志，两个平台的
+	// Close 行为一致，见那个类型的说明）。
+	ln, err := engine.ListenAndServe(m, "127.0.0.1:0", func() engine.Handler {
+		// HTTP/1.1 包在 TLS 里面
+		return fiotls.NewConnHandler(&fiotls.Config{Certificates: []tls.Certificate{cert}},
+			NewConnHandler(app, 0))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	addr := ln.Addr()
+
+	// 标准库的 HTTP 客户端走 https
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	cli := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+
+	resp, err := cli.Get("https://" + addr + "/hello")
+	if err != nil {
+		t.Fatalf("https GET: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("状态码 = %d", resp.StatusCode)
+	}
+	if string(body) != "you asked for /hello" {
+		t.Errorf("body = %q", body)
+	}
+
+	// keep-alive：同一条 TLS 连接上再打一发（标准的 HTTP 客户端会复用）
+	resp2, err := cli.Get("https://" + addr + "/again")
+	if err != nil {
+		t.Fatalf("第二次 https GET: %v", err)
+	}
+	defer resp2.Body.Close()
+	body2, _ := io.ReadAll(resp2.Body)
+	if string(body2) != "you asked for /again" {
+		t.Errorf("第二次 body = %q", body2)
+	}
+}
+
+// **没设 Content-Length 的响应要走 chunked**——这是抓出过一个"客户端
+// 永久挂起"的测试。
+//
+// 早先 ResponseWriter 只有 Content-Length 一条路，没设的话就直接把 body
+// 写出去、什么长度标记都不加。客户端读不到体的结束标志（RFC 9112 6.3：
+// 要么 Content-Length、要么 chunked、要么连接关闭），只能一直等——
+// 标准库的 http 客户端会挂到 deadline 才报 context deadline exceeded，
+// 而数据其实早就到了。这条路径自己写的测试撞不到（那些测试都规规矩矩
+// 设了 Content-Length），是拿标准库客户端打才打出来的。
+func TestChunkedResponse(t *testing.T) {
+	addr, stop := startHTTPServer(t, HandlerFunc(func(w *ResponseWriter, r *Request) {
+		// 刻意不设 Content-Length，还分两次写（多段 chunk）
+		w.Write([]byte("first part, "))
+		w.Write([]byte("second part"))
+	}))
+	defer stop()
+
+	cli := &http.Client{Timeout: 5 * time.Second}
+	resp, err := cli.Get("http://" + addr + "/chunked")
+	if err != nil {
+		t.Fatalf("请求失败（很可能是没发终止块、客户端一直等）: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 响应头里要有 Transfer-Encoding: chunked
+	if te := resp.TransferEncoding; len(te) == 0 || te[0] != "chunked" {
+		t.Errorf("Transfer-Encoding = %v, want [chunked]", te)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读 body: %v", err)
+	}
+	if string(body) != "first part, second part" {
+		t.Errorf("body = %q", body)
+	}
+
+	// keep-alive：chunked 收尾正确的话连接应该能复用，再打一发
+	resp2, err := cli.Get("http://" + addr + "/again")
+	if err != nil {
+		t.Fatalf("第二次请求（连接复用）: %v", err)
+	}
+	defer resp2.Body.Close()
+	body2, _ := io.ReadAll(resp2.Body)
+	if string(body2) != "first part, second part" {
+		t.Errorf("第二次 body = %q", body2)
+	}
+}
+
+// 204 按定义没有体，不该加 chunked（加了反而是错的）。
+func TestNoBodyStatus(t *testing.T) {
+	addr, stop := startHTTPServer(t, HandlerFunc(func(w *ResponseWriter, r *Request) {
+		w.WriteHeader(204)
+	}))
+	defer stop()
+
+	cli := &http.Client{Timeout: 5 * time.Second}
+	resp, err := cli.Get("http://" + addr + "/nobody")
+	if err != nil {
+		t.Fatalf("204 请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 204 {
+		t.Errorf("状态码 = %d", resp.StatusCode)
+	}
+	if len(resp.TransferEncoding) != 0 {
+		t.Errorf("204 不该有 Transfer-Encoding: %v", resp.TransferEncoding)
+	}
 }

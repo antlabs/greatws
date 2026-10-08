@@ -88,12 +88,23 @@ func (p *RecordParser) Buffered() int { return len(p.buf) }
 // 返回消化了多少（按这次传进来的 data 算）。攒在内部的那部分也算消化
 // ——不然调用方会重复喂。
 func (p *RecordParser) Parse(data []byte, fn func(*Record) error) (int, error) {
+	// **不攒**：不够一条记录的字节原样留给调用方。
+	//
+	// 为什么：调用方（engine 的读循环）本来就有一块读缓冲区，它按"协议
+	// 返回多少就丢掉多少、剩下的留着"来工作。**如果这里也攒一份，就
+	// 重复了**——同一个字节既在状态机的 buf 里、又在引擎的缓冲区里。
+	//
+	// 实测的坑：喂 8 字节（不够一条记录）返回 0，引擎留着那 8 字节；
+	// 状态机也攒了。下次喂剩 8 字节，状态机拼出 16 字节解出记录、返回
+	// 8——引擎以为"消化了 8"，把第二次那 8 字节丢掉。**第一次那 8 字节
+	// 被处理了两次，净效果是账算不平**（两次消化之和 8 ≠ 总长 16）。
+	//
+	// 症状：客户端把 Finished 和应用数据放在同一个 TCP 段里发过来时，
+	// 应用数据那条记录就是解不出来（内层 handler 一次都没被调到）。
+	//
+	// 代价：跨 Feed 的半个记录要由调用方保管。engine 的读缓冲区正好
+	// 干这个。
 	work := data
-	if len(p.buf) > 0 {
-		p.buf = append(p.buf, data...)
-		work = p.buf
-	}
-
 	consumed := 0
 	var err error
 	for {
@@ -123,12 +134,8 @@ func (p *RecordParser) Parse(data []byte, fn func(*Record) error) (int, error) {
 		consumed += recordHeaderLen + length
 	}
 
-	if rest := work[consumed:]; len(rest) > 0 {
-		p.buf = append(p.buf[:0], rest...)
-	} else {
-		p.buf = p.buf[:0]
-	}
-	return len(data), err
+	// 没成记录的字节留给调用方（这里不攒，见 Parse 开头的说明）
+	return consumed, err
 }
 
 // AppendRecord 拼一条记录（5 字节头 + 载荷）。
@@ -182,8 +189,15 @@ func (p *HandshakeParser) Buffered() int { return len(p.buf) }
 
 // Parse 喂一段字节（记录里的握手数据），切出握手消息。
 func (p *HandshakeParser) Parse(data []byte, fn func(*Handshake) error) (int, error) {
+	// **这里要攒**（和 RecordParser 不同）：一条握手消息可以跨多条 TLS
+	// 记录（比如证书链），而调用方是一条记录一条记录喂进来的。所以半条
+	// 消息必须留在内部等下一段。
+	//
+	// 消化量按"这次的 data"算——攒着的那部分调用方已经交出来了（它是
+	// 上一条记录的内容），不能再算一次。
+	oldLen := len(p.buf)
 	work := data
-	if len(p.buf) > 0 {
+	if oldLen > 0 {
 		p.buf = append(p.buf, data...)
 		work = p.buf
 	}
@@ -216,12 +230,21 @@ func (p *HandshakeParser) Parse(data []byte, fn func(*Handshake) error) (int, er
 		consumed += handshakeHeaderLen + length
 	}
 
+	// 剩下没凑成完整消息的留在 p.buf 里（下次接着拼）
 	if rest := work[consumed:]; len(rest) > 0 {
 		p.buf = append(p.buf[:0], rest...)
 	} else {
 		p.buf = p.buf[:0]
 	}
-	return len(data), err
+	// 消化量按"这次的 data"算：work 前 oldLen 字节是上一轮攒的
+	n := consumed - oldLen
+	if n < 0 {
+		n = 0
+	}
+	if n > len(data) {
+		n = len(data)
+	}
+	return n, err
 }
 
 // AppendHandshake 拼一条握手消息（4 字节头 + 载荷）。
