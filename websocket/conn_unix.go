@@ -220,7 +220,23 @@ func (c *Conn) needFlush() bool {
 	return len(c.wbufList) > 0
 }
 
+// flush 把写缓冲里的东西尽量写出去。
+//
+// **要拿锁**：事件循环和解析 goroutine 会在没持锁的情况下调它，而
+// 用户的 WriteMessage（持锁）可能同时在改同一个 wbufList——两边一起
+// 动那个 slice，会互相覆盖、丢数据。
+//
+// 实测症状：10 批 × 20 条 × 4KB 的批量写，10 次里挂 1 次，服务端少收
+// 若干条（客户端写了 200 条，服务端收到 140 条）。这个概率和"正好在
+// 事件循环 flush 的那一刻用户也在写"对得上。
 func (c *Conn) flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.flushLocked()
+}
+
+// flushLocked 是 flush 的持锁版本，给已经持有 c.mu 的调用方用。
+func (c *Conn) flushLocked() {
 	if _, err := connWrite(c, nil); err != nil {
 		slog.Error("failed to flush write buffer", "error", err)
 	}
@@ -245,6 +261,22 @@ func (c *Conn) writeToSocket(data []byte) (int, error) {
 	}
 	return 0, err // 其他错误直接返回
 
+}
+
+// compactWbufList 把列表里前面 done 个已经写完的槽丢掉。
+//
+// **必须用 copy + 截断，不能只改长度**：前面那些槽已经被置 nil（内存
+// 也还回池子了），留着它们的话下一次 write 会把 nil 当缓冲区解引用。
+func (c *Conn) compactWbufList(done int) {
+	if done == 0 {
+		return
+	}
+	n := copy(c.wbufList, c.wbufList[done:])
+	// 后面的槽清空，别留着指向已归还内存的指针
+	for i := n; i < len(c.wbufList); i++ {
+		c.wbufList[i] = nil
+	}
+	c.wbufList = c.wbufList[:n]
 }
 
 // appendToWbufList 将数据添加到写缓冲区列表
@@ -330,6 +362,10 @@ func (c *Conn) handlePartialWrite(data *[]byte, n int, needAppend bool) error {
 	return nil
 }
 
+// hasPendingWrite 还有积压没写完吗（不需要额外加锁的版本：只在持有
+// c.mu 的路径上调）。
+func (c *Conn) hasPendingWrite() bool { return len(c.wbufList) > 0 }
+
 func (c *Conn) write(data []byte) (int, error) {
 
 	if atomic.LoadInt64(&c.fd) == -1 {
@@ -363,26 +399,34 @@ func (c *Conn) write(data []byte) (int, error) {
 		c.appendToWbufList(data, len(data))
 	}
 
-	i := 0
-	for i < len(c.wbufList) {
-		wbuf := c.wbufList[i]
+	// 从头部往后写，写干净的槽位立刻还回池子。
+	//
+	// **注意下标**：这里用 done 记录"已经写完了几个"，而不是用 i 边走
+	// 边把走过的槽置 nil。早先的写法是"每写完一个就 wbufList[i] = nil,
+	// 然后 i++"，走到部分写那条路时用 `wbufList[:len-i]` 截断——那个
+	// 截断把前面那些 nil 槽留在了列表里。下一次 write 进来看见列表非空，
+	// 拿最后一个槽 `*lastBuf` 解引用，崩在 `*wbuf` 上
+	//（实测：2000 条消息的零拷贝回显测试，6 次里崩 1 次）。
+	done := 0
+	for done < len(c.wbufList) {
+		wbuf := c.wbufList[done]
+		if wbuf == nil {
+			break
+		}
 		n, err := c.writeToSocket(*wbuf)
 		if errors.Is(err, core.EAGAIN) || errors.Is(err, core.EINTR) || err == nil /*写入成功，也有n != len(*wbuf)的情况*/ {
 			if n == len(*wbuf) {
 				bytespool.PutBytes(wbuf)
-				c.wbufList[i] = nil
-				i++
+				c.wbufList[done] = nil
+				done++
 				continue
 			}
-			// 移动剩余数据到缓冲区开始位置
+			// 部分写：把剩下的数据挪到缓冲区开头，列表只保留没写完的那些
 			if err := c.handlePartialWrite(wbuf, n, false); err != nil {
 				c.closeNoLock(err)
 				return 0, err
 			}
-
-			// 移动未处理的缓冲区到列表开始位置
-			copy(c.wbufList, c.wbufList[i:])
-			c.wbufList = c.wbufList[:len(c.wbufList)-i]
+			c.compactWbufList(done)
 			return len(data), nil
 		}
 
@@ -391,7 +435,7 @@ func (c *Conn) write(data []byte) (int, error) {
 	}
 
 	// 所有数据都已写入
-	c.wbufList = c.wbufList[:0]
+	c.compactWbufList(done)
 	// 需要进的逻辑
 	// 1.如果是垂直触发模式，并且启用了流量背压机制，重新添加读事件
 	// 2.如果是水平触发模式也重新添加读事件，为了去掉写事件

@@ -237,5 +237,5 @@ func (c *Conn) corkEnd() {
 	// wbufList——flush 可能是提前返回的(连接已关), 那时列表还在, 逐个
 	// 置 nil 会留下一个"非空但全是 nil"的列表, 下一个 appendToWbufList
 	// 就会解引用 nil。
-	c.flush()
+	c.flushLocked()
 }

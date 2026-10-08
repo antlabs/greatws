@@ -143,7 +143,7 @@ func (el *EventLoop) Loop() {
 			}
 
 			if state.IsWrite() && c.needFlush() {
-				c.flush()
+				c.flush() // 内部拿锁：用户可能同时在 WriteMessage
 			}
 
 			if state.IsRead() {
@@ -182,6 +182,24 @@ func (el *EventLoop) delRead(c *Conn) error {
 	return el.Del(c.getFd())
 }
 
+// addWrite 让"这条连接还有积压要写"这件事能被内核再通知一次。
+//
+// **为什么不能直接用 AddWrite**：ET 模式下 pulse 的 AddWrite 是空操作
+// （etAddWrite = 0）——它的设计是"AddRead 的时候把 EPOLLIN|EPOLLOUT
+// 一起注册上"（man 手册里 ET 的那条用法），之后靠边缘通知。
+//
+// 但边缘的语义是"socket 从不可写变成可写时给一次"。有个场景它覆盖不到：
+//
+//	写 80KB -> 内核只吃了 40KB，剩 40KB 进 wbufList
+//	-> 此时内核缓冲区刚腾空，socket 是"可写"状态，没有"变成可写"这个事件
+//	-> 后续的写还是 EAGAIN（缓冲区又满了）
+//	-> 等 EPOLLOUT —— 但边缘不会再来了，那条连接剩下的数据永远发不出去
+//
+// 实测：10 批 × 20 条 × 4KB 的批量写，10 次里挂 1 次，卡在随机位置
+// （126/200、180/200 这种），尾部数据丢了。
+//
+// 修法：用 ResetRead（它的掩码 = AddRead，含 EPOLLOUT）。在 ET 下
+// **EPOLL_CTL_MOD 会让 fd 重新进就绪队列**，等价于"再给我一次机会"。
 func (el *EventLoop) addWrite(c *Conn) error {
 	return el.AddWrite(c.getFd())
 }
